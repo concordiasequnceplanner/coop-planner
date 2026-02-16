@@ -8,6 +8,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
 import re
 from collections import defaultdict
+import resend # Adaugă acest import sus de tot, lângă celelalte
 
 # Sus de tot, asigura-te ca ai import os (deja il ai)
 
@@ -48,21 +49,36 @@ def verify_email_in_sheets(email):
         print(f"Eroare la conectarea cu Google Sheets: {e}")
         return False
 
-def send_otp_email(destinatar, otp):
-    subiect = "Codul tău de acces pentru Academic Planner COOP"
-    corp_mesaj = f"Salut,\n\nCodul tău de conectare este: {otp}\n\nAcest cod este valabil 5 minute."
-    msg = MIMEText(corp_mesaj)
-    msg['Subject'] = subiect
-    msg['From'] = EMAIL_SENDER
-    msg['To'] = destinatar
 
+def send_otp_email(destinatar, otp):
+    # Luăm cheia din environment variable (o setăm pe Render imediat)
+    resend.api_key = os.environ.get("RESEND_API_KEY")
+    
     try:
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-            server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-            server.sendmail(EMAIL_SENDER, destinatar, msg.as_string())
+        params = {
+            "from": "MIAE Planner <auth@concordiasequenceplanner.ca>",
+            "to": [destinatar],
+            "subject": "Cod de acces - Academic Planner COOP",
+            "html": f"""
+                <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #eee;">
+                    <h2 style="color: #912338;">Concordia MIAE</h2>
+                    <p>Salut,</p>
+                    <p>Codul tău de conectare este: <strong style="font-size: 20px;">{otp}</strong></p>
+                    <p>Acest cod este valabil 5 minute.</p>
+                    <hr>
+                    <p style="font-size: 12px; color: #666;">
+                        Acest email a fost trimis automat de către Academic Planner Tool. 
+                        Dacă ai întrebări, te rugăm să răspunzi direct la acest mesaj.
+                    </p>
+                </div>
+            """,
+            "reply_to": "coop_miae@concordia.ca" # Studenții îți vor răspunde aici!
+        }
+
+        resend.Emails.send(params)
         return True
     except Exception as e:
-        print(f"Eroare la trimiterea emailului: {e}")
+        print(f"Eroare Resend: {e}")
         return False
 
 # ==========================================

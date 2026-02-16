@@ -1,24 +1,33 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Verificare - COOP Planner</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Concordia MIAE - Verify Code</title>
     <style>
-        body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f4f7f6; }
-        .box { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); text-align: center; }
-        input { padding: 10px; width: 50%; font-size: 18px; text-align: center; letter-spacing: 2px; margin-bottom: 15px; }
-        button { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        body { font-family: Arial, sans-serif; background-color: #f4f4f4; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .login-box { background: white; padding: 40px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 100%; max-width: 400px; text-align: center; }
+        h2 { color: #912338; margin-bottom: 10px; }
+        p.subtitle { color: #555; font-size: 14px; margin-bottom: 25px; line-height: 1.5;}
+        input[type="text"] { width: 100%; padding: 12px; margin: 10px 0 20px 0; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-size: 24px; text-align: center; letter-spacing: 4px; }
+        button { width: 100%; padding: 12px; background-color: #912338; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: bold; transition: background-color 0.3s;}
+        button:hover { background-color: #7a1d2f; }
+        .error { color: #d9534f; margin-bottom: 15px; font-size: 14px; background-color: #fdf7f7; padding: 10px; border-left: 4px solid #d9534f; }
     </style>
 </head>
 <body>
-    <div class="box">
-        <h2>Verificare Cod</h2>
-        <p>Am trimis un cod de 6 cifre pe adresa ta de email.</p>
+    <div class="login-box">
+        <h2>Secure Verification</h2>
+        <p class="subtitle">A 6-digit access code has been sent to your email. Please enter it below.</p>
+        
+        {% if error %}
+            <div class="error">{{ error }}</div>
+        {% endif %}
+        
         <form method="POST">
-            <input type="text" name="otp" maxlength="6" placeholder="123456" required>
-            <br>
-            <button type="submit">Accesează Planner-ul</button>
+            <input type="text" name="otp" placeholder="123456" required autocomplete="off" maxlength="6">
+            <button type="submit">Verify Code</button>
         </form>
-        {% if error %}<p style="color:red;">{{ error }}</p>{% endif %}
     </div>
 </body>
 </html>

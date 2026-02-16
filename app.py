@@ -10,8 +10,8 @@ from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
 import resend
 
-from dotenv import load_dotenv # Adaugă asta
-load_dotenv() # Această linie încarcă variabilele din .env în sistem
+#from dotenv import load_dotenv # Adaugă asta
+#load_dotenv() # Această linie încarcă variabilele din .env în sistem
 
 app = Flask(__name__)
 app.secret_key = "SVsecretKEY" # Cheia pentru sesiuni securizate

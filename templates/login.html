@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Login - COOP Planner</title>
+    <style>
+        body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f4f7f6; }
+        .box { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); text-align: center; }
+        input { padding: 10px; width: 80%; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; }
+        button { padding: 10px 20px; background: #800000; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div class="box">
+        <h2>Conectare COOP</h2>
+        <p>Introdu adresa de email pentru a primi codul de acces.</p>
+        <form method="POST">
+            <input type="email" name="email" placeholder="nume@live.concordia.ca" required>
+            <br>
+            <button type="submit">Trimite Codul</button>
+        </form>
+        {% if error %}<p style="color:red;">{{ error }}</p>{% endif %}
+    </div>
+</body>
+</html>

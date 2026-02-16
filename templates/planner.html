@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Academic Planner</title>
+<div style="text-align: right; padding: 10px;">
+    <span style="margin-right: 15px;">Logat ca: <b>{{ session['user_email'] }}</b></span>
+    <a href="/logout" style="padding: 8px 15px; background: #dc3545; color: white; text-decoration: none; border-radius: 4px;">Deconectare</a>
+</div>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; margin: 20px; background-color: #f8f9fa; }
+        .header-box { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-top: 6px solid #800000; margin-bottom: 20px; display: flex; align-items: center; gap: 15px; flex-wrap: wrap; }
+        .layout-wrapper { display: flex; gap: 20px; visibility: hidden; }
+        .main-content { flex: 3; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .sidebar { flex: 1; background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); position: sticky; top: 20px; max-height: 85vh; overflow-y: auto; }
+        
+        table { width: 100%; border-collapse: collapse; }
+        th, td { border: 1px solid #dee2e6; padding: 8px; vertical-align: top; }
+        th { background: #800000; color: white; }
+        .col-fall { background: #fff8f0; border-left: 2px solid #ffd8a8; }
+        .col-winter { background: #f0f7ff; border-left: 2px solid #a5d8ff; }
+        .year-label { font-weight: bold; text-align: center; vertical-align: middle; width: 60px; background: #eee; border-top: 4px solid #800000; }
+
+        .term-header { display: flex; justify-content: space-between; align-items: center; font-size: 11px; margin-bottom: 5px; }
+        .calc-cr { font-weight: bold; color: #800000; }
+        .limit-group { display: flex; gap: 3px; align-items: center; color: #666; }
+        .limit-input { width: 32px; text-align: center; border: 1px solid #ccc; font-size: 10px; color: #444; }
+
+        .drop-zone { min-height: 40px; background: rgba(0,0,0,0.02); border: 1px dashed #ccc; border-radius: 4px; padding: 5px; margin-bottom: 5px;}
+        .drop-zone.dragover { background: #e9ecef; border-color: #800000; }
+        .course-box { background: #fff; border: 1px solid #ccc; border-left: 5px solid #007bff; padding: 5px; margin-bottom: 3px; border-radius: 3px; font-size: 10px; cursor: grab; transition: box-shadow 0.2s; }
+        .course-box.wt { border-left-color: #28a745; background: #f0fff0; font-weight: bold; }
+        .course-box.ecp { border-left-color: #ffc107; }
+        .course-box:hover { background-color: #f1f8ff; }
+        
+        button { background: #800000; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        button:disabled { background: #ccc; }
+        #wt-warning { color: #d9534f; font-weight: bold; font-size: 12px; display: none; }
+    </style>
+</head>
+<body>
+
+<div class="header-box">
+    <select id="programSelect">
+        <option value="" disabled selected>Select Program...</option>
+        {% for p in programe %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+    </select>
+    <select id="startTerm"><option value="Fall">Start Fall</option><option value="Winter">Start Winter</option></select>
+    <button id="moveEcpBtn">Move ECP</button>
+    <button id="generateBtn" disabled>Generate</button>
+    <span id="wt-warning">⚠️ Drag all Green WT boxes into the grid!</span>
+</div>
+
+<div class="layout-wrapper" id="workspace">
+    <div class="main-content">
+        <table>
+            <thead><tr><th>Year</th><th>Summer</th><th style="background:#d35400">Fall</th><th style="background:#2980b9">Winter</th></tr></thead>
+            <tbody id="tableBody">
+                <tr style="background:#fffdec"><td class="year-label" style="border-top:none">Y 0</td><td colspan="3"><div class="drop-zone" id="zone_Y0_ANY" data-term="Y0_ANY" ondrop="drop(event)" ondragover="allowDrop(event)" style="display:flex; gap:5px; flex-wrap:wrap"></div></td></tr>
+            </tbody>
+        </table>
+    </div>
+    
+    <div class="sidebar">
+        <h4>Unallocated</h4>
+        <div class="drop-zone" id="unallocatedZone" style="min-height:200px; max-height:40vh; overflow-y:auto;" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
+        
+        <div id="courseInfoPanel" style="display:none; margin-top:15px; padding:12px; background:#f4f7f6; border:1px solid #b8c2cc; border-radius:6px; font-size:11px; box-shadow:inset 0 1px 3px rgba(0,0,0,0.05);">
+            <h5 id="info_title" style="margin:0 0 8px 0; color:#800000; border-bottom:1px solid #ccc; padding-bottom:4px; font-size:13px;">Course Name</h5>
+            <p style="margin:4px 0;"><strong>Type:</strong> <span id="info_type" style="color:#333;"></span></p>
+            <p style="margin:4px 0;"><strong>Offered:</strong> <span id="info_terms" style="color:#0056b3;"></span></p>
+            <p style="margin:4px 0;"><strong>Pre-Reqs:</strong> <span id="info_prereq"></span></p>
+            <p style="margin:4px 0;"><strong>Co-Reqs:</strong> <span id="info_coreq"></span></p>
+            <p style="margin:4px 0; color:#d35400;"><strong>Is Pre-Req for:</strong> <span id="info_is_prereq"></span></p>
+            <p style="margin:4px 0; color:#d35400;"><strong>Is Co-Req for:</strong> <span id="info_is_coreq"></span></p>
+        </div>
+    </div>
+</div>
+
+<script>
+    let coursesData = {};
+
+    const buildGrid = () => {
+        const tbody = document.getElementById('tableBody');
+        const y0 = tbody.firstElementChild; tbody.innerHTML = ''; tbody.appendChild(y0);
+        for(let y=1; y<=7; y++){
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td class="year-label">Y ${y}</td>
+                <td><div class="drop-zone" id="zone_Y${y}_SUM1" data-term="Y${y}_SUM1" ondrop="drop(event)" ondragover="allowDrop(event)"></div><div class="drop-zone" id="zone_Y${y}_SUM2" data-term="Y${y}_SUM2" ondrop="drop(event)" ondragover="allowDrop(event)"></div></td>
+                <td class="col-fall">
+                    <div class="term-header"><span>Tot: <span class="calc-cr" id="cr_Y${y}_FALL">0</span></span><div class="limit-group">Max:<input type="number" class="limit-input cr-lim" data-term="Y${y}_FALL" value="14"><input type="number" class="limit-input ct-lim" data-count="Y${y}_FALL" value="5"></div></div>
+                    <div class="drop-zone" id="zone_Y${y}_FALL" data-term="Y${y}_FALL" style="min-height:70px" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
+                </td>
+                <td class="col-winter">
+                    <div class="term-header"><span>Tot: <span class="calc-cr" id="cr_Y${y}_WIN">0</span></span><div class="limit-group">Max:<input type="number" class="limit-input cr-lim" data-term="Y${y}_WIN" value="14"><input type="number" class="limit-input ct-lim" data-count="Y${y}_WIN" value="5"></div></div>
+                    <div class="drop-zone" id="zone_Y${y}_WIN" data-term="Y${y}_WIN" style="min-height:70px" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
+                </td>`;
+            tbody.appendChild(tr);
+        }
+    };
+
+    function showCourseInfo(cid) {
+        const c = coursesData[cid];
+        if (!c) return;
+        
+        document.getElementById('courseInfoPanel').style.display = 'block';
+        document.getElementById('info_title').innerText = c.full_name || c.display;
+        document.getElementById('info_type').innerText = c.type || '-';
+        document.getElementById('info_terms').innerText = c.terms || '-';
+        document.getElementById('info_prereq').innerText = c.prereqs || 'None';
+        document.getElementById('info_coreq').innerText = c.coreqs || 'None';
+        document.getElementById('info_is_prereq').innerText = c.is_prereq_for || 'None';
+        document.getElementById('info_is_coreq').innerText = c.is_coreq_for || 'None';
+        
+        document.querySelectorAll('.course-box').forEach(b => b.style.boxShadow = 'none');
+        const box = document.getElementById(cid);
+        if(box) box.style.boxShadow = '0 0 5px 2px #007bff';
+    }
+
+    document.getElementById('programSelect').onchange = async function() {
+        document.getElementById('workspace').style.visibility = 'visible'; buildGrid();
+        const res = await fetch('/get_courses', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({program:this.value})});
+        const data = await res.json();
+        const unalloc = document.getElementById('unallocatedZone'); unalloc.innerHTML = '';
+        coursesData = {};
+        
+        data.courses.forEach(c => {
+            coursesData[c.id] = c;
+            const div = document.createElement('div'); div.id = c.id; div.className = `course-box ${c.is_wt?'wt':''} ${c.is_ecp?'ecp':''}`;
+            div.draggable = true; div.innerHTML = c.display; 
+            div.ondragstart = e => e.dataTransfer.setData("text", e.target.id);
+            div.onclick = () => showCourseInfo(c.id);
+            unalloc.appendChild(div);
+        });
+        
+        Object.keys(data.pre_placed).forEach(tid => {
+            const z = document.getElementById(`zone_${tid}`);
+            if(z) data.pre_placed[tid].forEach(cid => { const el = document.getElementById(cid); if(el) z.appendChild(el); });
+        });
+        updateCredits(); checkWT();
+    };
+
+    function allowDrop(e) { e.preventDefault(); e.currentTarget.classList.add('dragover'); }
+    function drop(e) {
+        e.preventDefault(); e.currentTarget.classList.remove('dragover');
+        const id = e.dataTransfer.getData("text"); const el = document.getElementById(id);
+        if(el) { e.currentTarget.appendChild(el); updateCredits(); checkWT(); }
+    }
+
+    function updateCredits() {
+        for(let y=1; y<=7; y++) {
+            ['FALL','WIN'].forEach(t => {
+                let total = 0; document.querySelectorAll(`#zone_Y${y}_${t} .course-box`).forEach(b => total += (coursesData[b.id] ? coursesData[b.id].credit : 0));
+                document.getElementById(`cr_Y${y}_${t}`).innerText = total.toFixed(1);
+            });
+        }
+    }
+
+    function checkWT() {
+        const hasWT = document.getElementById('unallocatedZone').querySelector('.wt');
+        document.getElementById('generateBtn').disabled = !!hasWT;
+        document.getElementById('wt-warning').style.display = hasWT?'inline':'none';
+    }
+
+    document.getElementById('moveEcpBtn').onclick = () => {
+        const z0 = document.getElementById('zone_Y0_ANY');
+        Object.keys(coursesData).forEach(id => { if(coursesData[id].is_ecp) z0.appendChild(document.getElementById(id)); });
+        updateCredits(); checkWT();
+    };
+
+    document.getElementById('generateBtn').onclick = async function() {
+        this.innerText = "...";
+        const limits = {}; document.querySelectorAll('.cr-lim').forEach(i => limits[i.dataset.term] = i.value);
+        const counts = {}; document.querySelectorAll('.ct-lim').forEach(i => counts[i.dataset.count] = i.value);
+        const placed = {}; document.querySelectorAll('td .drop-zone').forEach(z => placed[z.dataset.term] = Array.from(z.children).map(c => c.id));
+        const unalloc = Array.from(document.getElementById('unallocatedZone').children).map(c => c.id);
+        
+        const res = await fetch('/generate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({program:document.getElementById('programSelect').value, term_limits:limits, count_limits:counts, placed:placed, unallocated:unalloc})});
+        const result = await res.json();
+        
+        Object.keys(result.sequence).forEach(year => {
+            const yNum = year.split(' ')[1];
+            ['SUM1','SUM2','FALL','WIN'].forEach(t => {
+                const z = document.getElementById(`zone_Y${yNum}_${t}`); z.innerHTML = '';
+                result.sequence[year][t].cursuri.forEach(c => {
+                    const div = document.createElement('div'); div.id = c.id; div.className = `course-box ${c.is_wt?'wt':''}`;
+                    div.draggable = true; div.innerHTML = c.display; 
+                    div.ondragstart = e => e.dataTransfer.setData("text", e.target.id);
+                    div.onclick = () => showCourseInfo(c.id);
+                    z.appendChild(div);
+                });
+            });
+        });
+        
+        const uz = document.getElementById('unallocatedZone'); uz.innerHTML = '';
+        result.unallocated.forEach(c => {
+            const div = document.createElement('div'); div.id = c.id; div.className = `course-box`;
+            div.draggable = true; div.innerHTML = c.display; 
+            div.ondragstart = e => e.dataTransfer.setData("text", e.target.id);
+            div.onclick = () => showCourseInfo(c.id);
+            uz.appendChild(div);
+        });
+        
+        updateCredits(); this.innerText = "Generate";
+    };
+</script>
+</body>
+</html>

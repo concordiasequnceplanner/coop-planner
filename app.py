@@ -12,7 +12,7 @@ from collections import defaultdict
 # Sus de tot, asigura-te ca ai import os (deja il ai)
 
 # Modifică secțiunea de setări email așa:
-EMAIL_SENDER = "concordia.course.planner@gmail.com" 
+EMAIL_SENDER = "concordia.sequnce.planner@gmail.com" 
 # Serverul va lua parola dintr-un seif digital (os.environ), dar dacă nu o găsește, o va folosi pe cea locală
 EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "hpvdhzdjllmkczfc")
 

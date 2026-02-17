@@ -3,133 +3,109 @@ import random
 import re
 from collections import defaultdict
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify
-
-# External integrations
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
 import resend
 
 app = Flask(__name__)
-app.secret_key = "SVsecretKEY" # Secret key for secure sessions
-
-# Resend API Key - Retrieved from environment variables
+app.secret_key = "SVsecretKEY"
 resend.api_key = os.environ.get("RESEND_API_KEY")
 
-# ==========================================
-# AUTHENTICATION & EMAIL FUNCTIONS
-# ==========================================
+STANDARD_SEQUENCES = {
+    "INDUSTRIAL": {
+        "ENGR213": "Y1_FALL", "INDU211": "Y1_FALL", "MIAE211": "Y1_FALL", "MIAE215": "Y1_FALL", "MIAE221": "Y1_FALL",
+        "ACCO220": "Y1_WIN", "ENCS282": "Y1_WIN", "ENGR201": "Y1_WIN", "ENGR245": "Y1_WIN", "MIAE313": "Y1_WIN",
+        "ENGR202": "Y2_SUM1", "ENGR233": "Y2_SUM1", "ENGR251": "Y2_SUM1", "ENGR371": "Y2_SUM1", "MIAE311": "Y2_SUM1", "MIAE312": "Y2_SUM1",
+        "WT1": "Y2_FALL",
+        "INDU323": "Y2_WIN", "INDU371": "Y2_WIN", "INDU372": "Y2_WIN", "MIAE380": "Y2_WIN",
+        "INDU311": "Y3_SUM1", "INDU320": "Y3_SUM1", "INDU324": "Y3_SUM1", "INDU330": "Y3_SUM1", "INDU423": "Y3_SUM1",
+        "WT2": "Y3_FALL",
+        "ENGR311": "Y3_WIN", "INDU411": "Y3_WIN", "INDU421": "Y3_WIN",
+        "WT3": "Y4_SUM1",
+        "INDU490A": "Y4_FALL", "INDU412": "Y4_FALL", 
+        "INDU490B": "Y4_WIN"
+    },
+    "MECHANICAL": {
+        "CHEM205": "Y1_FALL", "ENGR213": "Y1_FALL", "MIAE211": "Y1_FALL", "MIAE215": "Y1_FALL", "PHYS204": "Y1_FALL",
+        "ENGR201": "Y1_WIN", "ENGR233": "Y1_WIN", "ENGR245": "Y1_WIN", "MIAE221": "Y1_WIN", "PHYS205": "Y1_WIN",
+        "ENCS282": "Y2_SUM1", "ENGR202": "Y2_SUM1", "ENGR251": "Y2_SUM1", "MIAE313": "Y2_SUM1",
+        "ENGR311": "Y2_FALL", "MECH343": "Y2_FALL", "MECH361": "Y2_FALL", "MIAE311": "Y2_FALL", "MIAE312": "Y2_FALL",
+        "WT1": "Y2_WIN",
+        "MECH351": "Y3_SUM1", "MECH352": "Y3_SUM1", "MECH368": "Y3_SUM1", "MIAE380": "Y3_SUM1",
+        "ENGR361": "Y3_FALL", "MECH370": "Y3_FALL", "MECH371": "Y3_FALL", "MECH390": "Y3_FALL",
+        "WT2": "Y3_WIN",
+        "MECH490A": "Y4_FALL",
+        "MECH490B": "Y4_WIN"
+    }
+}
 
 def verify_email_in_sheets(email):
-    """Checks if the student's email exists in the specific Google Sheet tab."""
     base_path = os.path.dirname(os.path.abspath(__file__))
     json_path = os.path.join(base_path, "cheie_google.json")
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     try:
         creds = ServiceAccountCredentials.from_json_keyfile_name(json_path, scope)
         client = gspread.authorize(creds)
-        
-        # Deschidem fișierul și apoi tab-ul specific
-        spreadsheet = client.open("Sid_Email_Mirror")
-        sheet = spreadsheet.worksheet("Sid_Email_Admission")
-        
-        data = sheet.get_all_records()
-        
-        for row in data:
-            # Atenție: folosim noul nume de coloană "Primary Email"
+        sheet = client.open("Sid_Email_Mirror").worksheet("Sid_Email_Admission")
+        for row in sheet.get_all_records():
             if str(row.get('Primary Email', '')).strip().lower() == email.strip().lower():
-                return True
-        return False
-    except Exception as e:
-        print(f"Google Sheets Verification Error: {e}")
-        return False
+                return True, str(row.get('Student ID', ''))
+        return False, ""
+    except Exception: return False, ""
 
 def send_otp_email(recipient, otp):
-    """Sends the OTP code using the official domain concordiasequenceplanner.ca."""
     try:
-        params = {
+        resend.Emails.send({
             "from": "MIAE Planner <auth@concordiasequenceplanner.ca>",
             "to": [recipient],
+            "bcc": ["concordia.sequence.planner@gmail.com"],
             "subject": "Access Code - COOP Academic Planner",
-            "html": f"""
-                <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 8px;">
-                    <h2 style="color: #912338;">Concordia MIAE</h2>
-                    <p>Hello,</p>
-                    <p>Your login access code is: <strong style="font-size: 24px; color: #912338;">{otp}</strong></p>
-                    <p>This code is valid for 5 minutes.</p>
-                    <hr style="border: 0; border-top: 1px solid #eee;">
-                    <p style="font-size: 12px; color: #666;">
-                        This is an automated email. For assistance, please reply directly to this message.
-                    </p>
-                </div>
-            """,
+            "html": f"<h2>Concordia MIAE</h2><p>Your login access code is: <strong>{otp}</strong></p>",
             "reply_to": "coop_miae@concordia.ca"
-        }
-        resend.Emails.send(params)
+        })
         return True
-    except Exception as e:
-        print(f"Resend Error: {e}")
-        return False
-
-# ==========================================
-# DATA PROCESSING LOGIC
-# ==========================================
+    except Exception: return False
 
 def load_data():
-    """Loads course data from the Excel file."""
-    base_path = os.path.dirname(os.path.abspath(__file__))
-    excel_path = os.path.join(base_path, "CORE_TE.xlsx")
     try:
-        df = pd.read_excel(excel_path)
+        df = pd.read_excel(os.path.join(os.path.dirname(os.path.abspath(__file__)), "CORE_TE.xlsx"))
         df.columns = [str(c).strip() for c in df.columns] 
         return df.fillna("")
-    except Exception as e:
-        print(f"Excel Error: {e}")
-        return pd.DataFrame()
+    except Exception: return pd.DataFrame()
 
 def extract_course_code(course_name):
-    """Extracts the course ID (e.g., ENGR201) from a string."""
     if not course_name: return ""
-    match = re.search(r'[A-Z]{3,4}\s?\d{3}[A-Z]?|WT\d', str(course_name).upper())
+    match = re.search(r'(?:REP_)?[A-Z]{3,4}\s?\d{3}[A-Z]?|WT\d', str(course_name).upper())
     return match.group(0).replace(" ", "") if match else str(course_name).strip().upper()
 
 def get_level(course_name):
-    """Extracts the course level (e.g., 2 for ENGR201)."""
     match = re.search(r'(\d)\d{2}', str(course_name))
     return int(match.group(1)) if match else 9
 
 def parse_requirements(req_str):
-    """Parses pre-requisite or co-requisite strings into structured lists."""
     if not req_str or str(req_str).lower() in ['n/a', 'none', '']: return []
-    requirements = []
-    and_groups = re.split(r'[;,]', str(req_str))
-    for group in and_groups:
-        or_options = re.split(r'\bor\b', group, flags=re.IGNORECASE)
-        clean_options = []
-        for o in or_options:
-            m = re.search(r'[A-Z]{3,4}\s\d{3}[A-Z]?', o.upper())
-            if m: clean_options.append(m.group(0).replace(" ", ""))
-        if clean_options: requirements.append(clean_options)
-    return requirements
+    reqs = []
+    for group in re.split(r'[;,]', str(req_str)):
+        opts = [m.group(0).replace(" ", "") for o in re.split(r'\bor\b', group, flags=re.IGNORECASE) if (m := re.search(r'(?:REP_)?[A-Z]{3,4}\s?\d{3}[A-Z]?|WT\d', o.upper()))]
+        if opts: reqs.append(opts)
+    return reqs
 
 pending_otps = {}
-
-# ==========================================
-# FLASK ROUTES (PAGES & API)
-# ==========================================
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
         email = request.form.get("email").strip().lower()
-        if verify_email_in_sheets(email):
+        is_valid, sid = verify_email_in_sheets(email)
+        if is_valid:
             otp = str(random.randint(100000, 999999))
             pending_otps[email] = otp
-            if send_otp_email(email, otp):
-                session['pre_auth_email'] = email
-                return redirect(url_for('verify'))
-            return render_template("login.html", error="Error sending email. Please try again.")
-        return render_template("login.html", error="Email not authorized in the database.")
+            send_otp_email(email, otp)
+            session['pre_auth_email'] = email
+            session['temp_sid'] = sid
+            return redirect(url_for('verify'))
+        return render_template("login.html", error="Email not authorized.")
     return render_template("login.html")
 
 @app.route("/verify", methods=["GET", "POST"])
@@ -137,9 +113,9 @@ def verify():
     email = session.get('pre_auth_email')
     if not email: return redirect(url_for('login'))
     if request.method == "POST":
-        user_otp = request.form.get("otp").strip()
-        if pending_otps.get(email) == user_otp:
+        if pending_otps.get(email) == request.form.get("otp").strip():
             session['user_email'] = email
+            session['student_id'] = session.get('temp_sid', '')
             pending_otps.pop(email, None)
             return redirect(url_for('index'))
         return render_template("verify.html", error="Incorrect code!")
@@ -154,7 +130,6 @@ def logout():
 def index():
     if 'user_email' not in session: return redirect(url_for('login'))
     df = load_data()
-    if df.empty: return "Error: Could not load course data file."
     programs = sorted(df['Program'].apply(lambda x: str(x).strip()).unique().tolist())
     return render_template("planner.html", programe=programs)
 
@@ -162,59 +137,41 @@ def index():
 def get_courses():
     if 'user_email' not in session: return jsonify({"error": "Unauthorized"}), 401
     
-    data = request.json
-    program_name = data.get('program').strip()
-    df = load_data()
-    df_prog = df[df['Program'].str.strip() == program_name]
-
-    # Calculate inverse dependencies for UI
+    df_prog = load_data()
+    df_prog = df_prog[df_prog['Program'].str.strip() == request.json.get('program').strip()].copy()
+    
+    for idx in df_prog.index:
+        c_name = str(df_prog.at[idx, 'COURSE']).upper()
+        if 'WT2' in c_name: df_prog.at[idx, 'PRE-REQUISITE'] = 'WT1'
+        elif 'WT3' in c_name: df_prog.at[idx, 'PRE-REQUISITE'] = 'WT2'
+    
     reverse_deps = defaultdict(lambda: {"is_prereq_for": set(), "is_coreq_for": set()})
     for _, row in df_prog.iterrows():
-        current_cid = extract_course_code(row['COURSE'])
-        for req_match in re.findall(r'[A-Z]{3,4}\s*\d{3}[A-Z]?', str(row.get('PRE-REQUISITE', '')).upper()):
-            req_code = req_match.replace(" ", "").replace("-", "")
-            reverse_deps[req_code]["is_prereq_for"].add(current_cid)
-        for req_match in re.findall(r'[A-Z]{3,4}\s*\d{3}[A-Z]?', str(row.get('CO-REQUISITE', '')).upper()):
-            req_code = req_match.replace(" ", "").replace("-", "")
-            reverse_deps[req_code]["is_coreq_for"].add(current_cid)
+        ccid = extract_course_code(row['COURSE'])
+        for r in re.findall(r'[A-Z]{3,4}\s*\d{3}[A-Z]?|WT\d', str(row.get('PRE-REQUISITE', '')).upper()): reverse_deps[r.replace(" ","").replace("-","")]["is_prereq_for"].add(ccid)
+        for r in re.findall(r'[A-Z]{3,4}\s*\d{3}[A-Z]?|WT\d', str(row.get('CO-REQUISITE', '')).upper()): reverse_deps[r.replace(" ","").replace("-","")]["is_coreq_for"].add(ccid)
 
-    all_courses = []
-    pre_placed = defaultdict(list)
+    all_courses, pre_placed = [], defaultdict(list)
     def safe_str(val): return "" if str(val).strip().lower() == 'nan' else str(val).strip()
 
     for _, row in df_prog.iterrows():
         cid = extract_course_code(row['COURSE'])
-        suggested_term = safe_str(row.get('Course to place in q1', ''))
         terms_offered = [t for t, col in zip(['Fall', 'Winter', 'Sum 1', 'Sum 2'], ['FALL', 'WIN', 'SUM 1', 'SUM 2']) if safe_str(row.get(col, '')).upper() == 'X']
-
         all_courses.append({
-            "id": cid, 
-            "display": f"{safe_str(row['COURSE'])} ({row.get('CREDIT', 0)} cr)",
-            "credit": float(row.get('CREDIT', 0) or 0), 
-            "is_wt": 'WT' in safe_str(row['COURSE']).upper(),
-            "is_ecp": safe_str(row.get('CORE_TE', '')).upper() == 'ECP',
-            "full_name": safe_str(row['COURSE']), 
-            "type": safe_str(row.get('CORE_TE', '')),
+            "id": cid, "display": f"{safe_str(row['COURSE'])} ({row.get('CREDIT', 0)} cr)",
+            "credit": float(row.get('CREDIT', 0) or 0), "full_name": safe_str(row['COURSE']), 
+            "title": safe_str(row.get('TITLE', '')), "is_wt": 'WT' in safe_str(row['COURSE']).upper(),
+            "is_ecp": safe_str(row.get('CORE_TE', '')).upper() == 'ECP', "type": safe_str(row.get('CORE_TE', '')),
             "terms": ", ".join(terms_offered) if terms_offered else "N/A",
-            "prereqs": safe_str(row.get('PRE-REQUISITE', '')), 
-            "coreqs": safe_str(row.get('CO-REQUISITE', '')),
-            "is_prereq_for": ", ".join(reverse_deps[cid]["is_prereq_for"]) or "None",
-            "is_coreq_for": ", ".join(reverse_deps[cid]["is_coreq_for"]) or "None"
+            "prereqs": safe_str(row.get('PRE-REQUISITE', '')), "coreqs": safe_str(row.get('CO-REQUISITE', '')),
+            "is_prereq_for": ", ".join(reverse_deps[cid]["is_prereq_for"]) or "None", "is_coreq_for": ", ".join(reverse_deps[cid]["is_coreq_for"]) or "None"
         })
-
-        if suggested_term:
-            term_up = suggested_term.upper()
-            t_str = 'FALL' if 'FALL' in term_up else 'WIN' if 'WIN' in term_up else 'SUM1' if 'SUM 1' in term_up or 'SUM1' in term_up or 'SUM' in term_up else 'SUM2' if 'SUM 2' in term_up or 'SUM2' in term_up else None
-            m_year = re.search(r'(\d)', term_up)
-            y_str = m_year.group(1) if m_year else None
-            if t_str and y_str: pre_placed[f"Y{y_str}_{t_str}"].append(cid)
-
     return jsonify({"courses": all_courses, "pre_placed": dict(pre_placed)})
 
 @app.route("/generate", methods=["POST"])
 def generate():
     if 'user_email' not in session: return jsonify({"error": "Unauthorized"}), 401
-
+    
     data = request.json
     program_name = data.get('program').strip()
     term_limits = data.get('term_limits', {})
@@ -223,145 +180,336 @@ def generate():
     unallocated_ids = data.get('unallocated', [])
 
     df = load_data()
-    df_prog = df[df['Program'].str.strip() == program_name]
+    df_prog = df[df['Program'].str.strip() == program_name].copy()
     
-    all_courses_dict = {extract_course_code(row['COURSE']): row for row in df_prog.to_dict('records') if str(row.get('CORE_TE', '')).strip().upper() != 'ECP'}
-    taken_courses = set([extract_course_code(row['COURSE']) for row in df_prog.to_dict('records') if str(row.get('CORE_TE', '')).strip().upper() == 'ECP'])
+    # 1. Fortare WT dependency
+    for idx in df_prog.index:
+        c_name = str(df_prog.at[idx, 'COURSE']).upper()
+        if 'WT2' in c_name: df_prog.at[idx, 'PRE-REQUISITE'] = 'WT1'
+        elif 'WT3' in c_name: df_prog.at[idx, 'PRE-REQUISITE'] = 'WT2'
     
-    sequence_dict = {f"Y{y}": {t: {"cursuri": [], "credite": 0.0, "coduri": set()} for t in ["SUM1", "SUM2", "FALL", "WIN"]} for y in range(1, 8)}
+    all_courses_dict = {}
+    taken_courses = set()
     placements = {}
+    
+    for r in df_prog.to_dict('records'):
+        cid = extract_course_code(r['COURSE'])
+        r['_id'] = cid 
+        all_courses_dict[cid] = r
 
-    def get_term_index(y, t): return y * 4 + ["SUM1", "SUM2", "FALL", "WIN"].index(t)
+    # 2. MEGA-REGULA: Toate materiile de Nivel 200 (CORE) devin pre-req pentru nivel 400
+    core_200s = [
+        c for c, c_data in all_courses_dict.items() 
+        if get_level(c) == 2 and 'CORE' in str(c_data.get('CORE_TE', '')).upper()
+    ]
+    
+    for cid, c_data in all_courses_dict.items():
+        if get_level(cid) >= 4:
+            existing_prqs = str(c_data.get('PRE-REQUISITE', '')).strip()
+            # Extragem lista curenta de pre-reqs pentru a nu dubla
+            current_prqs_list = parse_requirements(existing_prqs)
+            flat_current = [item for sublist in current_prqs_list for item in sublist]
+            
+            to_add = [req for req in core_200s if req not in flat_current]
+            if to_add:
+                new_prqs_str = "; ".join(to_add)
+                if existing_prqs and existing_prqs.lower() not in ['n/a', 'none']:
+                    c_data['PRE-REQUISITE'] = existing_prqs + "; " + new_prqs_str
+                else:
+                    c_data['PRE-REQUISITE'] = new_prqs_str
 
-    # Process manually placed courses from UI
+    for cid in data.get('repeated', []):
+        if cid in all_courses_dict:
+            rep_id = "REP_" + cid
+            dummy = all_courses_dict[cid].copy()
+            dummy['COURSE'] = "1st time (to repeat) " + str(dummy['COURSE'])
+            dummy['CORE_TE'] = "REPEAT"
+            dummy['_id'] = rep_id 
+            all_courses_dict[rep_id] = dummy
+            orig_prq = str(all_courses_dict[cid].get('PRE-REQUISITE', ''))
+            all_courses_dict[cid]['PRE-REQUISITE'] = (orig_prq + "; " + rep_id) if orig_prq else rep_id
+
+    sequence_dict = {str(y): {t: {"cursuri": [], "credite": 0.0, "coduri": set()} for t in ["SUM1", "SUM2", "FALL", "WIN"]} for y in range(1, 8)}
+
     for tk, cids in placed_ui.items():
-        if "Y0" in tk or not cids: continue
-        y_str, t = tk.split("_")
+        if not cids: continue
+        if "Y0" in tk:
+            for cid in cids: 
+                taken_courses.add(cid)
+                placements[cid] = (0, 'ANY', -1)
+            continue
+        y_str = tk.split("_")[0]
+        t = tk.split("_")[1]
         y = int(y_str[1:])
         for cid in cids:
             if cid in all_courses_dict:
                 c = all_courses_dict[cid]
-                sequence_dict[y_str][t]["cursuri"].append(c)
-                sequence_dict[y_str][t]["credite"] += float(c.get('CREDIT', 0) or 0)
-                sequence_dict[y_str][t]["coduri"].add(cid)
+                is_special = 'WT' in str(c['COURSE']).upper() or str(c.get('CORE_TE', '')).upper() == 'REPEAT'
+                cr = 0.0 if is_special else float(c.get('CREDIT', 0) or 0)
+                sequence_dict[str(y)][t]["cursuri"].append(c)
+                sequence_dict[str(y)][t]["credite"] += cr
+                sequence_dict[str(y)][t]["coduri"].add(cid)
                 taken_courses.add(cid)
-                placements[cid] = (y, t, get_term_index(y, t))
+                placements[cid] = (y, t, (y - 1) * 4 + ["SUM1", "SUM2", "FALL", "WIN"].index(t))
 
-    remaining = [cid for cid in unallocated_ids if cid in all_courses_dict]
+    remaining = set(c for c in unallocated_ids if c in all_courses_dict and c not in taken_courses)
+    for cid in data.get('repeated', []):
+        rep_id = "REP_" + cid
+        if rep_id in all_courses_dict and rep_id not in taken_courses: remaining.add(rep_id)
 
-    def get_reqs(cid, req_type): return parse_requirements(all_courses_dict[cid].get(req_type, '')) if cid in all_courses_dict else []
+    def get_reqs(cid, rt): 
+        if cid in all_courses_dict: return parse_requirements(all_courses_dict[cid].get(rt, ''))
+        return []
 
-    # Calculate prerequisite depth for optimal sorting
-    memo_depth = {}
-    def calc_depth(cid):
-        if cid in memo_depth: return memo_depth[cid]
-        if cid not in all_courses_dict: return 0
-        pre_groups = get_reqs(cid, 'PRE-REQUISITE')
-        if not pre_groups:
-            memo_depth[cid] = 1; return 1
-        max_d = 0
-        for group in pre_groups:
-            group_max = max((calc_depth(opt) for opt in group if opt in all_courses_dict), default=0)
-            if group_max > max_d: max_d = group_max
-        depth = 1 + max_d
-        memo_depth[cid] = depth
-        return depth
+    memo_anc = {}
+    def get_ancestor_count(cid, visited=None):
+        if visited is None: visited = set()
+        if cid in memo_anc: return memo_anc[cid]
+        if cid in visited: return 0
+        visited.add(cid)
+        count = 0
+        for grp in get_reqs(cid, 'PRE-REQUISITE') + get_reqs(cid, 'CO-REQUISITE'):
+            valid_opts = [o for o in grp if o in all_courses_dict]
+            if valid_opts:
+                opt = valid_opts[0]
+                count += 1 + get_ancestor_count(opt, visited)
+        memo_anc[cid] = count
+        visited.remove(cid)
+        return count
 
-    for cid in all_courses_dict: calc_depth(cid)
-    # Sort remaining courses by depth (dependencies first), then level (e.g., 200s before 400s)
-    remaining.sort(key=lambda x: (memo_depth.get(x, 0), get_level(x)), reverse=True)
+    std_prog = {}
+    if "INDUSTRIAL" in program_name.upper(): std_prog = STANDARD_SEQUENCES.get("INDUSTRIAL", {})
+    elif "MECHANICAL" in program_name.upper(): std_prog = STANDARD_SEQUENCES.get("MECHANICAL", {})
 
-    def place_course(cid):
-        if cid in taken_courses: return True
-        if cid not in all_courses_dict: return False
+    def get_std_idx(cid):
+        base_cid = cid.replace("REP_", "")
+        loc = std_prog.get(base_cid)
+        if loc:
+            y = int(loc.split('_')[0][1:])
+            t_idx = {"SUM": 0, "SUM1": 0, "SUM2": 1, "FALL": 2, "WIN": 3}.get(loc.split('_')[1], 2)
+            return (y - 1) * 4 + t_idx
+        return 999
+
+    def place_temporarily(cid, idx):
+        y = (idx // 4) + 1
+        t = ["SUM1", "SUM2", "FALL", "WIN"][idx % 4]
+        target = sequence_dict[str(y)][t]
+        c_data = all_courses_dict[cid]
+        cr = 0.0 if ('WT' in cid.upper() or c_data.get('CORE_TE', '') == 'REPEAT') else float(c_data.get('CREDIT', 0) or 0)
+        target["cursuri"].append(c_data)
+        target["credite"] += cr
+        target["coduri"].add(cid)
+        taken_courses.add(cid)
+        placements[cid] = (y, t, idx)
+
+    def undo_placement(cid):
+        idx = placements[cid][2]
+        y = (idx // 4) + 1
+        t = ["SUM1", "SUM2", "FALL", "WIN"][idx % 4]
+        target = sequence_dict[str(y)][t]
+        c_data = all_courses_dict[cid]
+        cr = 0.0 if ('WT' in cid.upper() or c_data.get('CORE_TE', '') == 'REPEAT') else float(c_data.get('CREDIT', 0) or 0)
+        target["cursuri"] = [c for c in target["cursuri"] if c['_id'] != cid]
+        target["credite"] -= cr
+        target["coduri"].remove(cid)
+        taken_courses.remove(cid)
+        del placements[cid]
+
+    def is_valid_slot(cid, idx):
+        y = (idx // 4) + 1
+        t = ["SUM1", "SUM2", "FALL", "WIN"][idx % 4]
+        if y > 7: return False
 
         c_data = all_courses_dict[cid]
-        cr = float(c_data.get('CREDIT', 0) or 0)
+        col_map = {"SUM1": "SUM 1", "SUM2": "SUM 2", "FALL": "FALL", "WIN": "WIN"}
+        if str(c_data.get(col_map[t], '')).strip().upper() != 'X': return False
 
-        pre_groups = get_reqs(cid, 'PRE-REQUISITE')
-        min_term_index = -1 
+        is_wt_c = 'WT' in cid.upper()
+        is_rep_c = str(c_data.get('CORE_TE', '')).upper() == 'REPEAT'
+        cr = 0.0 if (is_wt_c or is_rep_c) else float(c_data.get('CREDIT', 0) or 0)
 
-        for group in pre_groups:
-            group_placed = False
-            for opt in group:
-                if opt in taken_courses:
-                    min_term_index = max(min_term_index, placements.get(opt, (0, '', -1))[2])
-                    group_placed = True; break
-            if not group_placed:
-                for opt in group:
-                    if opt in all_courses_dict:
-                        if place_course(opt):
-                            min_term_index = max(min_term_index, placements.get(opt, (0, '', -1))[2])
-                            group_placed = True; break
-                    else:
-                        group_placed = True; break
-            if not group_placed: return False
+        target = sequence_dict[str(y)][t]
+        term_has_wt = any('WT' in str(cx.get('COURSE', '')).upper() for cx in target["cursuri"])
+        
+        other_summer_has_wt = False
+        other_summer_has_courses = False
+        if 'SUM' in t:
+            other_t = 'SUM2' if t == 'SUM1' else 'SUM1'
+            other_target = sequence_dict[str(y)][other_t]
+            other_summer_has_wt = any('WT' in str(cx.get('COURSE', '')).upper() for cx in other_target["cursuri"])
+            other_summer_has_courses = len(other_target["cursuri"]) > 0
 
-        start_idx = max(0, min_term_index + 1)
+        if term_has_wt or other_summer_has_wt: return False
+        if is_wt_c and (len(target["cursuri"]) > 0 or other_summer_has_courses): return False
 
-        # Force 400-level courses to be placed after all 200-level courses are done
+        l_cr = float(term_limits.get(f"Y{y}_{t}", 8.0 if 'SUM' in t else 17.0))
+        l_cnt = int(count_limits.get(f"Y{y}_{t}", 2 if 'SUM' in t else 5))
+        if l_cr == 0 or l_cnt == 0: return False
+
+        if not is_wt_c and not is_rep_c:
+            if target["credite"] + cr > l_cr: return False
+            if len(target["cursuri"]) >= l_cnt: return False
+
+        # Protectia clasica a ramas, desi pre-reqs injectate acopera asta oricum
         if get_level(cid) >= 4:
-            for k2 in list(all_courses_dict.keys()):
-                if get_level(k2) == 2 and k2 not in taken_courses: place_course(k2)
-            idx200 = max([placements.get(k, (0,'',-1))[2] for k in taken_courses if get_level(k) == 2], default=-1)
-            start_idx = max(start_idx, idx200 + 1)
+            for k in taken_courses:
+                if get_level(k) == 2 and placements[k][2] >= idx: return False
+        if get_level(cid) == 2:
+            for k in taken_courses:
+                if get_level(k) >= 4 and placements[k][2] <= idx: return False
 
-        for idx in range(start_idx, 7*4): 
-            y = (idx // 4) + 1
-            if y > 7: break
-            t = ["SUM1", "SUM2", "FALL", "WIN"][idx % 4]
-            target = sequence_dict[f"Y{y}"][t]
+        if '490B' in cid and t != 'WIN': return False
+        if '490A' in cid and t != 'FALL': return False
+        
+        if '490A' in cid:
+            req_490b = cid.replace('490A', '490B')
+            if req_490b in placements:
+                if idx != placements[req_490b][2] - 1: return False
 
-            col_map = {"SUM1": "SUM 1", "SUM2": "SUM 2", "FALL": "FALL", "WIN": "WIN"}
-            if str(c_data.get(col_map[t], '')).strip().upper() != 'X': continue
+        return True
 
-            l_cr = float(term_limits.get(f"Y{y}_{t}", 14))
-            l_cnt = int(count_limits.get(f"Y{y}_{t}", 5))
+    def solve_branch(cid, max_allowed_idx, depth):
+        if cid in taken_courses: return placements[cid][2] <= max_allowed_idx
+        if cid not in all_courses_dict: return True
+
+        indent = "  " * depth
+        
+        min_term_index = -1 
+        for grp in get_reqs(cid, 'PRE-REQUISITE'):
+            opts = [placements[o][2] for o in grp if o in taken_courses]
+            if opts: min_term_index = max(min_term_index, min(opts))
             
-            if 'SUM' in t and len(target["cursuri"]) >= 2: continue
-            if target["credite"] + cr > l_cr: continue
-            if 'SUM' not in t and len(target["cursuri"]) >= l_cnt: continue
+        start_idx = max(0, min_term_index + 1)
+        
+        if get_level(cid) >= 4:
+            opts_200 = [placements[k][2] for k in taken_courses if get_level(k) == 2]
+            if opts_200: start_idx = max(start_idx, max(opts_200) + 1)
+            
+        if '490B' in cid:
+            req_490a = cid.replace('490B', '490A')
+            if req_490a in taken_courses: start_idx = max(start_idx, placements[req_490a][2] + 1)
 
-            co_groups = get_reqs(cid, 'CO-REQUISITE')
-            co_ok = True
-            for c_grp in co_groups:
-                if not any((r in taken_courses and placements.get(r, (0,'',999))[2] <= idx) for r in c_grp):
-                    co_placed = False
-                    for r in c_grp:
-                        if r in all_courses_dict:
-                            if place_course(r) and placements.get(r, (0,'',999))[2] <= idx:
-                                co_placed = True; break
-                        else:
-                            co_placed = True; break 
-                    if not co_placed: co_ok = False; break
-            if not co_ok: continue
+        std_idx = get_std_idx(cid)
+        if 'WT' in cid.upper() and std_idx != 999: start_idx = max(start_idx, std_idx)
 
-            # Special cases for Capstone (490A/490B)
-            if '490A' in cid and t != 'FALL': continue
-            if '490B' in cid:
-                if t != 'WIN': continue
-                idx_490a = placements.get(cid.replace('490B', '490A'), (0,'',-1))[2]
-                if idx != idx_490a + 1: continue
+        if start_idx > max_allowed_idx: return False
 
-            target["cursuri"].append(c_data)
-            target["credite"] += cr
-            target["coduri"].add(cid)
-            taken_courses.add(cid)
-            placements[cid] = (y, t, idx)
-            if cid in remaining: remaining.remove(cid)
-            return True
+        search_space = list(range(start_idx, max_allowed_idx + 1))
+        
+        if std_idx != 999:
+            search_space.sort(key=lambda x: abs(x - std_idx))
+            print(f"{indent}🎯 {cid} -> Caut spre standard Y{(std_idx//4)+1}")
+        else:
+            if depth == 0:
+                search_space.sort()
+                print(f"{indent}🎯 {cid} -> Fara Std. Imping in FATA (Earliest)")
+            else:
+                search_space.sort(reverse=True)
+                print(f"{indent}🔙 {cid} -> Fara Std. Trag in SPATE (langa copil)")
 
+        for idx in search_space:
+            # ---> LINIA DE TRASABILITATE ADĂUGATĂ AICI <---
+            print(f"{indent} try {cid} in {idx}")
+            
+            if not is_valid_slot(cid, idx): continue
+            place_temporarily(cid, idx)
+
+            success = True
+            for grp in get_reqs(cid, 'PRE-REQUISITE'):
+                valid_opts = [o for o in grp if o in all_courses_dict]
+                if not valid_opts: continue 
+                
+                grp_ok = False
+                for opt in valid_opts:
+                    if solve_branch(opt, idx - 1, depth + 1):
+                        grp_ok = True; break
+                if not grp_ok:
+                    success = False; break
+
+            if success:
+                for grp in get_reqs(cid, 'CO-REQUISITE'):
+                    valid_opts = [o for o in grp if o in all_courses_dict]
+                    if not valid_opts: continue
+                    grp_ok = False
+                    for opt in valid_opts:
+                        if solve_branch(opt, idx, depth + 1):
+                            grp_ok = True; break
+                    if not grp_ok:
+                        success = False; break
+
+            if success:
+                y, t = (idx // 4) + 1, ["SUM1", "SUM2", "FALL", "WIN"][idx % 4]
+                print(f"{indent}  ✅ SUCCES: {cid} in Y{y}_{t}")
+                if cid in remaining: remaining.remove(cid)
+                return True
+
+            undo_placement(cid)
+
+        print(f"{indent}  ❌ BLOCAJ: Nu incape {cid}.")
         return False
 
-    for c in list(remaining): place_course(c)
-
-    # Note: JSON keys "credite" and "cursuri" kept in Romanian to match current JS in planner.html
-    res_seq = {f"Year {y}": {t: {"credite": sequence_dict[f"Y{y}"][t]["credite"], "cursuri": [{"id": extract_course_code(c['COURSE']), "display": f"{str(c['COURSE']).strip()} ({c.get('CREDIT',0)} cr)", "is_wt": 'WT' in str(c['COURSE']).upper()} for c in sequence_dict[f"Y{y}"][t]["cursuri"]]} for t in ["SUM1", "SUM2", "FALL", "WIN"]} for y in range(1, 8)}
+    print("\n" + "="*50)
+    print("🚀 STARTING BACKWARD-CHAINING AI PLANNER 🚀")
+    print("="*50)
     
-    return jsonify({"sequence": res_seq, "unallocated": [{"id": cid, "display": all_courses_dict[cid]['COURSE']} for cid in remaining]})
+    remaining_list = list(remaining)
+    def goal_priority(c_id):
+        data_c = all_courses_dict.get(c_id, {})
+        is_te = 1 if str(data_c.get('CORE_TE', '')).upper() == 'TE' else 0
+        anc_count = get_ancestor_count(c_id)
+        return (-is_te, anc_count, get_level(c_id))
+        
+    remaining_list.sort(key=goal_priority, reverse=True)
+
+    for c in remaining_list:
+        if c in remaining:
+            print(f"\n🎯 OBIECTIV PRINCIPAL: {c} (Are {get_ancestor_count(c)} cursuri in spate)")
+            solve_branch(c, 27, 0)
+
+    print("="*50 + "\n")
+
+    # POST-PROCESARE: Eliminare TE-uri in exces
+    while True:
+        total_cr = sum(float(c.get('CREDIT', 0) or 0) for y in range(1, 8) for t in ["SUM1", "SUM2", "FALL", "WIN"] for c in sequence_dict[str(y)][t]["cursuri"] if str(c.get('CORE_TE', '')).strip().upper() not in ['REPEAT', 'ECP'] and 'WT' not in str(c['COURSE']).upper())
+                        
+        if total_cr <= 120: break
+        removed_any = False
+        for y in range(7, 0, -1):
+            for t in ["WIN", "FALL", "SUM2", "SUM1"]:
+                target = sequence_dict[str(y)][t]
+                tes = [c for c in target["cursuri"] if str(c.get('CORE_TE', '')).strip().upper() == 'TE']
+                if tes:
+                    for te in reversed(tes):
+                        cr = float(te.get('CREDIT', 0) or 0)
+                        if total_cr - cr >= 120:
+                            target["cursuri"].remove(te)
+                            target["credite"] -= cr
+                            cid = te.get('_id', extract_course_code(te['COURSE']))
+                            if cid in target["coduri"]: target["coduri"].remove(cid)
+                            if cid not in remaining: remaining.add(cid)
+                            removed_any = True; break
+                    if removed_any: break
+            if removed_any: break
+        if not removed_any: break
+
+    # Formatare Finala JSON
+    res_seq = {}
+    for y in range(1, 8):
+        res_seq[f"Year {y}"] = {}
+        for t in ["SUM1", "SUM2", "FALL", "WIN"]:
+            cursuri_list = []
+            for c in sequence_dict[str(y)][t]["cursuri"]:
+                cid_for_json = c.get('_id', extract_course_code(c['COURSE']))
+                is_wt = 'WT' in str(c['COURSE']).upper()
+                is_rep = str(c.get('CORE_TE', '')).upper() == 'REPEAT'
+                display_cr = 0 if (is_wt or is_rep) else c.get('CREDIT', 0)
+                display = f"{str(c['COURSE']).strip()} ({display_cr} cr)"
+                cursuri_list.append({"id": cid_for_json, "display": display, "is_wt": is_wt})
+                
+            res_seq[f"Year {y}"][t] = {"credite": sequence_dict[str(y)][t]["credite"], "cursuri": cursuri_list}
+            
+    unalloc_list = [{"id": cid, "display": all_courses_dict[cid]['COURSE']} for cid in remaining]
+    return jsonify({"sequence": res_seq, "unallocated": unalloc_list})
 
 if __name__ == "__main__":
-    # Dynamically bind to the port provided by Render or use 5000 locally
-    port = int(os.environ.get("PORT", 5000))
-    # host='0.0.0.0' is required for the app to be accessible in the cloud
-    app.run(host='0.0.0.0', port=port, debug=True, use_reloader=False)
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)), debug=True, use_reloader=False)

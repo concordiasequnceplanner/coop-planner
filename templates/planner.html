@@ -15,16 +15,15 @@
 
         select { padding: 8px 12px; border-radius: 4px; border: 1px solid #ccc; font-size: 13px; background-color: white; cursor: pointer; transition: all 0.2s; font-weight: 500;}
         select:focus { outline: none; box-shadow: 0 0 0 2px rgba(145, 35, 56, 0.3); }
-        select.bg-fall { background-color: #912338; color: white; border-color: #912338; }
-        select.bg-win { background-color: #3498db; color: white; border-color: #3498db; }
-        select.bg-sum { background-color: #d35400; color: white; border-color: #d35400; }
+        select.bg-fall { background-color: #912338; color: white; }
+        select.bg-win { background-color: #3498db; color: white; }
+        select.bg-sum { background-color: #d35400; color: white; }
         select option { background-color: white; color: #333; font-weight: normal; }
 
-        .tools-container { background: #fff; border: 2px solid #dce4ec; border-left: 5px solid #912338; border-radius: 6px; box-shadow: 0 4px 10px rgba(0,0,0,0.08); overflow: hidden; transition: all 0.3s ease-in-out; position: relative; z-index: 9; margin: 0 20px 15px 20px;}
+        .tools-container { background: #fff; border: 2px solid #dce4ec; border-left: 5px solid #912338; border-radius: 6px; box-shadow: 0 4px 10px rgba(0,0,0,0.08); margin: 0 20px 15px 20px; overflow: hidden;}
         .tools-header { background: #f8f9fa; padding: 12px 20px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-weight: 700; color: #333; font-size: 14px; user-select: none; border-bottom: 1px solid #eee; }
-        .tools-header:hover { background: #f1f3f5; }
-        .tools-content { padding: 15px 20px; display: flex; flex-direction: column; gap: 15px; max-height: 500px; opacity: 1; transition: all 0.3s ease-in-out; background: #fff; }
-        .tools-container.collapsed .tools-content { max-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; border-top: none;}
+        .tools-content { padding: 15px 20px; display: flex; flex-direction: column; gap: 15px; transition: 0.3s; }
+        .tools-container.collapsed .tools-content { display: none; }
         
         .tool-group { display: flex; align-items: center; gap: 10px; background: #fcfcfc; padding: 8px 12px; border-radius: 4px; border: 1px solid #eee; flex-wrap: wrap;}
         .tool-label { font-size: 12px; font-weight: 600; color: #555; width: 160px; text-transform: uppercase; }
@@ -37,7 +36,11 @@
         .btn-primary:disabled { background: #e0e0e0; color: #999; cursor: not-allowed; }
 
         .layout-wrapper { display: flex; gap: 20px; visibility: hidden; padding: 0 20px 20px 20px; align-items: flex-start; }
-        .main-content { flex: 3; background: #fff; padding: 5px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); overflow: hidden; }
+        .main-content { flex: 3; display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+        
+        .grid-box { background: #fff; padding: 5px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); overflow: hidden; }
+        .validation-box { background: #fff; padding: 15px 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); border-left: 5px solid #f39c12; }
+        
         .sidebar { flex: 1; min-width: 280px; background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); position: sticky; top: 20px; max-height: 90vh; display: flex; flex-direction: column; }
         
         table { table-layout: fixed; width: 100%; border-collapse: collapse; margin: 0; }
@@ -50,14 +53,12 @@
         
         .year-label { width: 65px; font-weight: bold; text-align: center; vertical-align: middle; background: #f8f9fa; color: #7f8c8d; border-right: 2px solid #e9ecef; }
         .year-subtext { display: block; font-size: 10px; font-weight: bold; color: #555; margin-top: 4px;}
-        td:not(.year-label) { width: calc((100% - 65px) / 3); background: #fff; }
 
         .term-container { display: flex; flex-direction: column; transition: all 0.3s; height: 100%;}
         .term-header { display: flex; justify-content: space-between; align-items: center; font-size: 10px; padding: 5px 6px; background: #fcfcfc; border-bottom: 1px solid #f0f0f0; color: #666; font-weight: 600; transition: background-color 0.2s;}
         .calc-cr { font-weight: bold; color: #912338; font-size: 11px;}
         .limit-group { display: flex; gap: 3px; align-items: center; }
         
-        /* CLICKABLE LIMITS & POPUP */
         .val-click {
             display: inline-block; min-width: 16px; text-align: center; background: #fff; border: 1px solid #ccc;
             border-radius: 3px; padding: 1px 4px; cursor: pointer; font-weight: bold; color: #912338; transition: 0.2s;
@@ -69,16 +70,12 @@
             box-shadow: 0 4px 15px rgba(0,0,0,0.2); z-index: 9999; display: grid; padding: 6px; gap: 4px;
             grid-template-columns: repeat(3, 1fr);
         }
-        .limit-popup div {
-            padding: 6px 10px; cursor: pointer; font-size: 12px; font-weight: bold; text-align: center; 
-            border-radius: 4px; background: #f8f9fa; color: #333; transition: 0.2s;
-        }
+        .limit-popup div { padding: 6px 10px; cursor: pointer; font-size: 12px; font-weight: bold; text-align: center; border-radius: 4px; background: #f8f9fa; color: #333; transition: 0.2s; }
         .limit-popup div:hover { background: #912338; color: white; }
 
         .drop-zone { flex: 1; display: flex; flex-direction: column; min-height: 45px; background: #fff; padding: 6px; margin: 4px; border-radius: 4px; border: 1px dashed #ccc; transition: all 0.2s; }
         .drop-zone.dragover { background: #fef5f6; border: 2px dashed #912338; }
         
-        /* MAGIC GRAY-OUT SYSTEM */
         .term-grayed .term-header { background-color: #e9ecef !important; color: #adb5bd !important; }
         .term-grayed .calc-cr, .term-grayed .limit-group { color: #adb5bd !important; }
         .term-grayed .val-click { background-color: transparent !important; color: #adb5bd !important; border-color: #dee2e6 !important; }
@@ -86,7 +83,6 @@
         .term-grayed .course-box:not(.wt) { opacity: 0.5; filter: grayscale(1); }
 
         .course-box { background: #fff; border: 1px solid #dce4ec; border-left: 4px solid #3498db; padding: 6px 8px; margin-bottom: 5px; border-radius: 4px; font-size: 11px; cursor: grab; box-shadow: 0 1px 2px rgba(0,0,0,0.05); line-height: 1.4; transition: all 0.15s;}
-        
         .course-box.wt { border-left-color: #27ae60 !important; background-color: #d5f5e3 !important; font-weight: bold; z-index: 100; position: relative; }
         .course-box.ecp { border-left-color: #f1c40f; background: #fffdf0; }
         .course-box.invalid-term { background-color: #ffebee !important; border-color: #ef9a9a !important; border-left-color: #d32f2f !important; color: #b71c1c !important; }
@@ -100,10 +96,8 @@
         .term-tag { display: inline-block; padding: 1px 4px; border-radius: 3px; font-size: 9px; font-weight: bold; color: white; margin-right: 2px; text-transform: uppercase; }
         .tag-sum { background: #d35400; } .tag-fall { background: #912338; } .tag-win { background: #3498db; } .tag-any { background: #7f8c8d; }
         .course-meta { font-size: 9px; color: #666; display: block; margin-top: 2px; }
-        .invalid-term .course-meta { color: #d32f2f; }
         
         #unallocatedZone { flex-grow: 1; overflow-y: auto; border: 1px solid #eee; background: #fcfcfc; padding: 5px;}
-        
         #courseInfoPanel { margin-top: 15px; padding: 15px; background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 6px; font-size: 11px; color: #555; }
         #info_title { margin:0 0 10px 0; color:#912338; border-bottom:1px solid #ddd; padding-bottom:6px; font-size:13px; font-weight: 700;}
         .info-row { display: flex; justify-content: space-between; margin-bottom: 4px; }
@@ -122,10 +116,7 @@
         
         <span style="font-weight: bold; color: #912338; font-size: 13px; margin-left: 10px;">Program Start:</span>
         <select id="startYear" onchange="handleStartYearChange()"></select>
-        <select id="startTerm" onchange="handleStartTermChange()">
-            <option value="Fall">Fall</option>
-            <option value="Winter">Winter</option>
-        </select>
+        <select id="startTerm" onchange="handleStartTermChange()"><option value="Fall">Fall</option><option value="Winter">Winter</option></select>
 
         <div style="width: 1px; height: 25px; background: #ddd; margin: 0 10px;"></div>
         
@@ -147,27 +138,11 @@
 </div>
 
 <div class="tools-container collapsed" id="toolsMenu">
-    <div class="tools-header" onclick="toggleTools()">
-        <span>🛠️ Advanced Control Panel & Quick Actions</span>
-        <span class="arrow">▼</span> 
-    </div>
+    <div class="tools-header" onclick="toggleTools()"><span>🛠️ Advanced Control Panel & Quick Actions</span><span>▼</span></div>
     <div class="tools-content">
-        <div class="tool-group">
-            <span class="tool-label">Sequence Actions</span>
-            <button class="btn-danger" onclick="resetAllCourses()">Reset All to Unallocated</button>
-        </div>
-        <div class="tool-group">
-            <span class="tool-label">Repeat Courses</span>
-            <select id="repeatCourseSelect" style="width: 250px; font-size: 11px;">
-                <option value="" disabled selected>Select course to repeat...</option>
-            </select>
-            <button onclick="addRepeatCourse()">I need to repeat this course</button>
-        </div>
-        <div class="tool-group">
-            <span class="tool-label">Auto-Placements</span>
-            <button id="moveEcpBtn">ALL ECP taken prior to Program</button>
-            <button id="wtStandardBtn" style="background:#2ecc71; color:white; border-color:#27ae60;">WT - default placement</button>
-        </div>
+        <div class="tool-group"><button class="btn-danger" onclick="resetAllCourses()">Reset All to Unallocated</button></div>
+        <div class="tool-group"><select id="repeatCourseSelect" style="width: 250px; font-size: 11px;"><option value="" disabled selected>Select course to repeat...</option></select><button onclick="addRepeatCourse()">I need to repeat this course</button></div>
+        <div class="tool-group"><button id="moveEcpBtn">ALL ECP taken prior to Program</button><button id="wtStandardBtn" style="background:#2ecc71; color:white; border-color:#27ae60;">WT - default placement</button></div>
         <div class="tool-group">
             <span class="tool-label">Global Default Courses</span>
             <button onclick="setGlobalLimits('ct', 6)">6 Courses</button>
@@ -191,75 +166,51 @@
 
 <div style="margin: 0 20px 15px 20px; display: flex; align-items: center;">
     <button class="btn-primary" id="generateBtn" disabled>Generate Sequence</button>
-    <span id="wt-warning" style="color:#c0392b; font-size:13px; font-weight:bold; display:none; margin-left: 15px;">⚠️ Place all Green WTs first!</span>
 </div>
 
 <div class="layout-wrapper" id="workspace">
     <div class="main-content">
-        <table>
-            <thead>
-                <tr>
-                    <th class="th-year">Year</th>
-                    <th class="th-summer">Summer</th>
-                    <th class="th-fall">Fall</th>
-                    <th class="th-winter">Winter</th>
-                </tr>
-            </thead>
-            <tbody id="tableBody">
-                <tr>
-                    <td class="year-label">Y 0 <span class="year-subtext" id="y0-label"></span></td>
-                    <td colspan="3" style="padding: 8px;">
-                        <div style="font-size: 11px; color: #7f8c8d; margin-bottom: 5px; font-weight: 600;">Exemptions & Transfer Credits (ECP)</div>
-                        <div class="drop-zone" id="zone_Y0_ANY" data-term="Y0_ANY" ondrop="drop(event)" ondragover="allowDrop(event)" ondragleave="dragLeave(event)" style="flex-direction: row; flex-wrap: wrap;"></div>
-                    </td>
-                </tr>
-            </tbody>
-        </table>
+        <div class="grid-box">
+            <table>
+                <thead><tr><th class="th-year">Year</th><th class="th-summer">Summer</th><th class="th-fall">Fall</th><th class="th-winter">Winter</th></tr></thead>
+                <tbody id="tableBody">
+                    <tr><td class="year-label">Y 0 <span class="year-subtext" id="y0-label"></span></td><td colspan="3" style="padding: 8px;"><div style="font-size: 11px; color: #7f8c8d; margin-bottom: 5px; font-weight: 600;">Exemptions & Transfer Credits (ECP)</div><div class="drop-zone" id="zone_Y0_ANY" data-term="Y0_ANY" ondrop="drop(event)" ondragover="allowDrop(event)" style="flex-direction: row; flex-wrap: wrap;"></div></td></tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <div class="validation-box" id="liveValidationBox">
+            <h4 style="margin: 0 0 10px 0; color: #333;">Live Sequence Check <span style="font-size:11px; color:#7f8c8d; font-weight:normal; float:right;">Updates automatically</span></h4>
+            <ul id="liveValidationList" style="margin: 0; padding-left: 20px; line-height: 1.6; font-size: 13px;">
+                <li style="color:#27ae60; font-weight:bold;">✅ Sequence looks perfect! All rules satisfied.</li>
+            </ul>
+        </div>
     </div>
     
     <div class="sidebar">
         <h4 style="margin: 0 0 10px 0; color: #912338; font-size: 14px; border-bottom: 2px solid #f0f0f0; padding-bottom: 8px;">Unallocated Courses</h4>
-        <div class="drop-zone" id="unallocatedZone" ondrop="drop(event)" ondragover="allowDrop(event)" ondragleave="dragLeave(event)"></div>
-        
+        <div class="drop-zone" id="unallocatedZone" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
         <div id="courseInfoPanel" style="display:none;">
             <h5 id="info_title">Course Name</h5>
             <div class="info-row"><span class="info-label">Type:</span><span class="info-val" id="info_type">-</span></div>
             <div class="info-row"><span class="info-label">Credits:</span><span class="info-val" id="info_cr">-</span></div>
             <div class="info-row"><span class="info-label">Terms:</span><span class="info-val" id="info_terms" style="color:#3498db; font-weight:700">-</span></div>
-            
-            <div style="margin-top:10px; padding-top:8px; border-top:1px dashed #ccc;">
-                <span class="info-label" style="color:#f57f17; font-size:10px;">PRE-REQUISITES:</span>
-                <p id="info_prereq" style="margin:2px 0 8px 0; color:#555; font-size:11px;">-</p>
-                
-                <span class="info-label" style="color:#fbc02d; font-size:10px;">CO-REQUISITES:</span>
-                <p id="info_coreq" style="margin:2px 0; color:#555; font-size:11px;">-</p>
-            </div>
-            
-            <div style="margin-top:10px; padding-top:8px; border-top:1px dashed #ccc;">
-                <span class="info-label" style="color:#0d47a1; font-size:10px;">IS PRE-REQ FOR:</span>
-                <p id="info_post_prereq" style="margin:2px 0 8px 0; color:#555; font-size:11px;">-</p>
-                
-                <span class="info-label" style="color:#1e88e5; font-size:10px;">IS CO-REQ FOR:</span>
-                <p id="info_post_coreq" style="margin:2px 0; color:#555; font-size:11px;">-</p>
-            </div>
+            <div style="margin-top:10px; padding-top:8px; border-top:1px dashed #ccc;"><span class="info-label" style="color:#f57f17; font-size:10px;">PRE-REQUISITES:</span><p id="info_prereq" style="margin:2px 0 8px 0; color:#555; font-size:11px;">-</p><span class="info-label" style="color:#fbc02d; font-size:10px;">CO-REQUISITES:</span><p id="info_coreq" style="margin:2px 0; color:#555; font-size:11px;">-</p></div>
+            <div style="margin-top:10px; padding-top:8px; border-top:1px dashed #ccc;"><span class="info-label" style="color:#0d47a1; font-size:10px;">IS PRE-REQ FOR:</span><p id="info_post_prereq" style="margin:2px 0 8px 0; color:#555; font-size:11px;">-</p><span class="info-label" style="color:#1e88e5; font-size:10px;">IS CO-REQ FOR:</span><p id="info_post_coreq" style="margin:2px 0; color:#555; font-size:11px;">-</p></div>
         </div>
     </div>
 </div>
 
 <script>
-    let coursesData = {};
-    let repeatedCoursesList = []; 
-    let defCrFW = 17, defCtFW = 5, defCrSum = 8, defCtSum = 2;
+    let coursesData = {}, repeatedCoursesList = [], defCrFW = 17, defCtFW = 5, defCrSum = 8, defCtSum = 2;
 
     document.addEventListener("DOMContentLoaded", () => {
         const currentYear = new Date().getFullYear();
         const startSelect = document.getElementById('startYear');
         for (let y = currentYear; y >= currentYear - 6; y--) { startSelect.add(new Option(y, y)); }
-        updateCoopYears();
-        updateAllSelectColors();
+        updateCoopYears(); updateAllSelectColors();
     });
 
-    // Sortare DOM: WT sus, restul alfabetic
     function sortUnallocatedDOM() {
         const u = document.getElementById('unallocatedZone');
         let items = Array.from(u.children);
@@ -289,460 +240,261 @@
 
     function showLimitPopup(element, type, termStr) {
         document.querySelectorAll('.limit-popup').forEach(p => p.remove());
-
-        const popup = document.createElement('div');
-        popup.className = 'limit-popup';
-
-        let values = [];
-        if(type === 'cr') {
-            for(let i=0; i<=21; i+=3) values.push(i);
-        } else {
-            let max = termStr.includes('SUM') ? 3 : 6;
-            for(let i=0; i<=max; i++) values.push(i);
-        }
-
+        const popup = document.createElement('div'); popup.className = 'limit-popup';
+        let values = (type === 'cr') ? [0,3,6,9,12,15,18,21] : (termStr.includes('SUM') ? [0,1,2,3] : [0,1,2,3,4,5,6]);
         values.forEach(v => {
-            const btn = document.createElement('div');
-            btn.innerText = v;
-            btn.onclick = (e) => {
-                e.stopPropagation();
-                element.innerText = v;
-                element.dataset.userVal = v; 
-                popup.remove();
-                enforceAndHighlightTerms(); 
-            };
+            const btn = document.createElement('div'); btn.innerText = v;
+            btn.onclick = (e) => { e.stopPropagation(); element.innerText = v; element.dataset.userVal = v; popup.remove(); enforceAndHighlightTerms(); };
             popup.appendChild(btn);
         });
-
         document.body.appendChild(popup);
         const rect = element.getBoundingClientRect();
         popup.style.top = (rect.bottom + window.scrollY + 5) + 'px';
         popup.style.left = (rect.left + window.scrollX - 10) + 'px';
-
         setTimeout(() => {
-            const closeHandler = (e) => {
-                if (!popup.contains(e.target) && e.target !== element) {
-                    popup.remove();
-                    window.removeEventListener('click', closeHandler);
-                }
-            };
-            window.addEventListener('click', closeHandler);
+            const closer = (e) => { if (!popup.contains(e.target) && e.target !== element) { popup.remove(); window.removeEventListener('click', closer); } };
+            window.addEventListener('click', closer);
         }, 10);
     }
 
     function populateRepeatSelect() {
         const sel = document.getElementById('repeatCourseSelect');
         sel.innerHTML = '<option value="" disabled selected>Select course to repeat...</option>';
-        const sortedIds = Object.keys(coursesData).sort((a,b) => coursesData[a].full_name.localeCompare(coursesData[b].full_name));
-        sortedIds.forEach(id => {
-            if(!coursesData[id].is_ecp && !coursesData[id].is_wt && coursesData[id].type !== "REPEAT") {
-                sel.add(new Option(coursesData[id].full_name, id));
-            }
+        Object.keys(coursesData).sort((a,b) => coursesData[a].full_name.localeCompare(coursesData[b].full_name)).forEach(id => {
+            if(!coursesData[id].is_ecp && !coursesData[id].is_wt && coursesData[id].type !== "REPEAT") sel.add(new Option(coursesData[id].full_name, id));
         });
     }
 
     function handleStartYearChange() { 
         const sYear = document.getElementById('startYear').value;
         if (document.getElementById('coopRegistered').checked) {
-            updateCoopYears(); 
-            document.getElementById('coopStartYear').value = sYear;
-            document.getElementById('coopStartTerm').value = "FALL";
+            updateCoopYears(); document.getElementById('coopStartYear').value = sYear; document.getElementById('coopStartTerm').value = "FALL";
         } else { updateCoopYears(); }
         updateAllSelectColors(); triggerGridRebuild(); 
     }
 
     function handleStartTermChange() {
-        if (document.getElementById('coopRegistered').checked) {
-            document.getElementById('coopStartYear').value = document.getElementById('startYear').value;
-            document.getElementById('coopStartTerm').value = "FALL";
-        }
+        if (document.getElementById('coopRegistered').checked) { document.getElementById('coopStartYear').value = document.getElementById('startYear').value; document.getElementById('coopStartTerm').value = "FALL"; }
         resetAllCourses(); updateAllSelectColors(); triggerGridRebuild();
     }
 
     function handleCoopChange() { enforceCoopLogic(); updateAllSelectColors(); enforceAndHighlightTerms(); }
 
     function updateCoopYears() {
-        const coopSelect = document.getElementById('coopStartYear');
-        const startYear = parseInt(document.getElementById('startYear').value);
-        const currentYear = new Date().getFullYear();
-        const prevSelected = coopSelect.value;
-        coopSelect.innerHTML = '';
-        const maxYear = currentYear + 2;
-        for (let y = startYear; y <= maxYear; y++) { coopSelect.add(new Option(y, y)); }
-        if (prevSelected && prevSelected >= startYear && prevSelected <= maxYear) coopSelect.value = prevSelected;
+        const coopSelect = document.getElementById('coopStartYear'), startYear = parseInt(document.getElementById('startYear').value), currentYear = new Date().getFullYear();
+        const prevSelected = coopSelect.value; coopSelect.innerHTML = '';
+        for (let y = startYear; y <= currentYear + 2; y++) { coopSelect.add(new Option(y, y)); }
+        if (prevSelected && prevSelected >= startYear && prevSelected <= currentYear + 2) coopSelect.value = prevSelected;
     }
 
     function toggleCoopOptions() {
         const isChecked = document.getElementById('coopRegistered').checked;
         document.getElementById('coopDetailsGroup').style.opacity = isChecked ? '1' : '0.4';
-        document.getElementById('coopStartTerm').disabled = !isChecked;
-        document.getElementById('coopStartYear').disabled = !isChecked;
+        document.getElementById('coopStartTerm').disabled = !isChecked; document.getElementById('coopStartYear').disabled = !isChecked;
         if(isChecked) handleStartYearChange();
         
+        // Returnam automat WT-urile in Unallocated si le ascundem daca debifam Coop
         document.querySelectorAll('.course-box.wt').forEach(box => {
-            box.style.display = isChecked ? 'block' : 'none';
             if(!isChecked && box.parentElement.id !== 'unallocatedZone') {
                 document.getElementById('unallocatedZone').appendChild(box);
             }
+            box.style.display = isChecked ? 'block' : 'none';
         });
         
-        updateAllSelectColors(); enforceAndHighlightTerms();
+        updateAllSelectColors(); enforceAndHighlightTerms(); runLiveCheck();
     }
 
     function getTermScore(year, term) {
-        if(term === 'WIN') return year * 10 + 1;
-        if(term === 'SUM1') return year * 10 + 2;
-        if(term === 'SUM2') return year * 10 + 3;
-        if(term === 'FALL') return year * 10 + 4;
-        return 0;
+        if(term === 'WIN') return year * 10 + 1; if(term === 'SUM1') return year * 10 + 2; if(term === 'SUM2') return year * 10 + 3; if(term === 'FALL') return year * 10 + 4; return 0;
     }
 
     function enforceCoopLogic() {
-        const sYear = parseInt(document.getElementById('startYear').value);
-        const sTerm = document.getElementById('startTerm').value;
-        const cYear = parseInt(document.getElementById('coopStartYear').value);
-        const cTerm = document.getElementById('coopStartTerm').value;
-        
+        const sYear = parseInt(document.getElementById('startYear').value), sTerm = document.getElementById('startTerm').value;
+        const cYear = parseInt(document.getElementById('coopStartYear').value), cTerm = document.getElementById('coopStartTerm').value;
         if (getTermScore(cYear, cTerm) < getTermScore(sYear, sTerm === 'Fall' ? 'FALL' : 'WIN')) {
-            document.getElementById('coopStartYear').value = sYear;
-            document.getElementById('coopStartTerm').value = sTerm === 'Fall' ? 'FALL' : 'WIN';
+            document.getElementById('coopStartYear').value = sYear; document.getElementById('coopStartTerm').value = sTerm === 'Fall' ? 'FALL' : 'WIN';
         }
     }
 
     function setGlobalLimits(type, value) {
-        if(type === 'cr') defCrFW = value;
-        if(type === 'ct') defCtFW = value;
-        document.querySelectorAll(`.val-click.${type}-val`).forEach(span => {
-            if(!span.id.includes('SUM')) delete span.dataset.userVal;
-        });
+        if(type === 'cr') defCrFW = value; if(type === 'ct') defCtFW = value;
+        document.querySelectorAll(`.val-click.${type}-val`).forEach(span => { if(!span.id.includes('SUM')) delete span.dataset.userVal; });
         enforceAndHighlightTerms();
     }
 
     function enforceAndHighlightTerms() {
-        const pTerm = document.getElementById('startTerm').value;
-        const pYear = parseInt(document.getElementById('startYear').value);
+        const pTerm = document.getElementById('startTerm').value, pYear = parseInt(document.getElementById('startYear').value);
         const baseYear = pTerm === 'Winter' ? pYear - 1 : pYear;
         const startScore = getTermScore(pYear, pTerm === 'Fall' ? 'FALL' : 'WIN');
-
         document.getElementById('y0-label').innerText = `PRIOR to ${pTerm} ${pYear}`;
 
         for(let y=1; y<=7; y++) {
             let sumHasWT = false;
-            let sum1Zone = document.getElementById(`zone_Y${y}_SUM1`);
-            let sum2Zone = document.getElementById(`zone_Y${y}_SUM2`);
-            
+            let sum1Zone = document.getElementById(`zone_Y${y}_SUM1`), sum2Zone = document.getElementById(`zone_Y${y}_SUM2`);
             if (sum1Zone && Array.from(sum1Zone.children).some(el => el.classList.contains('wt') && el.style.display !== 'none')) sumHasWT = true;
             if (sum2Zone && Array.from(sum2Zone.children).some(el => el.classList.contains('wt') && el.style.display !== 'none')) sumHasWT = true;
 
             ['SUM1', 'SUM2', 'FALL', 'WIN'].forEach(t => {
-                let termStr = `Y${y}_${t}`;
-                let termYear = (t === 'WIN') ? (baseYear + y) : (baseYear + y - 1);
+                let termStr = `Y${y}_${t}`, termYear = (t === 'WIN') ? (baseYear + y) : (baseYear + y - 1);
                 let cellScore = getTermScore(termYear, t);
-                
-                const crSpan = document.getElementById(`maxcr_${termStr}`);
-                const ctSpan = document.getElementById(`maxct_${termStr}`);
-                const zone = document.getElementById(`zone_${termStr}`);
-                const container = document.getElementById(`cont_${termStr}`);
-                
+                const crSpan = document.getElementById(`maxcr_${termStr}`), ctSpan = document.getElementById(`maxct_${termStr}`);
+                const zone = document.getElementById(`zone_${termStr}`), container = document.getElementById(`cont_${termStr}`);
                 if (!zone || !container || !crSpan || !ctSpan) return;
                 
                 container.classList.remove('term-grayed');
-                
-                let isBlockedByWT = false;
-                if (t.includes('SUM')) {
-                    isBlockedByWT = sumHasWT; 
-                } else {
-                    isBlockedByWT = Array.from(zone.children).some(el => el.classList.contains('wt') && el.style.display !== 'none');
-                }
+                let isBlockedByWT = t.includes('SUM') ? sumHasWT : Array.from(zone.children).some(el => el.classList.contains('wt') && el.style.display !== 'none');
 
                 if (cellScore < startScore || isBlockedByWT) {
-                    crSpan.innerText = "0"; ctSpan.innerText = "0";
-                    container.classList.add('term-grayed');
+                    crSpan.innerText = "0"; ctSpan.innerText = "0"; container.classList.add('term-grayed');
                 } else {
-                    let defCr = t.includes('SUM') ? defCrSum : defCrFW;
-                    let defCt = t.includes('SUM') ? defCtSum : defCtFW;
+                    let defCr = t.includes('SUM') ? defCrSum : defCrFW, defCt = t.includes('SUM') ? defCtSum : defCtFW;
                     crSpan.innerText = crSpan.dataset.userVal !== undefined ? crSpan.dataset.userVal : defCr;
                     ctSpan.innerText = ctSpan.dataset.userVal !== undefined ? ctSpan.dataset.userVal : defCt;
-                    
-                    if (crSpan.innerText === "0" || ctSpan.innerText === "0") {
-                        container.classList.add('term-grayed');
-                    }
+                    if (crSpan.innerText === "0" || ctSpan.innerText === "0") container.classList.add('term-grayed');
                 }
             });
         }
         updateCredits();
     }
 
-    function triggerGridRebuild() {
-        if(document.getElementById('workspace').style.visibility === 'visible') {
-            buildGrid(); enforceAndHighlightTerms();
-        }
-    }
-
-    function toggleTools() { document.getElementById('toolsMenu').classList.toggle('collapsed'); }
-
-    function resetAllCourses() {
-        const unalloc = document.getElementById('unallocatedZone');
-        document.querySelectorAll('td .drop-zone').forEach(z => {
-            Array.from(z.children).forEach(c => unalloc.appendChild(c));
-        });
-        sortUnallocatedDOM();
-        updateCredits(); checkWT(); clearAllHighlights(); enforceAndHighlightTerms();
-    }
-
-    function addRepeatCourse() {
-        const sel = document.getElementById('repeatCourseSelect');
-        const cid = sel.value;
-        if(!cid) return;
-        
-        const orig = coursesData[cid];
-        const fakeId = "REP_" + cid;
-        if(coursesData[fakeId]) { alert("Already added!"); return; }
-        
-        repeatedCoursesList.push(cid);
-        orig.prereqs = (orig.prereqs && orig.prereqs !== 'None' && orig.prereqs !== 'N/A') ? orig.prereqs + ", " + fakeId : fakeId;
-        
-        coursesData[fakeId] = {
-            id: fakeId, display: `1st time (to repeat) ${orig.full_name}`, full_name: `1st time (to repeat) ${orig.full_name}`,
-            title: "Previous attempt", credit: 0, type: "REPEAT", is_wt: false, is_ecp: false,
-            prereqs: "None", coreqs: "None", is_prereq_for: cid, is_coreq_for: "None", terms: orig.terms
-        };
-        
-        document.getElementById('unallocatedZone').appendChild(createCourseElement(fakeId));
-        sortUnallocatedDOM();
-        alert(`Block created for ${orig.full_name}! Place it BEFORE the original course.`);
-    }
-
-    function getCourseHTML(c) {
-        let typeStr = c.type.toUpperCase();
-        if(typeStr.includes("ENG") && typeStr.includes("CORE")) typeStr = "<b>engCORE</b>";
-        else if(typeStr.includes("PRG") && typeStr.includes("CORE")) typeStr = "<b>prgCORE</b>";
-        else if(typeStr === "REPEAT") typeStr = "<b>REPEAT</b>";
-        else if(typeStr.includes("TE")) typeStr = "TE"; else typeStr = "Gen";
-
-        const orderMap = { 'SUM1': 1, 'SUM2': 2, 'FALL': 3, 'WIN': 4 };
-        const colorMap = { 'SUM1': 'tag-sum', 'SUM2': 'tag-sum', 'FALL': 'tag-fall', 'WIN': 'tag-win' };
-        
-        let termsArr = c.terms.split(',').map(t => t.trim().toUpperCase().replace("WINTER","WIN").replace("SUM ","SUM")).filter(t => t && t !== "N/A");
-        termsArr.sort((a, b) => (orderMap[a] || 99) - (orderMap[b] || 99));
-        let termHTML = (c.is_wt || c.is_ecp) ? '<span class="term-tag tag-any">ANY</span>' : termsArr.map(t => `<span class="term-tag ${colorMap[t] || 'tag-any'}">${t}</span>`).join('');
-
-        let dispCr = (c.is_wt || typeStr.includes("REPEAT")) ? 0 : c.credit;
-
-        return `
-            <div style="font-weight: bold;">${c.full_name} (${dispCr} cr)</div>
-            <div style="font-style: italic; font-size: 10px; color: #555; margin: 2px 0; line-height: 1.1;">${c.title || ''}</div>
-            <span class="course-meta">[${typeStr}] ${termHTML}</span>
-        `;
-    }
-
     const buildGrid = () => {
         const tbody = document.getElementById('tableBody');
         const y0 = tbody.rows[0]; tbody.innerHTML = ''; tbody.appendChild(y0);
-        
-        const pTerm = document.getElementById('startTerm').value;
-        const pYear = parseInt(document.getElementById('startYear').value);
-        const baseYear = pTerm === 'Winter' ? pYear - 1 : pYear;
+        const pTerm = document.getElementById('startTerm').value, pYear = parseInt(document.getElementById('startYear').value), baseYear = pTerm === 'Winter' ? pYear - 1 : pYear;
 
         for(let y=1; y<=7; y++){
             const tr = document.createElement('tr');
             tr.innerHTML = `
                 <td class="year-label">Y ${y} <span class="year-subtext">${baseYear+y-1}-${baseYear+y}</span></td>
-                
                 <td class="col-summer-bg" style="padding: 0; vertical-align: top;">
                     <div style="display: flex; flex-direction: column; height: 100%; min-height: 120px;">
                         <div class="term-container" id="cont_Y${y}_SUM1" style="flex: 1; border-bottom: 3px solid #e9ecef;">
                             <div class="term-header"><span>Cr: <span class="calc-cr" id="cr_Y${y}_SUM1">0</span></span><div class="limit-group">MaxCr:<span class="val-click cr-val" id="maxcr_Y${y}_SUM1" onclick="showLimitPopup(this, 'cr', 'Y${y}_SUM1')">8</span> Max # courses:<span class="val-click ct-val" id="maxct_Y${y}_SUM1" onclick="showLimitPopup(this, 'ct', 'Y${y}_SUM1')">2</span></div></div>
-                            <div class="drop-zone" id="zone_Y${y}_SUM1" data-term="Y${y}_SUM1" ondrop="drop(event)" ondragover="allowDrop(event)" ondragleave="dragLeave(event)"></div>
+                            <div class="drop-zone" id="zone_Y${y}_SUM1" data-term="Y${y}_SUM1" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
                         </div>
                         <div class="term-container" id="cont_Y${y}_SUM2" style="flex: 1;">
                             <div class="term-header"><span>Cr: <span class="calc-cr" id="cr_Y${y}_SUM2">0</span></span><div class="limit-group">MaxCr:<span class="val-click cr-val" id="maxcr_Y${y}_SUM2" onclick="showLimitPopup(this, 'cr', 'Y${y}_SUM2')">8</span> Max # courses:<span class="val-click ct-val" id="maxct_Y${y}_SUM2" onclick="showLimitPopup(this, 'ct', 'Y${y}_SUM2')">2</span></div></div>
-                            <div class="drop-zone" id="zone_Y${y}_SUM2" data-term="Y${y}_SUM2" ondrop="drop(event)" ondragover="allowDrop(event)" ondragleave="dragLeave(event)"></div>
+                            <div class="drop-zone" id="zone_Y${y}_SUM2" data-term="Y${y}_SUM2" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
                         </div>
                     </div>
                 </td>
-                
                 <td class="col-fall-bg" style="padding: 0; vertical-align: top;">
                     <div class="term-container" id="cont_Y${y}_FALL" style="height: 100%; min-height: 120px;">
                         <div class="term-header"><span>Cr: <span class="calc-cr" id="cr_Y${y}_FALL">0</span></span><div class="limit-group">MaxCr:<span class="val-click cr-val" id="maxcr_Y${y}_FALL" onclick="showLimitPopup(this, 'cr', 'Y${y}_FALL')">17</span> Max # courses:<span class="val-click ct-val" id="maxct_Y${y}_FALL" onclick="showLimitPopup(this, 'ct', 'Y${y}_FALL')">5</span></div></div>
-                        <div class="drop-zone" id="zone_Y${y}_FALL" data-term="Y${y}_FALL" ondrop="drop(event)" ondragover="allowDrop(event)" ondragleave="dragLeave(event)"></div>
+                        <div class="drop-zone" id="zone_Y${y}_FALL" data-term="Y${y}_FALL" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
                     </div>
                 </td>
-                
                 <td class="col-winter-bg" style="padding: 0; vertical-align: top;">
                     <div class="term-container" id="cont_Y${y}_WIN" style="height: 100%; min-height: 120px;">
                         <div class="term-header"><span>Cr: <span class="calc-cr" id="cr_Y${y}_WIN">0</span></span><div class="limit-group">MaxCr:<span class="val-click cr-val" id="maxcr_Y${y}_WIN" onclick="showLimitPopup(this, 'cr', 'Y${y}_WIN')">17</span> Max # courses:<span class="val-click ct-val" id="maxct_Y${y}_WIN" onclick="showLimitPopup(this, 'ct', 'Y${y}_WIN')">5</span></div></div>
-                        <div class="drop-zone" id="zone_Y${y}_WIN" data-term="Y${y}_WIN" ondrop="drop(event)" ondragover="allowDrop(event)" ondragleave="dragLeave(event)"></div>
+                        <div class="drop-zone" id="zone_Y${y}_WIN" data-term="Y${y}_WIN" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
                     </div>
                 </td>`;
             tbody.appendChild(tr);
         }
     };
 
-    function parseCourseIDs(str) {
-        if (!str || str === 'None' || str === 'N/A') return [];
-        const matches = str.match(/(?:REP_)?[A-Z]{3,4}\s?\d{3}[A-Z]?|WT\d/gi);
-        return matches ? matches.map(m => m.replace(/\s+(?!\()/, '').toUpperCase()) : [];
+    function triggerGridRebuild() { if(document.getElementById('workspace').style.visibility === 'visible') { buildGrid(); enforceAndHighlightTerms(); } }
+    function toggleTools() { document.getElementById('toolsMenu').classList.toggle('collapsed'); }
+    
+    function resetAllCourses() {
+        const unalloc = document.getElementById('unallocatedZone');
+        document.querySelectorAll('td .drop-zone').forEach(z => { Array.from(z.children).forEach(c => unalloc.appendChild(c)); });
+        sortUnallocatedDOM(); updateCredits(); checkWT(); clearAllHighlights(); enforceAndHighlightTerms(); runLiveCheck();
     }
 
-    function clearAllHighlights() {
-        document.querySelectorAll('.course-box').forEach(b => b.classList.remove('selected', 'highlight-prereq', 'highlight-coreq', 'highlight-postreq', 'highlight-postcoreq'));
-        document.getElementById('courseInfoPanel').style.display = 'none';
+    function addRepeatCourse() {
+        const sel = document.getElementById('repeatCourseSelect'); const cid = sel.value; if(!cid) return;
+        const orig = coursesData[cid], fakeId = "REP_" + cid; if(coursesData[fakeId]) { alert("Already added!"); return; }
+        repeatedCoursesList.push(cid);
+        orig.prereqs = (orig.prereqs && orig.prereqs !== 'None' && orig.prereqs !== 'N/A') ? orig.prereqs + ", " + fakeId : fakeId;
+        coursesData[fakeId] = { id: fakeId, display: `1st time (to repeat) ${orig.full_name}`, full_name: `1st time (to repeat) ${orig.full_name}`, title: "Previous attempt", credit: 0, type: "REPEAT", is_wt: false, is_ecp: false, prereqs: "None", coreqs: "None", is_prereq_for: cid, is_coreq_for: "None", terms: orig.terms };
+        document.getElementById('unallocatedZone').appendChild(createCourseElement(fakeId)); sortUnallocatedDOM();
+        alert(`Block created for ${orig.full_name}! Place it BEFORE the original course.`); runLiveCheck();
     }
 
-    document.addEventListener('click', function(e) {
-        if (!e.target.closest('.course-box') && !e.target.closest('#courseInfoPanel') && !e.target.closest('.tools-container')) clearAllHighlights();
-    });
+    function getCourseHTML(c) {
+        let typeStr = c.type.toUpperCase();
+        if(typeStr.includes("ENG") && typeStr.includes("CORE")) typeStr = "<b>engCORE</b>"; else if(typeStr.includes("PRG") && typeStr.includes("CORE")) typeStr = "<b>prgCORE</b>"; else if(typeStr === "REPEAT") typeStr = "<b>REPEAT</b>"; else if(typeStr.includes("TE")) typeStr = "TE"; else typeStr = "Gen";
+        const orderMap = { 'SUM1': 1, 'SUM2': 2, 'FALL': 3, 'WIN': 4 }; const colorMap = { 'SUM1': 'tag-sum', 'SUM2': 'tag-sum', 'FALL': 'tag-fall', 'WIN': 'tag-win' };
+        let termsArr = c.terms.split(',').map(t => t.trim().toUpperCase().replace("WINTER","WIN").replace("SUM ","SUM")).filter(t => t && t !== "N/A");
+        termsArr.sort((a, b) => (orderMap[a] || 99) - (orderMap[b] || 99));
+        let termHTML = (c.is_wt || c.is_ecp) ? '<span class="term-tag tag-any">ANY</span>' : termsArr.map(t => `<span class="term-tag ${colorMap[t] || 'tag-any'}">${t}</span>`).join('');
+        let dispCr = (c.is_wt || typeStr.includes("REPEAT")) ? 0 : c.credit;
+        return `<div style="font-weight: bold;">${c.full_name} (${dispCr} cr)</div><div style="font-style: italic; font-size: 10px; color: #555; margin: 2px 0; line-height: 1.1;">${c.title || ''}</div><span class="course-meta">[${typeStr}] ${termHTML}</span>`;
+    }
 
-    function highlightPreReqs(cid, isCoReq=false) {
+    function createCourseElement(cid) {
+        const c = coursesData[cid], div = document.createElement('div'); div.id = cid; div.className = `course-box ${c.is_wt ? 'wt' : ''} ${c.is_ecp ? 'ecp' : ''}`; div.draggable = true; div.innerHTML = getCourseHTML(c); 
+        div.ondragstart = e => { e.dataTransfer.setData("text", e.target.id); showCourseInfo(e.target.id); }; div.onclick = (e) => { e.stopPropagation(); showCourseInfo(cid); }; return div;
+    }
+
+    function parseCourseIDs(str) { if (!str || str === 'None' || str === 'N/A') return []; return str.match(/(?:REP_)?[A-Z]{3,4}\s?\d{3}[A-Z]?|WT\d/gi)?.map(m => m.replace(/\s+(?!\()/, '').toUpperCase()) || []; }
+
+    function clearAllHighlights() { document.querySelectorAll('.course-box').forEach(b => b.classList.remove('selected', 'highlight-prereq', 'highlight-coreq', 'highlight-postreq', 'highlight-postcoreq')); document.getElementById('courseInfoPanel').style.display = 'none'; }
+    document.addEventListener('click', function(e) { if (!e.target.closest('.course-box') && !e.target.closest('#courseInfoPanel') && !e.target.closest('.tools-container')) clearAllHighlights(); });
+
+    function highlightPreReqs(cid) {
         if(!coursesData[cid]) return;
-        parseCourseIDs(coursesData[cid].prereqs).forEach(reqId => {
-            const el = document.getElementById(reqId);
-            if (el && !el.classList.contains('highlight-prereq')) {
-                el.classList.add('highlight-prereq'); highlightPreReqs(reqId, false); 
-            }
-        });
-        parseCourseIDs(coursesData[cid].coreqs).forEach(reqId => {
-            const el = document.getElementById(reqId);
-            if (el && !el.classList.contains('highlight-coreq') && !el.classList.contains('highlight-prereq')) el.classList.add('highlight-coreq');
-        });
+        parseCourseIDs(coursesData[cid].prereqs).forEach(reqId => { const el = document.getElementById(reqId); if (el && !el.classList.contains('highlight-prereq')) { el.classList.add('highlight-prereq'); highlightPreReqs(reqId); } });
+        parseCourseIDs(coursesData[cid].coreqs).forEach(reqId => { const el = document.getElementById(reqId); if (el && !el.classList.contains('highlight-coreq') && !el.classList.contains('highlight-prereq')) el.classList.add('highlight-coreq'); });
     }
 
-    function highlightPostReqs(cid, isCoReq=false) {
+    function highlightPostReqs(cid) {
         if(!coursesData[cid]) return;
-        parseCourseIDs(coursesData[cid].is_prereq_for).forEach(postId => {
-            const el = document.getElementById(postId);
-            if (el && !el.classList.contains('highlight-postreq')) {
-                el.classList.add('highlight-postreq'); highlightPostReqs(postId, false); 
-            }
-        });
-        parseCourseIDs(coursesData[cid].is_coreq_for).forEach(postId => {
-            const el = document.getElementById(postId);
-            if (el && !el.classList.contains('highlight-postcoreq') && !el.classList.contains('highlight-postreq')) el.classList.add('highlight-postcoreq');
-        });
+        parseCourseIDs(coursesData[cid].is_prereq_for).forEach(postId => { const el = document.getElementById(postId); if (el && !el.classList.contains('highlight-postreq')) { el.classList.add('highlight-postreq'); highlightPostReqs(postId); } });
+        parseCourseIDs(coursesData[cid].is_coreq_for).forEach(postId => { const el = document.getElementById(postId); if (el && !el.classList.contains('highlight-postcoreq') && !el.classList.contains('highlight-postreq')) el.classList.add('highlight-postcoreq'); });
     }
 
     function showCourseInfo(cid) {
-        const c = coursesData[cid];
-        if (!c) return;
-        clearAllHighlights();
-        document.getElementById(cid)?.classList.add('selected');
-        highlightPreReqs(cid); highlightPostReqs(cid);
-        
-        document.getElementById('courseInfoPanel').style.display = 'block';
+        const c = coursesData[cid]; if (!c) return; clearAllHighlights(); document.getElementById(cid)?.classList.add('selected');
+        highlightPreReqs(cid); highlightPostReqs(cid); document.getElementById('courseInfoPanel').style.display = 'block';
         document.getElementById('info_title').innerText = c.title ? `${c.full_name} - ${c.title}` : (c.full_name || c.display);
-        document.getElementById('info_type').innerText = c.type || '-';
-        document.getElementById('info_cr').innerText = c.credit || '0';
-        document.getElementById('info_terms').innerText = c.terms || '-';
-        
+        document.getElementById('info_type').innerText = c.type || '-'; document.getElementById('info_cr').innerText = c.credit || '0'; document.getElementById('info_terms').innerText = c.terms || '-';
         document.getElementById('info_prereq').innerText = (c.prereqs && c.prereqs !== 'None' && c.prereqs !== 'N/A') ? c.prereqs : 'None';
         document.getElementById('info_coreq').innerText = (c.coreqs && c.coreqs !== 'None' && c.coreqs !== 'N/A') ? c.coreqs : 'None';
         document.getElementById('info_post_prereq').innerText = (c.is_prereq_for && c.is_prereq_for !== 'None') ? c.is_prereq_for : 'None';
         document.getElementById('info_post_coreq').innerText = (c.is_coreq_for && c.is_coreq_for !== 'None') ? c.is_coreq_for : 'None';
     }
 
-    function createCourseElement(cid) {
-        const c = coursesData[cid];
-        const div = document.createElement('div'); 
-        div.id = cid; 
-        div.className = `course-box ${c.is_wt ? 'wt' : ''} ${c.is_ecp ? 'ecp' : ''}`;
-        div.draggable = true; 
-        div.innerHTML = getCourseHTML(c); 
-        div.ondragstart = e => { e.dataTransfer.setData("text", e.target.id); showCourseInfo(e.target.id); };
-        div.onclick = (e) => { e.stopPropagation(); showCourseInfo(cid); };
-        return div;
-    }
-
     document.getElementById('programSelect').onchange = async function() {
-        repeatedCoursesList = []; 
-        document.getElementById('workspace').style.visibility = 'visible'; 
-        // Auto-open Advanced Control Panel cand e selectat programul
-        document.getElementById('toolsMenu').classList.remove('collapsed');
-        
-        buildGrid(); enforceAndHighlightTerms(); 
-        document.getElementById('courseInfoPanel').style.display = 'none';
-
+        repeatedCoursesList = []; document.getElementById('workspace').style.visibility = 'visible'; document.getElementById('toolsMenu').classList.remove('collapsed');
+        buildGrid(); enforceAndHighlightTerms(); document.getElementById('courseInfoPanel').style.display = 'none';
         const res = await fetch('/get_courses', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({program:this.value}) });
-        const data = await res.json();
-        const unalloc = document.getElementById('unallocatedZone'); 
-        unalloc.innerHTML = ''; coursesData = {};
-        
+        const data = await res.json(); const unalloc = document.getElementById('unallocatedZone'); unalloc.innerHTML = ''; coursesData = {};
         data.courses.forEach(c => { coursesData[c.id] = c; unalloc.appendChild(createCourseElement(c.id)); });
-        Object.keys(data.pre_placed).forEach(tid => {
-            const z = document.getElementById(`zone_${tid}`);
-            if(z) data.pre_placed[tid].forEach(cid => { const el = document.getElementById(cid); if(el) z.appendChild(el); });
-        });
-        
-        sortUnallocatedDOM();
-        populateRepeatSelect(); toggleCoopOptions(); updateCredits(); checkWT(); enforceAndHighlightTerms();
+        Object.keys(data.pre_placed).forEach(tid => { const z = document.getElementById(`zone_${tid}`); if(z) data.pre_placed[tid].forEach(cid => { const el = document.getElementById(cid); if(el) z.appendChild(el); }); });
+        sortUnallocatedDOM(); populateRepeatSelect(); toggleCoopOptions(); updateCredits(); checkWT(); enforceAndHighlightTerms(); runLiveCheck();
     };
 
     function allowDrop(e) { e.preventDefault(); e.currentTarget.classList.add('dragover'); }
     function dragLeave(e) { e.currentTarget.classList.remove('dragover'); }
     
     function drop(e) {
-        e.preventDefault(); 
-        const targetZone = e.target.closest('.drop-zone');
-        if(targetZone) targetZone.classList.remove('dragover');
-        const id = e.dataTransfer.getData("text"); 
-        const el = document.getElementById(id);
-        if(el && targetZone) { 
-            targetZone.appendChild(el); 
-            if(targetZone.id === 'unallocatedZone') sortUnallocatedDOM();
-            enforceAndHighlightTerms();
-            updateCredits(); checkWT(); 
-        }
-    }
-
-    function validateTerms() {
-        const mapping = { 'FALL': 'Fall', 'WIN': 'Winter', 'SUM1': 'Sum 1', 'SUM2': 'Sum 2' };
-        document.querySelectorAll('.course-box').forEach(box => box.classList.remove('invalid-term'));
-        for(let y=1; y<=7; y++) {
-            ['SUM1', 'SUM2', 'FALL', 'WIN'].forEach(t => {
-                const zone = document.getElementById(`zone_Y${y}_${t}`);
-                if(!zone) return;
-                Array.from(zone.children).forEach(el => {
-                    const c = coursesData[el.id];
-                    if(!c || c.is_wt || c.is_ecp || c.type === "REPEAT") return;
-                    if(!c.terms.toLowerCase().includes(mapping[t].toLowerCase())) el.classList.add('invalid-term');
-                });
-            });
-        }
+        e.preventDefault(); const targetZone = e.target.closest('.drop-zone'); if(targetZone) targetZone.classList.remove('dragover');
+        const id = e.dataTransfer.getData("text"), el = document.getElementById(id);
+        if(el && targetZone) { targetZone.appendChild(el); if(targetZone.id === 'unallocatedZone') sortUnallocatedDOM(); enforceAndHighlightTerms(); updateCredits(); checkWT(); runLiveCheck(); }
     }
 
     function updateCredits() {
         for(let y=1; y<=7; y++) {
             ['SUM1', 'SUM2', 'FALL', 'WIN'].forEach(t => {
-                let total = 0; 
-                const zone = document.getElementById(`zone_Y${y}_${t}`);
-                if(!zone) return;
+                let total = 0, zone = document.getElementById(`zone_Y${y}_${t}`); if(!zone) return;
                 Array.from(zone.children).forEach(b => {
-                    if (b.style.display !== 'none') {
-                        const isSpc = b.classList.contains('wt') || (coursesData[b.id] && coursesData[b.id].type === "REPEAT");
-                        total += isSpc ? 0 : (coursesData[b.id] ? coursesData[b.id].credit : 0);
-                    }
+                    const isSpc = b.classList.contains('wt') || (coursesData[b.id] && coursesData[b.id].type === "REPEAT");
+                    total += isSpc ? 0 : (coursesData[b.id] ? coursesData[b.id].credit : 0);
                 });
                 const crSpan = document.getElementById(`cr_Y${y}_${t}`);
-                if(crSpan) {
-                    crSpan.innerText = total.toFixed(1);
-                    const limitVal = parseFloat(document.getElementById(`maxcr_Y${y}_${t}`).innerText);
-                    if (limitVal > 0 && total > limitVal) crSpan.style.color = '#c0392b'; else crSpan.style.color = '#912338'; 
-                }
+                if(crSpan) { crSpan.innerText = total.toFixed(1); const limitVal = parseFloat(document.getElementById(`maxcr_Y${y}_${t}`).innerText); if (limitVal > 0 && total > limitVal) crSpan.style.color = '#c0392b'; else crSpan.style.color = '#912338'; }
             });
         }
-        validateTerms();
     }
 
     function checkWT() {
         const isCoop = document.getElementById('coopRegistered').checked;
-        if (!isCoop) {
-            document.getElementById('generateBtn').disabled = false;
-            document.getElementById('wt-warning').style.display = 'none';
-            return;
-        }
+        if (!isCoop) { document.getElementById('generateBtn').disabled = false; return; }
         const hasUnplacedWT = Array.from(document.getElementById('unallocatedZone').children).some(el => coursesData[el.id]?.is_wt && el.style.display !== 'none');
-        document.getElementById('generateBtn').disabled = hasUnplacedWT;
-        document.getElementById('wt-warning').style.display = hasUnplacedWT ? 'inline' : 'none';
+        document.getElementById('generateBtn').disabled = false; // Permitem generarea ca sa functioneze AI-ul, dar afisam warning
     }
 
     document.getElementById('wtStandardBtn').onclick = function() {
@@ -750,77 +502,220 @@
         Object.keys(coursesData).forEach(cid => {
             const course = coursesData[cid];
             if (course.is_wt) {
-                let tz = null;
-                if (course.full_name.includes('WT1')) tz = targets['WT1'];
-                else if (course.full_name.includes('WT2')) tz = targets['WT2'];
-                else if (course.full_name.includes('WT3')) tz = targets['WT3'];
-                const targetZone = document.getElementById(tz);
-                const courseElement = document.getElementById(cid);
+                let tz = null; if (course.full_name.includes('WT1')) tz = targets['WT1']; else if (course.full_name.includes('WT2')) tz = targets['WT2']; else if (course.full_name.includes('WT3')) tz = targets['WT3'];
+                const targetZone = document.getElementById(tz), courseElement = document.getElementById(cid);
                 if (targetZone && courseElement) targetZone.appendChild(courseElement);
             }
         });
-        enforceAndHighlightTerms(); updateCredits(); checkWT();
+        enforceAndHighlightTerms(); updateCredits(); checkWT(); runLiveCheck();
     };
 
     document.getElementById('moveEcpBtn').onclick = () => {
-        const z0 = document.getElementById('zone_Y0_ANY');
-        Object.keys(coursesData).forEach(id => { if(coursesData[id].is_ecp) z0.appendChild(document.getElementById(id)); });
-        updateCredits(); checkWT();
+        const z0 = document.getElementById('zone_Y0_ANY'); Object.keys(coursesData).forEach(id => { if(coursesData[id].is_ecp) z0.appendChild(document.getElementById(id)); });
+        updateCredits(); checkWT(); runLiveCheck();
     };
 
     document.getElementById('generateBtn').onclick = async function() {
-        this.innerText = "Processing sequence...";
-        this.disabled = true;
-        
-        const limits = {}; document.querySelectorAll('.cr-val').forEach(i => limits[i.id.replace('maxcr_','')] = i.innerText);
-        const counts = {}; document.querySelectorAll('.ct-val').forEach(i => counts[i.id.replace('maxct_','')] = i.innerText);
-        
-        const isCoop = document.getElementById('coopRegistered').checked;
-        const placed = {}; 
-        document.querySelectorAll('td .drop-zone').forEach(z => {
-            if(z.children.length > 0) {
-                placed[z.dataset.term] = Array.from(z.children).filter(c => isCoop || !coursesData[c.id]?.is_wt).map(c => c.id);
-            }
-        });
-        
-        const unallocZone = document.getElementById('unallocatedZone');
-        const unalloc = Array.from(unallocZone.children).filter(c => isCoop || !coursesData[c.id]?.is_wt).map(c => c.id);
+        this.innerText = "Processing sequence..."; this.disabled = true;
+        const limits = {}, counts = {}, isCoop = document.getElementById('coopRegistered').checked, placed = {}; 
+        document.querySelectorAll('.cr-val').forEach(i => limits[i.id.replace('maxcr_','')] = i.innerText); document.querySelectorAll('.ct-val').forEach(i => counts[i.id.replace('maxct_','')] = i.innerText);
+        document.querySelectorAll('td .drop-zone').forEach(z => { if(z.children.length > 0) placed[z.dataset.term] = Array.from(z.children).filter(c => isCoop || !coursesData[c.id]?.is_wt).map(c => c.id); });
+        const unallocZone = document.getElementById('unallocatedZone'); const unalloc = Array.from(unallocZone.children).filter(c => isCoop || !coursesData[c.id]?.is_wt).map(c => c.id);
         
         try {
-            const res = await fetch('/generate', {
-                method:'POST', headers:{'Content-Type':'application/json'}, 
-                body:JSON.stringify({ program: document.getElementById('programSelect').value, term_limits: limits, count_limits: counts, placed: placed, unallocated: unalloc, repeated: repeatedCoursesList })
-            });
+            const res = await fetch('/generate', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ program: document.getElementById('programSelect').value, term_limits: limits, count_limits: counts, placed: placed, unallocated: unalloc, repeated: repeatedCoursesList }) });
             if (!res.ok) throw new Error('Generation failed on server.');
             const result = await res.json();
-            
             document.querySelectorAll('td .drop-zone:not(#zone_Y0_ANY)').forEach(z => z.innerHTML = '');
-
             Object.keys(result.sequence).forEach(year => {
                 const yNum = year.split(' ')[1]; 
                 ['SUM1','SUM2','FALL','WIN'].forEach(t => {
                     const z = document.getElementById(`zone_Y${yNum}_${t}`); 
-                    if(z && result.sequence[year][t].cursuri) {
-                        result.sequence[year][t].cursuri.forEach(c => {
-                            if(coursesData[c.id]) z.appendChild(createCourseElement(c.id));
-                        });
-                    }
+                    if(z && result.sequence[year][t].cursuri) { result.sequence[year][t].cursuri.forEach(c => { if(coursesData[c.id]) z.appendChild(createCourseElement(c.id)); }); }
                 });
             });
-            
             unallocZone.innerHTML = '';
-            if(result.unallocated) {
-                result.unallocated.forEach(c => { if(coursesData[c.id]) unallocZone.appendChild(createCourseElement(c.id)); });
-            }
-            sortUnallocatedDOM();
-            enforceAndHighlightTerms(); updateCredits(); checkWT(); 
-            
-        } catch (error) {
-            console.error(error); alert("An error occurred while generating.");
-        } finally {
-            this.innerText = "Generate Sequence"; checkWT(); 
-        }
+            if(result.unallocated) result.unallocated.forEach(c => { if(coursesData[c.id]) unallocZone.appendChild(createCourseElement(c.id)); });
+            sortUnallocatedDOM(); enforceAndHighlightTerms(); updateCredits(); checkWT(); runLiveCheck();
+        } catch (error) { console.error(error); alert("An error occurred while generating."); } finally { this.innerText = "Generate Sequence"; checkWT(); }
     };
+
+    // =================================================================================
+    // NOUA FUNCTIE: LIVE VALIDATION (Ruleaza la fiecare miscare pe ecran)
+    // =================================================================================
+    function runLiveCheck() {
+        let errors = [];
+        let isCoop = document.getElementById('coopRegistered').checked;
+        let takenSet = new Set();
+        let currentSequence = [];
+
+        // 1. Verificare: Au ramas cursuri Core/Gen in lista?
+        Array.from(document.getElementById('unallocatedZone').children).forEach(el => {
+            if (el.style.display !== 'none') {
+                let c = coursesData[el.id];
+                if (c && (isCoop || !c.is_wt)) {
+                    let t = c.type.toUpperCase();
+                    if (t.includes('CORE') || t === 'GEN') errors.push(`Cursul <b>${c.id}</b> (${t}) trebuie plasat pe grila.`);
+                }
+            }
+        });
+
+        // Extragem toate termenele cronologic
+        let tNames = ['SUM1', 'SUM2', 'FALL', 'WIN'];
+        currentSequence.push({ id: 'Y0_ANY', courses: Array.from(document.getElementById('zone_Y0_ANY').children).map(c=>c.id) });
+        for(let y=1; y<=7; y++) {
+            tNames.forEach(t => {
+                let z = document.getElementById(`zone_Y${y}_${t}`);
+                if (z) currentSequence.push({ id: `Y${y}_${t}`, courses: Array.from(z.children).map(c=>c.id), type: t, year: y });
+            });
+        }
+
+        let wtIndices = [];
+        let summerWTs = 0;
+        let wt3Index = -1;
+
+        // Iteram prin istoric
+        currentSequence.forEach((term, index) => {
+            term.courses.forEach(cid => takenSet.add(cid));
+            if (term.id === 'Y0_ANY') return;
+
+            let realCoursesCount = 0;
+            let totalCr = 0;
+            let hasWT = false;
+            let isSummer = term.type.includes('SUM');
+
+            term.courses.forEach(cid => {
+                let c = coursesData[cid];
+                if (!c) return;
+
+                if (c.is_wt) {
+                    hasWT = true;
+                    if (isSummer) summerWTs++;
+                    if (cid.includes('WT3')) wt3Index = index;
+                } else if (c.type !== 'REPEAT') {
+                    realCoursesCount++;
+                    totalCr += c.credit;
+                    
+                    // Verificare Sezon Oferit
+                    let map = {'FALL':'Fall', 'WIN':'Winter', 'SUM1':'Sum 1', 'SUM2':'Sum 2'};
+                    if (!c.terms.toLowerCase().includes(map[term.type].toLowerCase())) {
+                        errors.push(`<b>${cid}</b> nu se ofera oficial in <b>${map[term.type]}</b>.`);
+                    }
+
+                    // Verificare Pre-reqs (trebuiau luate in trecut)
+                    if (c.prereqs && c.prereqs !== 'None' && c.prereqs !== 'N/A') {
+                        c.prereqs.split(/[;,]/).forEach(grp => {
+                            let opts = parseCourseIDs(grp).filter(o => coursesData[o]); // Doar cursurile care exista in curriculă
+                            // Daca cerinta exista in baza de date, verificam daca studentul a plasat-o undeva in trecut
+                            if (opts.length > 0) {
+                                let satisfied = opts.some(opt => {
+                                    // Trebuie sa fie in takenSet DAR sa nu fie plasata CHIAR IN ACEST term (pre-req cere terminarea inainte)
+                                    return takenSet.has(opt) && !term.courses.includes(opt);
+                                });
+                                if (!satisfied) errors.push(`<b>${cid}</b> in ${term.id} ii lipseste pre-req din grupul: [${opts.join(' sau ')}].`);
+                            }
+                        });
+                    }
+
+                    // Verificare Co-reqs (pot fi in trecut SAU fix in acest semestru)
+                    if (c.coreqs && c.coreqs !== 'None' && c.coreqs !== 'N/A') {
+                        c.coreqs.split(/[;,]/).forEach(grp => {
+                            let opts = parseCourseIDs(grp).filter(o => coursesData[o]);
+                            if (opts.length > 0 && !opts.some(opt => takenSet.has(opt))) {
+                                errors.push(`<b>${cid}</b> in ${term.id} ii lipseste co-req din grupul: [${opts.join(' sau ')}].`);
+                            }
+                        });
+                    }
+                }
+            });
+
+            // Reguli CO-OP Speciale
+            if (isCoop) {
+                if (hasWT) {
+                    wtIndices.push(index);
+                    // Regula: 1 WT + 1 curs normal
+                    if (isSummer) {
+                        // Cautam celalalt summer pt a face suma
+                        let otherSum = term.type === 'SUM1' ? 'SUM2' : 'SUM1';
+                        let otherZone = document.getElementById(`zone_Y${term.year}_${otherSum}`);
+                        let otherCount = otherZone ? Array.from(otherZone.children).filter(el => !coursesData[el.id]?.is_wt && coursesData[el.id]?.type !== 'REPEAT').length : 0;
+                        if (realCoursesCount + otherCount > 1) errors.push(`Anul ${term.year} Summer: Permis max 1 curs pe langa WT.`);
+                    } else {
+                        if (realCoursesCount > 1) errors.push(`Termenul ${term.id}: Permis max 1 curs pe langa WT.`);
+                    }
+                    // Regula Capstone:
+                    if (term.courses.some(id => id.includes('490A') || id.includes('490B'))) {
+                        errors.push(`Termenul ${term.id}: Capstone si WT in acelasi timp sunt interzise.`);
+                    }
+                } else if (!isSummer && index < (wt3Index > -1 ? wt3Index : 999)) {
+                    // Full time check
+                    if (term.courses.length > 0 && totalCr < 12) {
+                        errors.push(`Termenul ${term.id} are < 12 credite. Inainte de WT3 trebuie sa fii Full-Time.`);
+                    }
+                }
+            }
+        });
+
+        // Reguli globale CO-OP
+        if (isCoop) {
+            // Regula summer WT max
+            // O vara = SUM1 + SUM2. Ambele pot contine WT-ul impartit, dar il numaram ca un singur sezon per an.
+            let summerSeasonsWithWT = new Set();
+            wtIndices.forEach(idx => {
+                let term = currentSequence[idx];
+                if (term.type.includes('SUM')) summerSeasonsWithWT.add(term.year);
+            });
+            if (summerSeasonsWithWT.size > 2) errors.push(`Limita depasita: Ai WT-uri in ${summerSeasonsWithWT.size} veri (Maxim permis: 2).`);
+
+            // Consecutive WT rule (trebuie tradus din indici de semestre in semestre consecutive logice: Fall->Win->Sum1...)
+            // Simplificare: Daca gasim WT in 3 termene majore consecutive (ignoram impartirea Sum1/Sum2 ca fiind separata, o consideram un singur "SUM")
+            let collapsedTerms = [];
+            currentSequence.forEach(t => {
+                if(t.id === 'Y0_ANY') return;
+                let season = t.type.includes('SUM') ? 'SUM' : t.type;
+                let name = `Y${t.year}_${season}`;
+                if(collapsedTerms.length === 0 || collapsedTerms[collapsedTerms.length-1].name !== name) {
+                    collapsedTerms.push({ name: name, hasWT: t.courses.some(id=>coursesData[id]?.is_wt) });
+                } else {
+                    if (t.courses.some(id=>coursesData[id]?.is_wt)) collapsedTerms[collapsedTerms.length-1].hasWT = true;
+                }
+            });
+            let consec = 0;
+            collapsedTerms.forEach(t => {
+                if (t.hasWT) {
+                    consec++;
+                    if (consec >= 3) errors.push(`Nu poti avea 3 Work Terms consecutive.`);
+                } else { consec = 0; }
+            });
+
+            // Regula: Core dupa ultimul WT
+            if (collapsedTerms.some(t => t.hasWT)) {
+                let lastWtGlobalIndex = -1;
+                collapsedTerms.forEach((t, i) => { if(t.hasWT) lastWtGlobalIndex = i; });
+                
+                let hasCoreAfter = false;
+                for(let i = lastWtGlobalIndex + 1; i < currentSequence.length; i++) {
+                    if (currentSequence[i].courses.some(id => coursesData[id] && coursesData[id].type.toUpperCase().includes('CORE'))) {
+                        hasCoreAfter = true; break;
+                    }
+                }
+                if (!hasCoreAfter) errors.push(`Dupa ultimul WT trebuie programat cel putin un curs prgCORE sau engCORE.`);
+            }
+        }
+
+        // Randare Box
+        let list = document.getElementById('liveValidationList');
+        list.innerHTML = '';
+        
+        // Eliminam duplicatele in caz de erori pe Sum1 si Sum2 simultan
+        errors = [...new Set(errors)];
+
+        if (errors.length === 0) {
+            list.innerHTML = `<li style="color:#27ae60; font-weight:bold;">✅ Sequence looks perfect! All rules satisfied.</li>`;
+        } else {
+            errors.forEach(msg => { list.innerHTML += `<li style="color:#c0392b; margin-bottom:5px;">❌ ${msg}</li>`; });
+        }
+    }
 </script>
 </body>
 </html>

@@ -1,6 +1,8 @@
 import os
 import random
 import re
+import json
+import datetime
 from collections import defaultdict
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify
 import gspread
@@ -40,13 +42,16 @@ STANDARD_SEQUENCES = {
     }
 }
 
-def verify_email_in_sheets(email):
+def get_gspread_client():
     base_path = os.path.dirname(os.path.abspath(__file__))
     json_path = os.path.join(base_path, "cheie_google.json")
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_keyfile_name(json_path, scope)
+    return gspread.authorize(creds)
+
+def verify_email_in_sheets(email):
     try:
-        creds = ServiceAccountCredentials.from_json_keyfile_name(json_path, scope)
-        client = gspread.authorize(creds)
+        client = get_gspread_client()
         sheet = client.open("Sid_Email_Mirror").worksheet("Sid_Email_Admission")
         for row in sheet.get_all_records():
             if str(row.get('Primary Email', '')).strip().lower() == email.strip().lower():
@@ -91,7 +96,137 @@ def parse_requirements(req_str):
         if opts: reqs.append(opts)
     return reqs
 
+def parse_coop_term_string(term_str):
+    s = str(term_str).strip().upper()
+    if not s or s == 'NAN': return None, None
+    year_match = re.search(r'(\d{4})', s)
+    if not year_match: return None, None
+    year = int(year_match.group(1))
+    season = ""
+    if 'FALL' in s or 'FA ' in s or s.endswith('FA'): season = 'FALL'
+    elif 'WIN' in s or 'WI' in s: season = 'WIN'
+    elif 'SUM' in s or 'SU' in s: season = 'SUM'
+    if season == 'WIN' and '-' in s: year += 1
+    return str(year), season
+
+
+def get_student_coop_data(target_sid):
+    if not target_sid: return {"found": False}
+    target_sid = str(target_sid).strip().replace('.0', '')
+    
+    try:
+        client = get_gspread_client()
+        sheet = client.open("Sid_Email_Mirror").worksheet("COOP")
+        all_records = sheet.get_all_records()
+        student_records = [r for r in all_records if str(r.get('Student ID', '')).strip().replace('.0', '') == target_sid]
+        
+        if not student_records: return {"found": False}
+
+        admission_info = None
+        cutoff_score = float('inf') # Setam limita initial la infinit
+        parsed_records = []
+
+        for row in student_records:
+            raw_term = str(row.get('Term', ''))
+            year, season = parse_coop_term_string(raw_term)
+            
+            if not admission_info and str(row.get('Admission Term', '')).lower() != 'nan':
+                 adm_year, adm_season = parse_coop_term_string(row.get('Admission Term'))
+                 if adm_year and adm_season: admission_info = {"year": adm_year, "term": adm_season}
+
+            if year and season:
+                # 1. Calculăm SCORUL CRONOLOGIC (Ex: Winter 2025 = 20251, Summer 2025 = 20252, Fall = 20253)
+                score = 0
+                y_int = int(year)
+                if season == 'WIN': score = y_int * 10 + 1
+                elif season == 'SUM': score = y_int * 10 + 2
+                elif season == 'FALL': score = y_int * 10 + 3
+
+                # 2. Verificăm "Transferred Withdrawn OK"
+                tw_ok = str(row.get('Transferred Withdrawn OK', '')).strip()
+                tw_lower = tw_ok.lower()
+                is_cutoff = False
+                
+                # Dacă e diferit de "OK" sau gol, stabilim un nou punct de cut-off
+                if tw_lower and tw_lower != 'nan' and tw_lower != 'ok':
+                    is_cutoff = True
+                    if score < cutoff_score:
+                        cutoff_score = score # Păstrăm cel mai devreme termen cu problemă
+
+                ws_raw = str(row.get('WS', '')).replace('_NF', ' not found')
+                views, applied = 0, 0
+                try: views = int(float(row.get('Jobs View no', 0)))
+                except: pass
+                try: applied = int(float(row.get('Jobs Applied no', 0)))
+                except: pass
+                
+                details = str(row.get('Term Details', '')).strip()
+                if details.lower() == 'nan': details = ""
+
+                parsed_records.append({
+                    "score": score,
+                    "key": f"{year}_{season}",
+                    "label": str(row.get('Term number Sx or Wx', '')),
+                    "ws": ws_raw, 
+                    "views": views, 
+                    "applied": applied, 
+                    "details": details,
+                    "tw_ok": tw_ok if is_cutoff else "" # Trimitem mesajul de eroare către UI
+                })
+        
+        # 3. FILTRAM DATELE pe baza cut-off-ului
+        coop_data = {}
+        for rec in parsed_records:
+            # Păstrăm datele doar până la termenul problemă inclusiv (score <= cutoff_score)
+            if rec["score"] <= cutoff_score:
+                coop_data[rec["key"]] = {
+                    "label": rec["label"],
+                    "ws": rec["ws"],
+                    "views": rec["views"],
+                    "applied": rec["applied"],
+                    "details": rec["details"],
+                    "tw_ok": rec["tw_ok"]
+                }
+
+        return {"found": True, "admission": admission_info, "terms": coop_data}
+    
+    except Exception as e:
+        print(f"Eroare COOP Fetch Backend: {e}")
+        return {"found": False, "error": str(e)}
+    
+    
 pending_otps = {}
+
+# --- ROUTES ---
+@app.route("/", methods=["GET"])
+def index():
+    if 'user_email' not in session: return redirect(url_for('login'))
+    
+    df = load_data()
+    programs = sorted(df['Program'].apply(lambda x: str(x).strip()).unique().tolist())
+    
+    current_sid = str(session.get('student_id', ''))
+    is_power_user = current_sid.startswith('9')
+    viewing_sid = session.get('admin_view_sid', current_sid)
+    
+    coop_data = get_student_coop_data(viewing_sid)
+    
+    return render_template("planner.html", 
+                           programe=programs, 
+                           coop_data_json=json.dumps(coop_data),
+                           is_power_user=is_power_user,
+                           viewing_sid=viewing_sid)
+
+@app.route("/admin_change_sid", methods=["POST"])
+def admin_change_sid():
+    if not str(session.get('student_id', '')).startswith('9'):
+        return jsonify({"error": "Unauthorized"}), 403
+    
+    new_sid = request.json.get('target_sid')
+    if new_sid:
+        session['admin_view_sid'] = str(new_sid).strip()
+        return jsonify({"success": True})
+    return jsonify({"error": "Invalid ID"}), 400
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
@@ -126,17 +261,58 @@ def logout():
     session.clear()
     return redirect(url_for('login'))
 
-@app.route("/", methods=["GET"])
-def index():
-    if 'user_email' not in session: return redirect(url_for('login'))
-    df = load_data()
-    programs = sorted(df['Program'].apply(lambda x: str(x).strip()).unique().tolist())
-    return render_template("planner.html", programe=programs)
+@app.route("/save_sequence", methods=["POST"])
+def save_sequence():
+    if 'user_email' not in session: return jsonify({"error": "Unauthorized"}), 401
+    try:
+        data = request.json
+        name = data.get('name', 'Untitled')
+        program = data.get('program', '')
+        seq_json = json.dumps(data.get('sequence_data', {}))
+        term_json = json.dumps(data.get('term_data', {}))
+        settings_json = json.dumps(data.get('settings_data', {}))
+        
+        client = get_gspread_client()
+        sheet = client.open("Sid_Email_Mirror").worksheet("Saved_Sequences")
+        email = session['user_email']
+        timestamp = str(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        
+        sheet.append_row([email, name, program, seq_json, timestamp, term_json, settings_json])
+        return jsonify({"success": True})
+    except Exception as e:
+        print(f"Save Error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/load_sequences", methods=["GET"])
+def load_sequences():
+    if 'user_email' not in session: return jsonify({"error": "Unauthorized"}), 401
+    try:
+        client = get_gspread_client()
+        sheet = client.open("Sid_Email_Mirror").worksheet("Saved_Sequences")
+        raw_rows = sheet.get_all_values() 
+        target_email = session['user_email'].lower().strip()
+        my_recs = []
+        for row in raw_rows[1:]:
+            if len(row) > 0 and str(row[0]).lower().strip() == target_email:
+                def safe_json(idx):
+                    if len(row) > idx and row[idx].strip():
+                        try: return json.loads(row[idx])
+                        except: return {}
+                    return {}
+                my_recs.append({
+                    "Sequence_Name": row[1] if len(row) > 1 else "Untitled",
+                    "Program": row[2] if len(row) > 2 else "",
+                    "Date_Saved": row[4] if len(row) > 4 else "",
+                    "JSON_Data": safe_json(3), "Term_Data": safe_json(5), "Settings_Data": safe_json(6)
+                })
+        return jsonify({"sequences": my_recs[::-1]}) 
+    except Exception as e:
+        print(f"Load Error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/get_courses", methods=["POST"])
 def get_courses():
     if 'user_email' not in session: return jsonify({"error": "Unauthorized"}), 401
-    
     df_prog = load_data()
     df_prog = df_prog[df_prog['Program'].str.strip() == request.json.get('program').strip()].copy()
     
@@ -164,7 +340,8 @@ def get_courses():
             "is_ecp": safe_str(row.get('CORE_TE', '')).upper() == 'ECP', "type": safe_str(row.get('CORE_TE', '')),
             "terms": ", ".join(terms_offered) if terms_offered else "N/A",
             "prereqs": safe_str(row.get('PRE-REQUISITE', '')), "coreqs": safe_str(row.get('CO-REQUISITE', '')),
-            "is_prereq_for": ", ".join(reverse_deps[cid]["is_prereq_for"]) or "None", "is_coreq_for": ", ".join(reverse_deps[cid]["is_coreq_for"]) or "None"
+            "is_prereq_for": ", ".join(reverse_deps[cid]["is_prereq_for"]) or "None", "is_coreq_for": ", ".join(reverse_deps[cid]["is_coreq_for"]) or "None",
+            "already_taken": 0
         })
     return jsonify({"courses": all_courses, "pre_placed": dict(pre_placed)})
 
@@ -182,7 +359,6 @@ def generate():
     df = load_data()
     df_prog = df[df['Program'].str.strip() == program_name].copy()
     
-    # 1. Fortare WT dependency
     for idx in df_prog.index:
         c_name = str(df_prog.at[idx, 'COURSE']).upper()
         if 'WT2' in c_name: df_prog.at[idx, 'PRE-REQUISITE'] = 'WT1'
@@ -197,34 +373,23 @@ def generate():
         r['_id'] = cid 
         all_courses_dict[cid] = r
 
-    # 2. MEGA-REGULA: Toate materiile de Nivel 200 (CORE) devin pre-req pentru nivel 400
-    core_200s = [
-        c for c, c_data in all_courses_dict.items() 
-        if get_level(c) == 2 and 'CORE' in str(c_data.get('CORE_TE', '')).upper()
-    ]
-    
+    core_200s = [c for c, c_data in all_courses_dict.items() if get_level(c) == 2 and 'CORE' in str(c_data.get('CORE_TE', '')).upper()]
     for cid, c_data in all_courses_dict.items():
         if get_level(cid) >= 4:
             existing_prqs = str(c_data.get('PRE-REQUISITE', '')).strip()
-            # Extragem lista curenta de pre-reqs pentru a nu dubla
             current_prqs_list = parse_requirements(existing_prqs)
             flat_current = [item for sublist in current_prqs_list for item in sublist]
-            
             to_add = [req for req in core_200s if req not in flat_current]
             if to_add:
                 new_prqs_str = "; ".join(to_add)
-                if existing_prqs and existing_prqs.lower() not in ['n/a', 'none']:
-                    c_data['PRE-REQUISITE'] = existing_prqs + "; " + new_prqs_str
-                else:
-                    c_data['PRE-REQUISITE'] = new_prqs_str
+                c_data['PRE-REQUISITE'] = (existing_prqs + "; " + new_prqs_str) if (existing_prqs and existing_prqs.lower() not in ['n/a', 'none']) else new_prqs_str
 
     for cid in data.get('repeated', []):
         if cid in all_courses_dict:
             rep_id = "REP_" + cid
             dummy = all_courses_dict[cid].copy()
-            dummy['COURSE'] = "1st time (to repeat) " + str(dummy['COURSE'])
-            dummy['CORE_TE'] = "REPEAT"
-            dummy['_id'] = rep_id 
+            dummy['COURSE'] = "1st attempt " + str(dummy['COURSE'])
+            dummy['CORE_TE'] = "REPEAT"; dummy['_id'] = rep_id 
             all_courses_dict[rep_id] = dummy
             orig_prq = str(all_courses_dict[cid].get('PRE-REQUISITE', ''))
             all_courses_dict[cid]['PRE-REQUISITE'] = (orig_prq + "; " + rep_id) if orig_prq else rep_id
@@ -234,13 +399,9 @@ def generate():
     for tk, cids in placed_ui.items():
         if not cids: continue
         if "Y0" in tk:
-            for cid in cids: 
-                taken_courses.add(cid)
-                placements[cid] = (0, 'ANY', -1)
+            for cid in cids: taken_courses.add(cid); placements[cid] = (0, 'ANY', -1)
             continue
-        y_str = tk.split("_")[0]
-        t = tk.split("_")[1]
-        y = int(y_str[1:])
+        y_str = tk.split("_")[0]; t = tk.split("_")[1]; y = int(y_str[1:])
         for cid in cids:
             if cid in all_courses_dict:
                 c = all_courses_dict[cid]
@@ -266,16 +427,11 @@ def generate():
         if visited is None: visited = set()
         if cid in memo_anc: return memo_anc[cid]
         if cid in visited: return 0
-        visited.add(cid)
-        count = 0
+        visited.add(cid); count = 0
         for grp in get_reqs(cid, 'PRE-REQUISITE') + get_reqs(cid, 'CO-REQUISITE'):
             valid_opts = [o for o in grp if o in all_courses_dict]
-            if valid_opts:
-                opt = valid_opts[0]
-                count += 1 + get_ancestor_count(opt, visited)
-        memo_anc[cid] = count
-        visited.remove(cid)
-        return count
+            if valid_opts: count += 1 + get_ancestor_count(valid_opts[0], visited)
+        memo_anc[cid] = count; visited.remove(cid); return count
 
     std_prog = {}
     if "INDUSTRIAL" in program_name.upper(): std_prog = STANDARD_SEQUENCES.get("INDUSTRIAL", {})
@@ -285,72 +441,51 @@ def generate():
         base_cid = cid.replace("REP_", "")
         loc = std_prog.get(base_cid)
         if loc:
-            y = int(loc.split('_')[0][1:])
-            t_idx = {"SUM": 0, "SUM1": 0, "SUM2": 1, "FALL": 2, "WIN": 3}.get(loc.split('_')[1], 2)
+            y = int(loc.split('_')[0][1:]); t_idx = {"SUM": 0, "SUM1": 0, "SUM2": 1, "FALL": 2, "WIN": 3}.get(loc.split('_')[1], 2)
             return (y - 1) * 4 + t_idx
         return 999
 
     def place_temporarily(cid, idx):
-        y = (idx // 4) + 1
-        t = ["SUM1", "SUM2", "FALL", "WIN"][idx % 4]
-        target = sequence_dict[str(y)][t]
-        c_data = all_courses_dict[cid]
+        y = (idx // 4) + 1; t = ["SUM1", "SUM2", "FALL", "WIN"][idx % 4]
+        target = sequence_dict[str(y)][t]; c_data = all_courses_dict[cid]
         cr = 0.0 if ('WT' in cid.upper() or c_data.get('CORE_TE', '') == 'REPEAT') else float(c_data.get('CREDIT', 0) or 0)
-        target["cursuri"].append(c_data)
-        target["credite"] += cr
-        target["coduri"].add(cid)
-        taken_courses.add(cid)
-        placements[cid] = (y, t, idx)
+        target["cursuri"].append(c_data); target["credite"] += cr; target["coduri"].add(cid); taken_courses.add(cid); placements[cid] = (y, t, idx)
 
     def undo_placement(cid):
-        idx = placements[cid][2]
-        y = (idx // 4) + 1
-        t = ["SUM1", "SUM2", "FALL", "WIN"][idx % 4]
-        target = sequence_dict[str(y)][t]
-        c_data = all_courses_dict[cid]
+        idx = placements[cid][2]; y = (idx // 4) + 1; t = ["SUM1", "SUM2", "FALL", "WIN"][idx % 4]
+        target = sequence_dict[str(y)][t]; c_data = all_courses_dict[cid]
         cr = 0.0 if ('WT' in cid.upper() or c_data.get('CORE_TE', '') == 'REPEAT') else float(c_data.get('CREDIT', 0) or 0)
         target["cursuri"] = [c for c in target["cursuri"] if c['_id'] != cid]
-        target["credite"] -= cr
-        target["coduri"].remove(cid)
-        taken_courses.remove(cid)
-        del placements[cid]
+        target["credite"] -= cr; target["coduri"].remove(cid); taken_courses.remove(cid); del placements[cid]
 
     def is_valid_slot(cid, idx):
-        y = (idx // 4) + 1
-        t = ["SUM1", "SUM2", "FALL", "WIN"][idx % 4]
+        y = (idx // 4) + 1; t = ["SUM1", "SUM2", "FALL", "WIN"][idx % 4]
         if y > 7: return False
-
-        c_data = all_courses_dict[cid]
-        col_map = {"SUM1": "SUM 1", "SUM2": "SUM 2", "FALL": "FALL", "WIN": "WIN"}
+        c_data = all_courses_dict[cid]; col_map = {"SUM1": "SUM 1", "SUM2": "SUM 2", "FALL": "FALL", "WIN": "WIN"}
         if str(c_data.get(col_map[t], '')).strip().upper() != 'X': return False
-
-        is_wt_c = 'WT' in cid.upper()
-        is_rep_c = str(c_data.get('CORE_TE', '')).upper() == 'REPEAT'
+        
+        is_wt_c = 'WT' in cid.upper(); is_rep_c = str(c_data.get('CORE_TE', '')).upper() == 'REPEAT'
         cr = 0.0 if (is_wt_c or is_rep_c) else float(c_data.get('CREDIT', 0) or 0)
-
         target = sequence_dict[str(y)][t]
         term_has_wt = any('WT' in str(cx.get('COURSE', '')).upper() for cx in target["cursuri"])
         
-        other_summer_has_wt = False
-        other_summer_has_courses = False
+        other_summer_has_wt = False; other_summer_has_courses = False
         if 'SUM' in t:
-            other_t = 'SUM2' if t == 'SUM1' else 'SUM1'
-            other_target = sequence_dict[str(y)][other_t]
+            other_t = 'SUM2' if t == 'SUM1' else 'SUM1'; other_target = sequence_dict[str(y)][other_t]
             other_summer_has_wt = any('WT' in str(cx.get('COURSE', '')).upper() for cx in other_target["cursuri"])
             other_summer_has_courses = len(other_target["cursuri"]) > 0
 
         if term_has_wt or other_summer_has_wt: return False
         if is_wt_c and (len(target["cursuri"]) > 0 or other_summer_has_courses): return False
 
-        l_cr = float(term_limits.get(f"Y{y}_{t}", 8.0 if 'SUM' in t else 17.0))
-        l_cnt = int(count_limits.get(f"Y{y}_{t}", 2 if 'SUM' in t else 5))
+        l_cr = float(term_limits.get(f"Y{y}_{t}", 10.0 if 'SUM' in t else 17.0))
+        l_cnt = int(count_limits.get(f"Y{y}_{t}", 3 if 'SUM' in t else 5))
         if l_cr == 0 or l_cnt == 0: return False
 
         if not is_wt_c and not is_rep_c:
             if target["credite"] + cr > l_cr: return False
             if len(target["cursuri"]) >= l_cnt: return False
 
-        # Protectia clasica a ramas, desi pre-reqs injectate acopera asta oricum
         if get_level(cid) >= 4:
             for k in taken_courses:
                 if get_level(k) == 2 and placements[k][2] >= idx: return False
@@ -360,72 +495,48 @@ def generate():
 
         if '490B' in cid and t != 'WIN': return False
         if '490A' in cid and t != 'FALL': return False
-        
         if '490A' in cid:
             req_490b = cid.replace('490A', '490B')
             if req_490b in placements:
                 if idx != placements[req_490b][2] - 1: return False
-
         return True
 
     def solve_branch(cid, max_allowed_idx, depth):
         if cid in taken_courses: return placements[cid][2] <= max_allowed_idx
         if cid not in all_courses_dict: return True
-
-        indent = "  " * depth
-        
         min_term_index = -1 
         for grp in get_reqs(cid, 'PRE-REQUISITE'):
             opts = [placements[o][2] for o in grp if o in taken_courses]
             if opts: min_term_index = max(min_term_index, min(opts))
-            
         start_idx = max(0, min_term_index + 1)
-        
         if get_level(cid) >= 4:
             opts_200 = [placements[k][2] for k in taken_courses if get_level(k) == 2]
             if opts_200: start_idx = max(start_idx, max(opts_200) + 1)
-            
         if '490B' in cid:
             req_490a = cid.replace('490B', '490A')
             if req_490a in taken_courses: start_idx = max(start_idx, placements[req_490a][2] + 1)
-
         std_idx = get_std_idx(cid)
         if 'WT' in cid.upper() and std_idx != 999: start_idx = max(start_idx, std_idx)
-
         if start_idx > max_allowed_idx: return False
-
         search_space = list(range(start_idx, max_allowed_idx + 1))
-        
         if std_idx != 999:
             search_space.sort(key=lambda x: abs(x - std_idx))
-            print(f"{indent}🎯 {cid} -> Caut spre standard Y{(std_idx//4)+1}")
         else:
-            if depth == 0:
-                search_space.sort()
-                print(f"{indent}🎯 {cid} -> Fara Std. Imping in FATA (Earliest)")
-            else:
-                search_space.sort(reverse=True)
-                print(f"{indent}🔙 {cid} -> Fara Std. Trag in SPATE (langa copil)")
+            if depth == 0: search_space.sort()
+            else: search_space.sort(reverse=True)
 
         for idx in search_space:
-            # ---> LINIA DE TRASABILITATE ADĂUGATĂ AICI <---
-            print(f"{indent} try {cid} in {idx}")
-            
             if not is_valid_slot(cid, idx): continue
             place_temporarily(cid, idx)
-
             success = True
             for grp in get_reqs(cid, 'PRE-REQUISITE'):
                 valid_opts = [o for o in grp if o in all_courses_dict]
                 if not valid_opts: continue 
-                
                 grp_ok = False
                 for opt in valid_opts:
                     if solve_branch(opt, idx - 1, depth + 1):
                         grp_ok = True; break
-                if not grp_ok:
-                    success = False; break
-
+                if not grp_ok: success = False; break
             if success:
                 for grp in get_reqs(cid, 'CO-REQUISITE'):
                     valid_opts = [o for o in grp if o in all_courses_dict]
@@ -434,44 +545,27 @@ def generate():
                     for opt in valid_opts:
                         if solve_branch(opt, idx, depth + 1):
                             grp_ok = True; break
-                    if not grp_ok:
-                        success = False; break
-
+                    if not grp_ok: success = False; break
             if success:
-                y, t = (idx // 4) + 1, ["SUM1", "SUM2", "FALL", "WIN"][idx % 4]
-                print(f"{indent}  ✅ SUCCES: {cid} in Y{y}_{t}")
                 if cid in remaining: remaining.remove(cid)
                 return True
-
             undo_placement(cid)
-
-        print(f"{indent}  ❌ BLOCAJ: Nu incape {cid}.")
         return False
 
-    print("\n" + "="*50)
-    print("🚀 STARTING BACKWARD-CHAINING AI PLANNER 🚀")
-    print("="*50)
-    
+    print("\n" + "="*50 + "\n🚀 STARTING BACKWARD-CHAINING AI PLANNER 🚀\n" + "="*50)
     remaining_list = list(remaining)
     def goal_priority(c_id):
         data_c = all_courses_dict.get(c_id, {})
         is_te = 1 if str(data_c.get('CORE_TE', '')).upper() == 'TE' else 0
         anc_count = get_ancestor_count(c_id)
         return (-is_te, anc_count, get_level(c_id))
-        
     remaining_list.sort(key=goal_priority, reverse=True)
-
     for c in remaining_list:
-        if c in remaining:
-            print(f"\n🎯 OBIECTIV PRINCIPAL: {c} (Are {get_ancestor_count(c)} cursuri in spate)")
-            solve_branch(c, 27, 0)
-
+        if c in remaining: solve_branch(c, 27, 0)
     print("="*50 + "\n")
 
-    # POST-PROCESARE: Eliminare TE-uri in exces
     while True:
         total_cr = sum(float(c.get('CREDIT', 0) or 0) for y in range(1, 8) for t in ["SUM1", "SUM2", "FALL", "WIN"] for c in sequence_dict[str(y)][t]["cursuri"] if str(c.get('CORE_TE', '')).strip().upper() not in ['REPEAT', 'ECP'] and 'WT' not in str(c['COURSE']).upper())
-                        
         if total_cr <= 120: break
         removed_any = False
         for y in range(7, 0, -1):
@@ -482,9 +576,7 @@ def generate():
                     for te in reversed(tes):
                         cr = float(te.get('CREDIT', 0) or 0)
                         if total_cr - cr >= 120:
-                            target["cursuri"].remove(te)
-                            target["credite"] -= cr
-                            cid = te.get('_id', extract_course_code(te['COURSE']))
+                            target["cursuri"].remove(te); target["credite"] -= cr; cid = te.get('_id', extract_course_code(te['COURSE']))
                             if cid in target["coduri"]: target["coduri"].remove(cid)
                             if cid not in remaining: remaining.add(cid)
                             removed_any = True; break
@@ -492,7 +584,6 @@ def generate():
             if removed_any: break
         if not removed_any: break
 
-    # Formatare Finala JSON
     res_seq = {}
     for y in range(1, 8):
         res_seq[f"Year {y}"] = {}
@@ -505,7 +596,6 @@ def generate():
                 display_cr = 0 if (is_wt or is_rep) else c.get('CREDIT', 0)
                 display = f"{str(c['COURSE']).strip()} ({display_cr} cr)"
                 cursuri_list.append({"id": cid_for_json, "display": display, "is_wt": is_wt})
-                
             res_seq[f"Year {y}"][t] = {"credite": sequence_dict[str(y)][t]["credite"], "cursuri": cursuri_list}
             
     unalloc_list = [{"id": cid, "display": all_courses_dict[cid]['COURSE']} for cid in remaining]

@@ -3,9 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <title>Academic Planner - Concordia MIAE</title>
-    <div style="text-align: right; padding: 10px; background: #fff; border-bottom: 1px solid #eee;">
-        <span style="margin-right: 15px; color: #555; font-size: 14px;">Logged in as: <b>{{ session.get('student_id', '') }} - {{ session['user_email'] }}</b></span>
-        <a href="/logout" style="padding: 6px 12px; background: #912338; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 12px; transition: 0.3s;">Log Out</a>
+    
+    <div style="display: flex; justify-content: flex-end; align-items: center; gap: 15px; padding: 10px 20px; background: #fff; border-bottom: 1px solid #eee;">
+        
+        {% if is_power_user %}
+        <div style="display: flex; align-items: center; gap: 8px; border: 1px solid #3498db; padding: 4px 10px; border-radius: 20px; background: #f0f7ff;">
+            <span style="font-size: 11px; font-weight: bold; color: #2980b9;">ADMIN VIEW:</span>
+            <input type="text" id="adminSidInput" placeholder="Student ID..." style="border: 1px solid #cbd5e0; border-radius: 15px; padding: 4px 10px; font-size: 12px; width: 110px; outline: none;" value="{{ viewing_sid if viewing_sid != session.get('student_id', '') else '' }}">
+            <button onclick="adminSwitchStudent()" style="background: #3498db; color: white; border: none; padding: 4px 12px; border-radius: 15px; cursor: pointer; font-size: 11px; font-weight: bold; transition: 0.2s;">Switch</button>
+        </div>
+        {% endif %}
+
+        <span style="color: #555; font-size: 13px;">
+            Logged in as: <b>{{ session.get('student_id', '') }}</b>
+            {% if viewing_sid != session.get('student_id', '') %}
+                <span style="margin-left: 5px; color: #d35400;">(Viewing: <b>{{ viewing_sid }}</b>)</span>
+            {% endif %}
+        </span>
+        <a href="/logout" style="padding: 6px 15px; background: #912338; color: white; text-decoration: none; border-radius: 15px; font-weight: bold; font-size: 12px; transition: 0.3s;">Log Out</a>
     </div>
 
     <style>
@@ -15,15 +30,16 @@
 
         select { padding: 8px 12px; border-radius: 4px; border: 1px solid #ccc; font-size: 13px; background-color: white; cursor: pointer; transition: all 0.2s; font-weight: 500;}
         select:focus { outline: none; box-shadow: 0 0 0 2px rgba(145, 35, 56, 0.3); }
-        select.bg-fall { background-color: #912338; color: white; }
-        select.bg-win { background-color: #3498db; color: white; }
-        select.bg-sum { background-color: #d35400; color: white; }
+        select.bg-fall { background-color: #912338; color: white; border-color: #912338; }
+        select.bg-win { background-color: #3498db; color: white; border-color: #3498db; }
+        select.bg-sum { background-color: #d35400; color: white; border-color: #d35400; }
         select option { background-color: white; color: #333; font-weight: normal; }
 
-        .tools-container { background: #fff; border: 2px solid #dce4ec; border-left: 5px solid #912338; border-radius: 6px; box-shadow: 0 4px 10px rgba(0,0,0,0.08); margin: 0 20px 15px 20px; overflow: hidden;}
+        .tools-container { background: #fff; border: 2px solid #dce4ec; border-left: 5px solid #912338; border-radius: 6px; box-shadow: 0 4px 10px rgba(0,0,0,0.08); overflow: hidden; transition: all 0.3s ease-in-out; position: relative; z-index: 9; margin: 0 20px 15px 20px;}
         .tools-header { background: #f8f9fa; padding: 12px 20px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-weight: 700; color: #333; font-size: 14px; user-select: none; border-bottom: 1px solid #eee; }
-        .tools-content { padding: 15px 20px; display: flex; flex-direction: column; gap: 15px; transition: 0.3s; }
-        .tools-container.collapsed .tools-content { display: none; }
+        .tools-header:hover { background: #f1f3f5; }
+        .tools-content { padding: 15px 20px; display: flex; flex-direction: column; gap: 15px; max-height: 500px; opacity: 1; transition: all 0.3s ease-in-out; background: #fff; }
+        .tools-container.collapsed .tools-content { max-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; border-top: none;}
         
         .tool-group { display: flex; align-items: center; gap: 10px; background: #fcfcfc; padding: 8px 12px; border-radius: 4px; border: 1px solid #eee; flex-wrap: wrap;}
         .tool-label { font-size: 12px; font-weight: 600; color: #555; width: 160px; text-transform: uppercase; }
@@ -59,17 +75,17 @@
         .calc-cr { font-weight: bold; color: #912338; font-size: 11px;}
         .limit-group { display: flex; gap: 3px; align-items: center; }
         
-        .val-click {
-            display: inline-block; min-width: 16px; text-align: center; background: #fff; border: 1px solid #ccc;
-            border-radius: 3px; padding: 1px 4px; cursor: pointer; font-weight: bold; color: #912338; transition: 0.2s;
-        }
+        /* CSS CAZETE COOP ALBASTRE */
+        .coop-header-info { background-color: #e1f5fe; border-bottom: 1px solid #b3e5fc; padding: 5px 6px; font-size: 11px; display: flex; flex-direction: column; gap: 2px; }
+        .coop-label { color: #000; font-weight: 600; margin-bottom: 2px; }
+        .coop-ws { color: #0277bd; font-weight: bold; text-transform: uppercase; }
+        .coop-stats { color: #0277bd; font-weight: bold; font-size: 10px; }
+        .coop-details { color: #333; margin-top: 3px; font-size: 10px; line-height: 1.2; font-style: italic; }
+
+        .val-click { display: inline-block; min-width: 16px; text-align: center; background: #fff; border: 1px solid #ccc; border-radius: 3px; padding: 1px 4px; cursor: pointer; font-weight: bold; color: #912338; transition: 0.2s; }
         .val-click:hover { border-color: #912338; background: #fef5f6; }
         
-        .limit-popup {
-            position: absolute; background: white; border: 2px solid #912338; border-radius: 6px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.2); z-index: 9999; display: grid; padding: 6px; gap: 4px;
-            grid-template-columns: repeat(3, 1fr);
-        }
+        .limit-popup { position: absolute; background: white; border: 2px solid #912338; border-radius: 6px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); z-index: 9999; display: grid; padding: 6px; gap: 4px; grid-template-columns: repeat(3, 1fr); }
         .limit-popup div { padding: 6px 10px; cursor: pointer; font-size: 12px; font-weight: bold; text-align: center; border-radius: 4px; background: #f8f9fa; color: #333; transition: 0.2s; }
         .limit-popup div:hover { background: #912338; color: white; }
 
@@ -82,12 +98,14 @@
         .term-grayed .drop-zone { background-color: #f8f9fa !important; border-color: #dee2e6 !important; }
         .term-grayed .course-box:not(.wt) { opacity: 0.5; filter: grayscale(1); }
 
-        .course-box { background: #fff; border: 1px solid #dce4ec; border-left: 4px solid #3498db; padding: 6px 8px; margin-bottom: 5px; border-radius: 4px; font-size: 11px; cursor: grab; box-shadow: 0 1px 2px rgba(0,0,0,0.05); line-height: 1.4; transition: all 0.15s;}
+        .course-box { background: #fff; border: 1px solid #dce4ec; border-left: 4px solid #3498db; padding: 6px 8px; margin-bottom: 5px; border-radius: 4px; font-size: 11px; cursor: grab; box-shadow: 0 1px 2px rgba(0,0,0,0.05); line-height: 1.4; transition: all 0.15s; position:relative;}
         .course-box.wt { border-left-color: #27ae60 !important; background-color: #d5f5e3 !important; font-weight: bold; z-index: 100; position: relative; }
         .course-box.ecp { border-left-color: #f1c40f; background: #fffdf0; }
         .course-box.invalid-term { background-color: #ffebee !important; border-color: #ef9a9a !important; border-left-color: #d32f2f !important; color: #b71c1c !important; }
         .course-box.selected { border-color: #912338; box-shadow: 0 0 0 2px rgba(145, 35, 56, 0.5); transform: scale(1.02); z-index: 5; position: relative;}
         
+        .lock-checkbox { position: absolute; top: 2px; right: 2px; cursor: pointer; z-index: 10; width:12px; height:12px; accent-color:#912338; }
+
         .course-box.highlight-prereq { background-color: #fbc02d !important; border-color: #f57f17 !important; border-left-color: #f57f17 !important; color: #000; box-shadow: 0 0 8px rgba(245, 127, 23, 0.6); } 
         .course-box.highlight-coreq { background-color: #fff176 !important; border-color: #fbc02d !important; border-left-color: #fbc02d !important; color: #000; } 
         .course-box.highlight-postreq { background-color: #1976d2 !important; border-color: #0d47a1 !important; border-left-color: #0d47a1 !important; color: #fff; box-shadow: 0 0 8px rgba(13, 71, 161, 0.6); }
@@ -103,6 +121,8 @@
         .info-row { display: flex; justify-content: space-between; margin-bottom: 4px; }
         .info-label { font-weight: 600; color: #777; }
         .info-val { color: #333; text-align: right; }
+        
+        #saveLoadGroup { margin-top:10px; display:flex; gap:10px; justify-content:center; }
     </style>
 </head>
 <body>
@@ -134,6 +154,9 @@
                 <option value="WIN">Winter</option>
             </select>
         </div>
+        
+        <button onclick="saveSequence()" style="margin-left:auto; background:#27ae60; color:white; border:none; padding:8px 12px; border-radius:4px; font-weight:bold; cursor:pointer;">💾 Save</button>
+        <button onclick="openLoadModal()" style="background:#3498db; color:white; border:none; padding:8px 12px; border-radius:4px; font-weight:bold; cursor:pointer;">📂 Load</button>
     </div>
 </div>
 
@@ -150,7 +173,6 @@
             <button onclick="setGlobalLimits('ct', 4)">4 Courses</button>
             <button onclick="setGlobalLimits('ct', 3)" style="background:#fef5f6; border-color:#f5b7b1;">ACSD 3 Courses</button>
             <button onclick="setGlobalLimits('ct', 2)" style="background:#fef5f6; border-color:#f5b7b1;">ACSD 2 Courses</button>
-            <span style="font-size: 10px; color:#888; margin-left:10px;">*Applies to Fall & Winter</span>
         </div>
         <div class="tool-group">
             <span class="tool-label">Global Default Credits</span>
@@ -159,7 +181,6 @@
             <button onclick="setGlobalLimits('cr', 12)">12 Cr</button>
             <button onclick="setGlobalLimits('cr', 9)" style="background:#fef5f6; border-color:#f5b7b1;">ACSD 9 Cr</button>
             <button onclick="setGlobalLimits('cr', 6)" style="background:#fef5f6; border-color:#f5b7b1;">ACSD 6 Cr</button>
-            <span style="font-size: 10px; color:#888; margin-left:10px;">*Applies to Fall & Winter</span>
         </div>
     </div>
 </div>
@@ -202,14 +223,221 @@
 </div>
 
 <script>
-    let coursesData = {}, repeatedCoursesList = [], defCrFW = 17, defCtFW = 5, defCrSum = 8, defCtSum = 2;
+    let coursesData = {};
+    let repeatedCoursesList = []; 
+    let termAttributes = {}; 
+
+    // --- PRELUAM DATELE COOP INSTANT DE LA SERVER ---
+    const serverCoopData = {{ coop_data_json | safe }};
+    let studentCoopData = serverCoopData.found ? serverCoopData.terms : {}; 
+
+    let defCrFW = 17, defCtFW = 5, defCrSum = 10, defCtSum = 3;
 
     document.addEventListener("DOMContentLoaded", () => {
         const currentYear = new Date().getFullYear();
         const startSelect = document.getElementById('startYear');
-        for (let y = currentYear; y >= currentYear - 6; y--) { startSelect.add(new Option(y, y)); }
-        updateCoopYears(); updateAllSelectColors();
+        
+        for (let y = currentYear; y >= currentYear - 6; y--) { 
+            startSelect.add(new Option(y, y)); 
+        }
+        
+        if (serverCoopData.found && serverCoopData.admission) {
+            const adm = serverCoopData.admission;
+            if(!Array.from(startSelect.options).some(o => o.value == adm.year)) {
+                startSelect.add(new Option(adm.year, adm.year));
+            }
+            startSelect.value = adm.year;
+            document.getElementById('startTerm').value = adm.term.includes('FALL') ? "Fall" : "Winter";
+        }
+
+        updateCoopYears(); 
+        updateAllSelectColors();
     });
+
+    function injectCoopHeaders() {
+        if (!serverCoopData.found) return;
+
+        const pYear = parseInt(document.getElementById('startYear').value);
+        const pTerm = document.getElementById('startTerm').value; 
+        const baseYear = pTerm === 'Winter' ? pYear - 1 : pYear;
+
+        // Stergem headere vechi ca sa nu se dubleze
+        document.querySelectorAll('.coop-header-info').forEach(e => e.remove());
+
+        for(let y=1; y<=7; y++) {
+            ['SUM1', 'SUM2', 'FALL', 'WIN'].forEach(t => {
+                
+                // --- ADAUGĂ ACEASTĂ LINIE AICI ---
+                if (t === 'SUM2') return; // Ignorăm complet Summer 2 pentru casetele COOP
+                // ---------------------------------
+
+                const container = document.getElementById(`cont_Y${y}_${t}`);
+                if(!container) return;
+
+                let realYear = 0;
+                let realSeason = t;
+
+                if (t === 'FALL') realYear = baseYear + y - 1;
+                else if (t === 'WIN') realYear = baseYear + y;
+                else if (t.includes('SUM')) realYear = baseYear + y - 1; 
+
+                let keySpecific = `${realYear}_${realSeason}`;
+                let keyGeneric = `${realYear}_SUM`; 
+
+                let info = studentCoopData[keySpecific];
+                if (!info && t.includes('SUM')) info = studentCoopData[keyGeneric];
+
+                if (info) {
+                    const headerDiv = document.createElement('div');
+                    headerDiv.className = 'coop-header-info';
+                    
+                    let html = "";
+                    let safeLabel = String(info.label || '').trim();
+                    if(safeLabel && safeLabel.toLowerCase() !== 'nan') html += `<div class="coop-label">${safeLabel}</div>`;
+
+                    let safeWs = String(info.ws || '').trim();
+                    if(safeWs && safeWs.toLowerCase() !== 'nan') html += `<div class="coop-ws">${safeWs}</div>`;
+
+                    let v = parseInt(info.views) || 0;
+                    let a = parseInt(info.applied) || 0;
+                    if(v > 0 || a > 0) html += `<div class="coop-stats">View: ${v} &nbsp; Applied: ${a}</div>`;
+
+                    let safeDetails = String(info.details || '').trim();
+                    if(safeDetails && safeDetails.toLowerCase() !== 'nan') html += `<div class="coop-details">&nbsp;&nbsp;&nbsp;${safeDetails}</div>`;
+                    
+                    // --- NOU: AFIȘARE "Transferred Withdrawn OK" ---
+                    let safeTw = String(info.tw_ok || '').trim();
+                    if(safeTw && safeTw.toLowerCase() !== 'nan') {
+                        html += `<div style="color: #c0392b; font-weight: bold; font-size: 10px; margin-top: 4px; border-top: 1px solid #f5b7b1; padding-top: 3px;">⚠️ Status: ${safeTw}</div>`;
+                    }
+                    
+                    headerDiv.innerHTML = html;
+                    container.insertBefore(headerDiv, container.firstChild);
+                }
+            });
+        }
+    }
+
+    {% if is_power_user %}
+    async function adminSwitchStudent() {
+        const targetSid = document.getElementById('adminSidInput').value.trim();
+        if (!targetSid) return;
+        
+        try {
+            const res = await fetch('/admin_change_sid', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ target_sid: targetSid })
+            });
+            
+            if (res.ok) {
+                window.location.reload(); 
+            } else {
+                alert("Error switching student ID");
+            }
+        } catch (e) {
+            console.error(e);
+            alert("Connection error.");
+        }
+    }
+    {% endif %}
+
+    async function saveSequence() {
+        const now = new Date();
+        const defaultName = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, '0') + "-" + String(now.getDate()).padStart(2, '0') + " " + String(now.getHours()).padStart(2, '0') + ":" + String(now.getMinutes()).padStart(2, '0');
+        const name = prompt("Enter a name for this sequence:", defaultName);
+        if(!name) return;
+        
+        let sequence_data = {
+            startYear: document.getElementById('startYear').value,
+            startTerm: document.getElementById('startTerm').value,
+            coop: document.getElementById('coopRegistered').checked,
+            coopStartYear: document.getElementById('coopStartYear').value,
+            coopStartTerm: document.getElementById('coopStartTerm').value,
+            placed: {}, unallocated: [], locks: [] 
+        };
+        
+        document.querySelectorAll('td .drop-zone').forEach(z => {
+            Array.from(z.children).forEach(el => {
+                if(!sequence_data.placed[z.dataset.term]) sequence_data.placed[z.dataset.term] = [];
+                sequence_data.placed[z.dataset.term].push(el.id);
+                if(coursesData[el.id].locked) sequence_data.locks.push(el.id);
+            });
+        });
+        
+        Array.from(document.getElementById('unallocatedZone').children).forEach(el => {
+            sequence_data.unallocated.push(el.id);
+        });
+
+        try {
+            const res = await fetch('/save_sequence', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    name: name, program: document.getElementById('programSelect').value,
+                    sequence_data: sequence_data, term_data: termAttributes 
+                })
+            });
+            if(res.ok) alert("Sequence saved to Google Drive!");
+            else alert("Error saving sequence.");
+        } catch(e) { console.error(e); alert("Save failed."); }
+    }
+
+    async function openLoadModal() {
+        const res = await fetch('/load_sequences');
+        const data = await res.json();
+        
+        if(data.sequences && data.sequences.length > 0) {
+            let msg = "Available sequences:\n";
+            data.sequences.forEach((s, i) => msg += `${i+1}. ${s.Sequence_Name}\n`);
+            let choice = prompt(msg + "\nEnter number to load:");
+            
+            if(choice && data.sequences[choice-1]) {
+                const selected = data.sequences[choice-1];
+                loadSequenceData(selected.JSON_Data, selected.Term_Data);
+            }
+        } else {
+            alert("No saved sequences found.");
+        }
+    }
+
+    function loadSequenceData(seqData, termData) {
+        termAttributes = termData || {}; 
+        document.getElementById('startYear').value = seqData.startYear;
+        document.getElementById('startTerm').value = seqData.startTerm;
+        document.getElementById('coopRegistered').checked = seqData.coop;
+        toggleCoopOptions(); 
+        document.getElementById('coopStartYear').value = seqData.coopStartYear;
+        document.getElementById('coopStartTerm').value = seqData.coopStartTerm;
+        
+        document.querySelectorAll('td .drop-zone').forEach(z => z.innerHTML = '');
+        document.getElementById('unallocatedZone').innerHTML = '';
+        
+        buildGrid();
+        
+        Object.keys(seqData.placed).forEach(term => {
+            let zone = document.getElementById(`zone_${term}`);
+            if(zone) {
+                seqData.placed[term].forEach(cid => {
+                    if(coursesData[cid]) {
+                        coursesData[cid].locked = (seqData.locks && seqData.locks.includes(cid));
+                        zone.appendChild(createCourseElement(cid));
+                    }
+                });
+            }
+        });
+        
+        if(seqData.unallocated) {
+            seqData.unallocated.forEach(cid => {
+                if(coursesData[cid]) {
+                    coursesData[cid].locked = false;
+                    document.getElementById('unallocatedZone').appendChild(createCourseElement(cid));
+                }
+            });
+        }
+        
+        sortUnallocatedDOM(); enforceAndHighlightTerms(); updateCredits(); checkWT(); runLiveCheck();
+    }
 
     function sortUnallocatedDOM() {
         const u = document.getElementById('unallocatedZone');
@@ -223,6 +451,13 @@
         });
         u.innerHTML = '';
         items.forEach(item => u.appendChild(item));
+    }
+
+    function toggleLock(cid) {
+        coursesData[cid].locked = !coursesData[cid].locked;
+        let el = document.getElementById(cid);
+        let newEl = createCourseElement(cid);
+        el.parentNode.replaceChild(newEl, el);
     }
 
     function updateSelectColor(selectId) {
@@ -293,7 +528,6 @@
         document.getElementById('coopStartTerm').disabled = !isChecked; document.getElementById('coopStartYear').disabled = !isChecked;
         if(isChecked) handleStartYearChange();
         
-        // Returnam automat WT-urile in Unallocated si le ascundem daca debifam Coop
         document.querySelectorAll('.course-box.wt').forEach(box => {
             if(!isChecked && box.parentElement.id !== 'unallocatedZone') {
                 document.getElementById('unallocatedZone').appendChild(box);
@@ -312,7 +546,8 @@
         const sYear = parseInt(document.getElementById('startYear').value), sTerm = document.getElementById('startTerm').value;
         const cYear = parseInt(document.getElementById('coopStartYear').value), cTerm = document.getElementById('coopStartTerm').value;
         if (getTermScore(cYear, cTerm) < getTermScore(sYear, sTerm === 'Fall' ? 'FALL' : 'WIN')) {
-            document.getElementById('coopStartYear').value = sYear; document.getElementById('coopStartTerm').value = sTerm === 'Fall' ? 'FALL' : 'WIN';
+            document.getElementById('coopStartYear').value = sYear;
+            document.getElementById('coopStartTerm').value = sTerm === 'Fall' ? 'FALL' : 'WIN';
         }
     }
 
@@ -355,6 +590,7 @@
             });
         }
         updateCredits();
+        injectCoopHeaders(); // Apelam functia ca sa adauge datele deasupra la termeni
     }
 
     const buildGrid = () => {
@@ -378,18 +614,14 @@
                         </div>
                     </div>
                 </td>
-                <td class="col-fall-bg" style="padding: 0; vertical-align: top;">
-                    <div class="term-container" id="cont_Y${y}_FALL" style="height: 100%; min-height: 120px;">
-                        <div class="term-header"><span>Cr: <span class="calc-cr" id="cr_Y${y}_FALL">0</span></span><div class="limit-group">MaxCr:<span class="val-click cr-val" id="maxcr_Y${y}_FALL" onclick="showLimitPopup(this, 'cr', 'Y${y}_FALL')">17</span> Max # courses:<span class="val-click ct-val" id="maxct_Y${y}_FALL" onclick="showLimitPopup(this, 'ct', 'Y${y}_FALL')">5</span></div></div>
-                        <div class="drop-zone" id="zone_Y${y}_FALL" data-term="Y${y}_FALL" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
-                    </div>
-                </td>
-                <td class="col-winter-bg" style="padding: 0; vertical-align: top;">
-                    <div class="term-container" id="cont_Y${y}_WIN" style="height: 100%; min-height: 120px;">
-                        <div class="term-header"><span>Cr: <span class="calc-cr" id="cr_Y${y}_WIN">0</span></span><div class="limit-group">MaxCr:<span class="val-click cr-val" id="maxcr_Y${y}_WIN" onclick="showLimitPopup(this, 'cr', 'Y${y}_WIN')">17</span> Max # courses:<span class="val-click ct-val" id="maxct_Y${y}_WIN" onclick="showLimitPopup(this, 'ct', 'Y${y}_WIN')">5</span></div></div>
-                        <div class="drop-zone" id="zone_Y${y}_WIN" data-term="Y${y}_WIN" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
-                    </div>
-                </td>`;
+                <td class="col-fall-bg"><div class="term-container" id="cont_Y${y}_FALL" style="height:100%; min-height:120px;">
+                    <div class="term-header"><span>Cr: <span class="calc-cr" id="cr_Y${y}_FALL">0</span></span><div class="limit-group">MaxCr:<span class="val-click cr-val" id="maxcr_Y${y}_FALL" onclick="showLimitPopup(this,'cr','Y${y}_FALL')">17</span> Max # courses:<span class="val-click ct-val" id="maxct_Y${y}_FALL" onclick="showLimitPopup(this,'ct','Y${y}_FALL')">5</span></div></div>
+                    <div class="drop-zone" id="zone_Y${y}_FALL" data-term="Y${y}_FALL" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
+                </div></td>
+                <td class="col-winter-bg"><div class="term-container" id="cont_Y${y}_WIN" style="height:100%; min-height:120px;">
+                    <div class="term-header"><span>Cr: <span class="calc-cr" id="cr_Y${y}_WIN">0</span></span><div class="limit-group">MaxCr:<span class="val-click cr-val" id="maxcr_Y${y}_WIN" onclick="showLimitPopup(this,'cr','Y${y}_WIN')">17</span> Max # courses:<span class="val-click ct-val" id="maxct_Y${y}_WIN" onclick="showLimitPopup(this,'ct','Y${y}_WIN')">5</span></div></div>
+                    <div class="drop-zone" id="zone_Y${y}_WIN" data-term="Y${y}_WIN" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
+                </div></td>`;
             tbody.appendChild(tr);
         }
     };
@@ -399,7 +631,11 @@
     
     function resetAllCourses() {
         const unalloc = document.getElementById('unallocatedZone');
-        document.querySelectorAll('td .drop-zone').forEach(z => { Array.from(z.children).forEach(c => unalloc.appendChild(c)); });
+        document.querySelectorAll('td .drop-zone').forEach(z => { 
+            Array.from(z.children).forEach(c => {
+                if(!coursesData[c.id].locked) unalloc.appendChild(c);
+            }); 
+        });
         sortUnallocatedDOM(); updateCredits(); checkWT(); clearAllHighlights(); enforceAndHighlightTerms(); runLiveCheck();
     }
 
@@ -408,20 +644,29 @@
         const orig = coursesData[cid], fakeId = "REP_" + cid; if(coursesData[fakeId]) { alert("Already added!"); return; }
         repeatedCoursesList.push(cid);
         orig.prereqs = (orig.prereqs && orig.prereqs !== 'None' && orig.prereqs !== 'N/A') ? orig.prereqs + ", " + fakeId : fakeId;
-        coursesData[fakeId] = { id: fakeId, display: `1st time (to repeat) ${orig.full_name}`, full_name: `1st time (to repeat) ${orig.full_name}`, title: "Previous attempt", credit: 0, type: "REPEAT", is_wt: false, is_ecp: false, prereqs: "None", coreqs: "None", is_prereq_for: cid, is_coreq_for: "None", terms: orig.terms };
+        coursesData[fakeId] = { id: fakeId, display: `1st attempt ${orig.full_name}`, full_name: `1st attempt ${orig.full_name}`, title: "Previous attempt", credit: 0, type: "REPEAT", is_wt: false, is_ecp: false, prereqs: "None", coreqs: "None", is_prereq_for: cid, is_coreq_for: "None", terms: orig.terms, locked: false };
         document.getElementById('unallocatedZone').appendChild(createCourseElement(fakeId)); sortUnallocatedDOM();
         alert(`Block created for ${orig.full_name}! Place it BEFORE the original course.`); runLiveCheck();
     }
 
     function getCourseHTML(c) {
         let typeStr = c.type.toUpperCase();
-        if(typeStr.includes("ENG") && typeStr.includes("CORE")) typeStr = "<b>engCORE</b>"; else if(typeStr.includes("PRG") && typeStr.includes("CORE")) typeStr = "<b>prgCORE</b>"; else if(typeStr === "REPEAT") typeStr = "<b>REPEAT</b>"; else if(typeStr.includes("TE")) typeStr = "TE"; else typeStr = "Gen";
+        if(typeStr.includes("ENG") && typeStr.includes("CORE")) typeStr = "<b>engCORE</b>"; 
+        else if(typeStr.includes("PRG") && typeStr.includes("CORE")) typeStr = "<b>prgCORE</b>"; 
+        else if(typeStr === "REPEAT") typeStr = "<b>REPEAT</b>"; 
+        else if(typeStr.includes("TE")) typeStr = "TE"; 
+        else if(typeStr.includes("GEN") || typeStr.includes("ELECTIVE")) typeStr = "Gen"; 
+        else typeStr = "ECP"; 
+
         const orderMap = { 'SUM1': 1, 'SUM2': 2, 'FALL': 3, 'WIN': 4 }; const colorMap = { 'SUM1': 'tag-sum', 'SUM2': 'tag-sum', 'FALL': 'tag-fall', 'WIN': 'tag-win' };
         let termsArr = c.terms.split(',').map(t => t.trim().toUpperCase().replace("WINTER","WIN").replace("SUM ","SUM")).filter(t => t && t !== "N/A");
         termsArr.sort((a, b) => (orderMap[a] || 99) - (orderMap[b] || 99));
         let termHTML = (c.is_wt || c.is_ecp) ? '<span class="term-tag tag-any">ANY</span>' : termsArr.map(t => `<span class="term-tag ${colorMap[t] || 'tag-any'}">${t}</span>`).join('');
         let dispCr = (c.is_wt || typeStr.includes("REPEAT")) ? 0 : c.credit;
-        return `<div style="font-weight: bold;">${c.full_name} (${dispCr} cr)</div><div style="font-style: italic; font-size: 10px; color: #555; margin: 2px 0; line-height: 1.1;">${c.title || ''}</div><span class="course-meta">[${typeStr}] ${termHTML}</span>`;
+        
+        let checkbox = `<input type="checkbox" class="lock-checkbox" ${c.locked ? 'checked' : ''} onclick="toggleLock('${c.id}'); event.stopPropagation();">`;
+
+        return `${checkbox}<div style="font-weight: bold;">${c.full_name} (${dispCr} cr)</div><div style="font-style: italic; font-size: 10px; color: #555; margin: 2px 0; line-height: 1.1;">${c.title || ''}</div><span class="course-meta">[${typeStr}] ${termHTML}</span>`;
     }
 
     function createCourseElement(cid) {
@@ -494,7 +739,7 @@
         const isCoop = document.getElementById('coopRegistered').checked;
         if (!isCoop) { document.getElementById('generateBtn').disabled = false; return; }
         const hasUnplacedWT = Array.from(document.getElementById('unallocatedZone').children).some(el => coursesData[el.id]?.is_wt && el.style.display !== 'none');
-        document.getElementById('generateBtn').disabled = false; // Permitem generarea ca sa functioneze AI-ul, dar afisam warning
+        document.getElementById('generateBtn').disabled = false; 
     }
 
     document.getElementById('wtStandardBtn').onclick = function() {
@@ -519,19 +764,35 @@
         this.innerText = "Processing sequence..."; this.disabled = true;
         const limits = {}, counts = {}, isCoop = document.getElementById('coopRegistered').checked, placed = {}; 
         document.querySelectorAll('.cr-val').forEach(i => limits[i.id.replace('maxcr_','')] = i.innerText); document.querySelectorAll('.ct-val').forEach(i => counts[i.id.replace('maxct_','')] = i.innerText);
-        document.querySelectorAll('td .drop-zone').forEach(z => { if(z.children.length > 0) placed[z.dataset.term] = Array.from(z.children).filter(c => isCoop || !coursesData[c.id]?.is_wt).map(c => c.id); });
+        
+        document.querySelectorAll('td .drop-zone').forEach(z => { 
+            if(z.children.length > 0) {
+                placed[z.dataset.term] = Array.from(z.children)
+                    .filter(c => isCoop || !coursesData[c.id]?.is_wt)
+                    .map(c => c.id);
+            }
+        });
+        
         const unallocZone = document.getElementById('unallocatedZone'); const unalloc = Array.from(unallocZone.children).filter(c => isCoop || !coursesData[c.id]?.is_wt).map(c => c.id);
         
         try {
             const res = await fetch('/generate', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ program: document.getElementById('programSelect').value, term_limits: limits, count_limits: counts, placed: placed, unallocated: unalloc, repeated: repeatedCoursesList }) });
             if (!res.ok) throw new Error('Generation failed on server.');
             const result = await res.json();
+            
             document.querySelectorAll('td .drop-zone:not(#zone_Y0_ANY)').forEach(z => z.innerHTML = '');
+            
             Object.keys(result.sequence).forEach(year => {
                 const yNum = year.split(' ')[1]; 
                 ['SUM1','SUM2','FALL','WIN'].forEach(t => {
                     const z = document.getElementById(`zone_Y${yNum}_${t}`); 
-                    if(z && result.sequence[year][t].cursuri) { result.sequence[year][t].cursuri.forEach(c => { if(coursesData[c.id]) z.appendChild(createCourseElement(c.id)); }); }
+                    if(z && result.sequence[year][t].cursuri) { 
+                        result.sequence[year][t].cursuri.forEach(c => { 
+                            if(coursesData[c.id]) {
+                                z.appendChild(createCourseElement(c.id)); 
+                            }
+                        }); 
+                    }
                 });
             });
             unallocZone.innerHTML = '';
@@ -540,27 +801,22 @@
         } catch (error) { console.error(error); alert("An error occurred while generating."); } finally { this.innerText = "Generate Sequence"; checkWT(); }
     };
 
-    // =================================================================================
-    // NOUA FUNCTIE: LIVE VALIDATION (Ruleaza la fiecare miscare pe ecran)
-    // =================================================================================
     function runLiveCheck() {
         let errors = [];
         let isCoop = document.getElementById('coopRegistered').checked;
         let takenSet = new Set();
         let currentSequence = [];
 
-        // 1. Verificare: Au ramas cursuri Core/Gen in lista?
         Array.from(document.getElementById('unallocatedZone').children).forEach(el => {
             if (el.style.display !== 'none') {
                 let c = coursesData[el.id];
                 if (c && (isCoop || !c.is_wt)) {
                     let t = c.type.toUpperCase();
-                    if (t.includes('CORE') || t === 'GEN') errors.push(`Cursul <b>${c.id}</b> (${t}) trebuie plasat pe grila.`);
+                    if (t.includes('CORE') || t === 'GEN') errors.push(`Course <b>${c.id}</b> (${t}) must be placed.`);
                 }
             }
         });
 
-        // Extragem toate termenele cronologic
         let tNames = ['SUM1', 'SUM2', 'FALL', 'WIN'];
         currentSequence.push({ id: 'Y0_ANY', courses: Array.from(document.getElementById('zone_Y0_ANY').children).map(c=>c.id) });
         for(let y=1; y<=7; y++) {
@@ -574,7 +830,6 @@
         let summerWTs = 0;
         let wt3Index = -1;
 
-        // Iteram prin istoric
         currentSequence.forEach((term, index) => {
             term.courses.forEach(cid => takenSet.add(cid));
             if (term.id === 'Y0_ANY') return;
@@ -596,120 +851,87 @@
                     realCoursesCount++;
                     totalCr += c.credit;
                     
-                    // Verificare Sezon Oferit
                     let map = {'FALL':'Fall', 'WIN':'Winter', 'SUM1':'Sum 1', 'SUM2':'Sum 2'};
                     if (!c.terms.toLowerCase().includes(map[term.type].toLowerCase())) {
-                        errors.push(`<b>${cid}</b> nu se ofera oficial in <b>${map[term.type]}</b>.`);
+                        errors.push(`<b>${cid}</b> is not offered in <b>${map[term.type]}</b>.`);
                     }
 
-                    // Verificare Pre-reqs (trebuiau luate in trecut)
                     if (c.prereqs && c.prereqs !== 'None' && c.prereqs !== 'N/A') {
                         c.prereqs.split(/[;,]/).forEach(grp => {
-                            let opts = parseCourseIDs(grp).filter(o => coursesData[o]); // Doar cursurile care exista in curriculă
-                            // Daca cerinta exista in baza de date, verificam daca studentul a plasat-o undeva in trecut
+                            let opts = parseCourseIDs(grp).filter(o => coursesData[o]);
                             if (opts.length > 0) {
-                                let satisfied = opts.some(opt => {
-                                    // Trebuie sa fie in takenSet DAR sa nu fie plasata CHIAR IN ACEST term (pre-req cere terminarea inainte)
-                                    return takenSet.has(opt) && !term.courses.includes(opt);
-                                });
-                                if (!satisfied) errors.push(`<b>${cid}</b> in ${term.id} ii lipseste pre-req din grupul: [${opts.join(' sau ')}].`);
+                                let satisfied = opts.some(opt => { return takenSet.has(opt) && !term.courses.includes(opt); });
+                                if (!satisfied) errors.push(`<b>${cid}</b> in ${term.id} missing pre-req group: [${opts.join(' or ')}].`);
                             }
                         });
                     }
 
-                    // Verificare Co-reqs (pot fi in trecut SAU fix in acest semestru)
                     if (c.coreqs && c.coreqs !== 'None' && c.coreqs !== 'N/A') {
                         c.coreqs.split(/[;,]/).forEach(grp => {
                             let opts = parseCourseIDs(grp).filter(o => coursesData[o]);
                             if (opts.length > 0 && !opts.some(opt => takenSet.has(opt))) {
-                                errors.push(`<b>${cid}</b> in ${term.id} ii lipseste co-req din grupul: [${opts.join(' sau ')}].`);
+                                errors.push(`<b>${cid}</b> in ${term.id} missing co-req group: [${opts.join(' or ')}].`);
                             }
                         });
                     }
                 }
             });
 
-            // Reguli CO-OP Speciale
             if (isCoop) {
                 if (hasWT) {
                     wtIndices.push(index);
-                    // Regula: 1 WT + 1 curs normal
                     if (isSummer) {
-                        // Cautam celalalt summer pt a face suma
                         let otherSum = term.type === 'SUM1' ? 'SUM2' : 'SUM1';
                         let otherZone = document.getElementById(`zone_Y${term.year}_${otherSum}`);
                         let otherCount = otherZone ? Array.from(otherZone.children).filter(el => !coursesData[el.id]?.is_wt && coursesData[el.id]?.type !== 'REPEAT').length : 0;
-                        if (realCoursesCount + otherCount > 1) errors.push(`Anul ${term.year} Summer: Permis max 1 curs pe langa WT.`);
+                        if (realCoursesCount + otherCount > 1) errors.push(`Year ${term.year} Summer: Max 1 course allowed alongside WT.`);
                     } else {
-                        if (realCoursesCount > 1) errors.push(`Termenul ${term.id}: Permis max 1 curs pe langa WT.`);
+                        if (realCoursesCount > 1) errors.push(`Term ${term.id}: Max 1 course allowed alongside WT.`);
                     }
-                    // Regula Capstone:
                     if (term.courses.some(id => id.includes('490A') || id.includes('490B'))) {
-                        errors.push(`Termenul ${term.id}: Capstone si WT in acelasi timp sunt interzise.`);
+                        errors.push(`Term ${term.id}: Capstone and WT in same term is not allowed.`);
                     }
                 } else if (!isSummer && index < (wt3Index > -1 ? wt3Index : 999)) {
-                    // Full time check
                     if (term.courses.length > 0 && totalCr < 12) {
-                        errors.push(`Termenul ${term.id} are < 12 credite. Inainte de WT3 trebuie sa fii Full-Time.`);
+                        errors.push(`Term ${term.id} has < 12 credits. Must be Full-Time before WT3.`);
                     }
                 }
             }
         });
 
-        // Reguli globale CO-OP
         if (isCoop) {
-            // Regula summer WT max
-            // O vara = SUM1 + SUM2. Ambele pot contine WT-ul impartit, dar il numaram ca un singur sezon per an.
             let summerSeasonsWithWT = new Set();
             wtIndices.forEach(idx => {
                 let term = currentSequence[idx];
                 if (term.type.includes('SUM')) summerSeasonsWithWT.add(term.year);
             });
-            if (summerSeasonsWithWT.size > 2) errors.push(`Limita depasita: Ai WT-uri in ${summerSeasonsWithWT.size} veri (Maxim permis: 2).`);
+            if (summerSeasonsWithWT.size > 2) errors.push(`Limit exceeded: WT in ${summerSeasonsWithWT.size} summers (Max: 2).`);
 
-            // Consecutive WT rule (trebuie tradus din indici de semestre in semestre consecutive logice: Fall->Win->Sum1...)
-            // Simplificare: Daca gasim WT in 3 termene majore consecutive (ignoram impartirea Sum1/Sum2 ca fiind separata, o consideram un singur "SUM")
-            let collapsedTerms = [];
-            currentSequence.forEach(t => {
-                if(t.id === 'Y0_ANY') return;
-                let season = t.type.includes('SUM') ? 'SUM' : t.type;
-                let name = `Y${t.year}_${season}`;
-                if(collapsedTerms.length === 0 || collapsedTerms[collapsedTerms.length-1].name !== name) {
-                    collapsedTerms.push({ name: name, hasWT: t.courses.some(id=>coursesData[id]?.is_wt) });
-                } else {
-                    if (t.courses.some(id=>coursesData[id]?.is_wt)) collapsedTerms[collapsedTerms.length-1].hasWT = true;
-                }
+            let wt1Pos = -1, wt2Pos = -1, wt3Pos = -1;
+            wtIndices.forEach(idx => {
+                let term = currentSequence[idx];
+                if (term.courses.some(c => c.includes('WT1'))) wt1Pos = idx;
+                if (term.courses.some(c => c.includes('WT2'))) wt2Pos = idx;
+                if (term.courses.some(c => c.includes('WT3'))) wt3Pos = idx;
             });
-            let consec = 0;
-            collapsedTerms.forEach(t => {
-                if (t.hasWT) {
-                    consec++;
-                    if (consec >= 3) errors.push(`Nu poti avea 3 Work Terms consecutive.`);
-                } else { consec = 0; }
-            });
+            
+            if (wt1Pos > -1 && wt2Pos > -1 && wt2Pos <= wt1Pos) errors.push("Invalid Sequence: WT2 must be after WT1.");
+            if (wt2Pos > -1 && wt3Pos > -1 && wt3Pos <= wt2Pos) errors.push("Invalid Sequence: WT3 must be after WT2.");
 
-            // Regula: Core dupa ultimul WT
-            if (collapsedTerms.some(t => t.hasWT)) {
-                let lastWtGlobalIndex = -1;
-                collapsedTerms.forEach((t, i) => { if(t.hasWT) lastWtGlobalIndex = i; });
-                
+            if (wt3Pos > -1) {
                 let hasCoreAfter = false;
-                for(let i = lastWtGlobalIndex + 1; i < currentSequence.length; i++) {
+                for(let i = wt3Pos + 1; i < currentSequence.length; i++) {
                     if (currentSequence[i].courses.some(id => coursesData[id] && coursesData[id].type.toUpperCase().includes('CORE'))) {
                         hasCoreAfter = true; break;
                     }
                 }
-                if (!hasCoreAfter) errors.push(`Dupa ultimul WT trebuie programat cel putin un curs prgCORE sau engCORE.`);
+                if (!hasCoreAfter) errors.push("Must have at least one CORE course after WT3.");
             }
         }
 
-        // Randare Box
         let list = document.getElementById('liveValidationList');
         list.innerHTML = '';
-        
-        // Eliminam duplicatele in caz de erori pe Sum1 si Sum2 simultan
         errors = [...new Set(errors)];
-
         if (errors.length === 0) {
             list.innerHTML = `<li style="color:#27ae60; font-weight:bold;">✅ Sequence looks perfect! All rules satisfied.</li>`;
         } else {
@@ -717,5 +939,6 @@
         }
     }
 </script>
+
 </body>
 </html>

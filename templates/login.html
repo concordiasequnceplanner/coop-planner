@@ -27,12 +27,21 @@
         {% if ask_guest_info %}
             <p class="subtitle" style="color:#d35400; font-weight:bold;">Email not found in database.</p>
             <p class="subtitle" style="margin-top:-15px;">You can continue as a Guest. Please provide your details:</p>
+            
+            <div style="background-color: #eaf2f8; color: #2980b9; padding: 12px; border-radius: 5px; font-size: 13px; margin-bottom: 20px; text-align: left; line-height: 1.4;">
+                ℹ️ If you log in next time with the <b>exact same email and student ID</b>, you will be able to retrieve your saved sequences.
+            </div>
+
             <form method="POST">
                 <input type="hidden" name="action" value="guest_login">
                 <input type="hidden" name="email" value="{{ email }}">
-                <input type="text" name="guest_name" placeholder="Full Name" required>
-                <input type="text" name="guest_sid" placeholder="Student ID (e.g., 40012345)" required>
-                <button type="submit">Send Access Code</button>
+                
+                <input type="email" value="{{ email }}" disabled style="background-color: #f8f9fa; color: #7f8c8d; cursor: not-allowed;">
+                
+                <input type="text" name="guest_name" placeholder="Full Name" required autocomplete="off">
+                <input type="text" name="guest_sid" placeholder="Student ID (e.g., 40012345)" required autocomplete="off">
+                
+                <button type="submit">Login</button>
             </form>
         {% else %}
             <p class="subtitle">Enter the primary email given to CO-OP Institute: </p>

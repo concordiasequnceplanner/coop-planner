@@ -4,23 +4,41 @@
     <meta charset="UTF-8">
     <title>Academic Planner - Concordia MIAE</title>
     
-    <div style="display: flex; justify-content: flex-end; align-items: center; gap: 15px; padding: 10px 20px; background: #fff; border-bottom: 1px solid #eee;">
+    <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 20px; background: #fff; border-bottom: 1px solid #eee;">
         
-        {% if is_power_user %}
-        <div style="display: flex; align-items: center; gap: 8px; border: 1px solid #3498db; padding: 4px 10px; border-radius: 20px; background: #f0f7ff;">
-            <span style="font-size: 11px; font-weight: bold; color: #2980b9;">ADMIN VIEW:</span>
-            <input type="text" id="adminSidInput" placeholder="Student ID..." style="border: 1px solid #cbd5e0; border-radius: 15px; padding: 4px 10px; font-size: 12px; width: 110px; outline: none;" value="{{ viewing_sid if viewing_sid != session.get('student_id', '') else '' }}">
-            <button onclick="adminSwitchStudent()" style="background: #3498db; color: white; border: none; padding: 4px 12px; border-radius: 15px; cursor: pointer; font-size: 11px; font-weight: bold; transition: 0.2s;">Switch</button>
+        <div style="font-size: 15px; font-weight: bold; color: #e67e22; background: #fff3e0; padding: 6px 15px; border-radius: 20px; border: 1px solid #ffe0b2;">
+            👁️ Viewing: <span id="displayViewingSid">{{ viewing_sid if viewing_sid else session.get('student_id', '') }}</span>
         </div>
-        {% endif %}
 
-        <span style="color: #555; font-size: 13px;">
-            Logged in as: <b>{{ session.get('student_id', '') }}</b>
-            {% if viewing_sid != session.get('student_id', '') %}
-                <span style="margin-left: 5px; color: #d35400;">(Viewing: <b>{{ viewing_sid }}</b>)</span>
+        <div style="display: flex; align-items: center; gap: 20px;">
+            {% if is_power_user %}
+            <div style="position: relative;">
+                <button onclick="openPendingModal()" style="background: #e74c3c; color: white; border: none; padding: 6px 15px; border-radius: 20px; font-weight: bold; cursor: pointer; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    📥 Pending Approvals <span id="pendingBadge"></span>
+                </button>
+            </div>
+            
+            <div id="pendingModal" style="display:none; position:fixed; top:10%; left:50%; transform:translateX(-50%); background:white; padding:20px; border-radius:8px; box-shadow:0 10px 25px rgba(0,0,0,0.2); z-index:9999; width: 450px;">
+                <h3 style="margin-top:0; color:#912338; display:flex; justify-content:space-between;">
+                    Pending Approvals
+                    <button onclick="openPendingModal()" style="font-size:12px; cursor:pointer; background:#eee; border:none; border-radius:4px; padding:4px 8px;">🔄 Refresh</button>
+                </h3>
+                <ul id="pendingListUl" style="list-style:none; padding:0; max-height: 300px; overflow-y: auto;">
+                    </ul>
+                <button onclick="document.getElementById('pendingModal').style.display='none'" style="width: 100%; margin-top: 15px; padding: 8px; background: #ecf0f1; border: none; cursor: pointer; border-radius: 4px;">Close</button>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 8px; border: 1px solid #3498db; padding: 4px 10px; border-radius: 20px; background: #f0f7ff;">
+                <span style="font-size: 11px; font-weight: bold; color: #2980b9;">ADMIN VIEW:</span>
+                <input type="text" id="adminSidInput" placeholder="Student ID..." style="border: 1px solid #cbd5e0; border-radius: 15px; padding: 4px 10px; font-size: 12px; width: 110px; outline: none;" value="{{ viewing_sid if viewing_sid != session.get('student_id', '') else '' }}">
+                <button onclick="adminSwitchStudent()" style="background: #3498db; color: white; border: none; padding: 4px 12px; border-radius: 15px; cursor: pointer; font-size: 11px; font-weight: bold;">Switch</button>
+            </div>
             {% endif %}
-        </span>
-        <a href="/logout" style="padding: 6px 15px; background: #912338; color: white; text-decoration: none; border-radius: 15px; font-weight: bold; font-size: 12px; transition: 0.3s;">Log Out</a>
+
+            <span style="color: #2c3e50; font-size: 13px;">Logged in as: <b>{{ session.get('user_email') }}</b></span>
+
+            <a href="/logout" style="text-decoration: none; background: #e74c3c; color: white; padding: 6px 15px; border-radius: 15px; font-size: 13px; font-weight: bold; transition: background 0.3s;">Logout</a>
+        </div>
     </div>
 
     <style>
@@ -123,17 +141,96 @@
         .info-val { color: #333; text-align: right; }
         
         #saveLoadGroup { margin-top:10px; display:flex; gap:10px; justify-content:center; }
+        /* --- NOI STILURI PENTRU FAZA 1 --- */
+
+        /* 1. Butoane Active */
+        .tool-group button.btn-active {
+            background-color: #912338 !important;
+            color: white !important;
+            border-color: #912338 !important;
+            transform: scale(1.05); /* Le face putin mai mari sa iasa in evidenta */
+            box-shadow: 0 4px 6px rgba(145, 35, 56, 0.3);
+        }
+
+        /* 2. Background Special pentru Institute WTs */
+        /* --- CULOARE NOUĂ PENTRU INSTITUTE WT (HEADER-UL DE SUS) --- */
+
+        /* --- CULOARE NOUĂ PENTRU INSTITUTE WT (DOAR HEADER-UL COOP W-2) --- */
+
+        /* 1. Tinta este DOAR cutia cu W-2, WT etc. */
+        .institute-wt-bg .coop-header-info {
+            background-color: #34495e !important; 
+            border-bottom: 2px solid #2c3e50 !important;
+            box-shadow: inset 0 -2px 5px rgba(0,0,0,0.1);
+        }
+
+        /* 2. Facem textul din interiorul cutiei COOP alb ca sa se vada pe fundal inchis */
+        .institute-wt-bg .coop-header-info .coop-label,
+        .institute-wt-bg .coop-header-info .coop-ws,
+        .institute-wt-bg .coop-header-info .coop-stats,
+        .institute-wt-bg .coop-header-info .coop-details {
+            color: #ffffff !important;
+        }
+
+        /* 3. Asiguram ca linia cu credite ramane NORMALĂ (gri deschis) */
+        .institute-wt-bg .term-header {
+            background-color: #fcfcfc !important; 
+            color: #666 !important;
+        }
+
+        /* 4. Zona de drop primește o tentă foarte spălăcită a culorii albastre */
+        .institute-wt-bg .drop-zone {
+            background-color: rgba(52, 73, 94, 0.04) !important; 
+            border: 2px dashed #34495e !important; 
+        }
+
+        /* --- ECRAN DE INCARCARE (LOADING OVERLAY) --- */
+        #loadingOverlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255, 255, 255, 0.85);
+            z-index: 9999;
+            display: none; /* Ascuns by default */
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            backdrop-filter: blur(3px); /* Efect elegant de blur pe fundal */
+        }
+        
+        .spinner {
+            border: 8px solid #f3f3f3;
+            border-top: 8px solid #3498db;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
 </head>
+
+
 <body>
+    <div id="loadingOverlay">
+        <div class="spinner"></div>
+        <h2 style="color: #2c3e50; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;">Loading Student Data... ⏳</h2>
+        <p style="color: #7f8c8d;">Please wait while the academic record is synchronized.</p>
+    </div>
 
 <div class="header-box">
     <div class="header-controls">
-        <select id="programSelect">
-            <option value="" disabled selected>Select Program...</option>
-            {% for p in programe %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+        <select id="programSelect" onchange="handleProgramChange()">
+            <option value="">-- Select a Program --</option>
+            {% for p in programe %}
+                <option value="{{ p }}">{{ p }}</option>
+            {% endfor %}
         </select>
-        
+                
         <span style="font-weight: bold; color: #912338; font-size: 13px; margin-left: 10px;">Program Start:</span>
         <select id="startYear" onchange="handleStartYearChange()"></select>
         <select id="startTerm" onchange="handleStartTermChange()"><option value="Fall">Fall</option><option value="Winter">Winter</option></select>
@@ -148,8 +245,7 @@
             <span style="font-size: 13px; color: #555;">Start:</span>
             <select id="coopStartYear" onchange="handleCoopChange()"></select>
             <select id="coopStartTerm" onchange="handleCoopChange()">
-                <option value="SUM1">Summer 1</option>
-                <option value="SUM2">Summer 2</option>
+                <option value="SUM">Summer</option>
                 <option value="FALL">Fall</option>
                 <option value="WIN">Winter</option>
             </select>
@@ -163,24 +259,30 @@
 <div class="tools-container collapsed" id="toolsMenu">
     <div class="tools-header" onclick="toggleTools()"><span>🛠️ Advanced Control Panel & Quick Actions</span><span>▼</span></div>
     <div class="tools-content">
-        <div class="tool-group"><button class="btn-danger" onclick="resetAllCourses()">Reset All to Unallocated</button></div>
+        <div class="tool-group">
+            <button id="moveEcpBtn" style= "border-left-color: #f1c40f; background: #fffdf0; ">ALL ECP taken prior to Program</button>
+            <button onclick="lockAllPlacedCourses()" style="background:#27ae60; color:white; border-color:#2ecc71; padding: 6px 12px; border-radius: 3px; cursor: pointer; font-size: 12px; font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">✅ Check all courses placed</button>
+            <button class="btn-danger" onclick="resetAllCourses()">Reset all unchecked to Unallocated</button>
+        </div>
         <div class="tool-group"><select id="repeatCourseSelect" style="width: 250px; font-size: 11px;"><option value="" disabled selected>Select course to repeat...</option></select><button onclick="addRepeatCourse()">I need to repeat this course</button></div>
-        <div class="tool-group"><button id="moveEcpBtn">ALL ECP taken prior to Program</button><button id="wtStandardBtn" style="background:#2ecc71; color:white; border-color:#27ae60;">WT - default placement</button></div>
+
         <div class="tool-group">
             <span class="tool-label">Global Default Courses</span>
-            <button onclick="setGlobalLimits('ct', 6)">6 Courses</button>
-            <button onclick="setGlobalLimits('ct', 5)">5 Courses</button>
-            <button onclick="setGlobalLimits('ct', 4)">4 Courses</button>
-            <button onclick="setGlobalLimits('ct', 3)" style="background:#fef5f6; border-color:#f5b7b1;">ACSD 3 Courses</button>
-            <button onclick="setGlobalLimits('ct', 2)" style="background:#fef5f6; border-color:#f5b7b1;">ACSD 2 Courses</button>
+            <button onclick="setGlobalLimits('ct', 6, this)">6 Courses</button>
+            <button class="btn-active" onclick="setGlobalLimits('ct', 5, this)">5 Courses</button>
+            <button onclick="setGlobalLimits('ct', 4, this)">4 Courses</button>
+            <button onclick="setGlobalLimits('ct', 3, this)" style="background:#fef5f6; border-color:#f5b7b1;">ACSD 3 Courses</button>
+            <button onclick="setGlobalLimits('ct', 2, this)" style="background:#fef5f6; border-color:#f5b7b1;">ACSD 2 Courses</button>
+            <span style="font-size: 10px; color:#888; margin-left:10px;">*Applies to Fall & Winter</span>
         </div>
         <div class="tool-group">
             <span class="tool-label">Global Default Credits</span>
-            <button onclick="setGlobalLimits('cr', 18)">18 Cr</button>
-            <button onclick="setGlobalLimits('cr', 15)">15 Cr</button>
-            <button onclick="setGlobalLimits('cr', 12)">12 Cr</button>
-            <button onclick="setGlobalLimits('cr', 9)" style="background:#fef5f6; border-color:#f5b7b1;">ACSD 9 Cr</button>
-            <button onclick="setGlobalLimits('cr', 6)" style="background:#fef5f6; border-color:#f5b7b1;">ACSD 6 Cr</button>
+            <button class="btn-active" onclick="setGlobalLimits('cr', 18, this)">18 Cr</button>
+            <button onclick="setGlobalLimits('cr', 15, this)">15 Cr</button>
+            <button onclick="setGlobalLimits('cr', 12, this)">12 Cr</button>
+            <button onclick="setGlobalLimits('cr', 9, this)" style="background:#fef5f6; border-color:#f5b7b1;">ACSD 9 Cr</button>
+            <button onclick="setGlobalLimits('cr', 6, this)" style="background:#fef5f6; border-color:#f5b7b1;">ACSD 6 Cr</button>
+            <span style="font-size: 10px; color:#888; margin-left:10px;">*Applies to Fall & Winter</span>
         </div>
     </div>
 </div>
@@ -206,6 +308,31 @@
                 <li style="color:#27ae60; font-weight:bold;">✅ Sequence looks perfect! All rules satisfied.</li>
             </ul>
         </div>
+
+        <div id="submitPanel" style="margin-top: 40px; padding: 25px; background: #f8f9fa; border: 1px solid #dcdde1; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05);">
+            <h3 style="margin-top:0; color: #2c3e50; display: flex; align-items: center; gap: 10px;">
+                🎓 Finalize & Submit Sequence
+            </h3>
+            <p style="color: #636e72; font-size: 14px;">Once your sequence is complete, submit it to the CO-OP AD Director for approval. If your sequence has validation warnings, you must provide a justification before submitting.</p>
+
+            <div id="justificationBox" style="margin-bottom: 20px; background: #f9fff9; padding: 15px; border-left: 4px solid #27ae60; border-radius: 4px; transition: all 0.3s;">
+                <label id="justificationLabel" style="font-weight: bold; color: #27ae60; display: block; margin-bottom: 8px;">💬 Sequence looks good! Comments are optional:</label>
+                
+                <textarea id="justificationText" 
+                    oninput="this.style.height = ''; this.style.height = this.scrollHeight + 'px'" 
+                    style="width: 100%; min-height: 80px; padding: 10px; border: 1px solid #bdc3c7; border-radius: 4px; font-family: inherit; resize: none; overflow: hidden;" 
+                    placeholder="Comments are optional: "></textarea>
+                
+                The sequnece will be emailed to:
+                <li><b>MIAE Academic Director:</b> Dr. Sorin Voiculescu (coop_miae@concordia.ca)</li>
+                <li><b>Undergrad Program Assistant:</b> Sabrina Poirier (sabrina.poirier@concordia.ca)</li>
+                <li><b>Co-op Coordinator:</b> <span id="coopCoordName" style="font-weight: bold;">Loading...</span> (<span id="coopCoordEmail">...</span>)</li>
+            </div>
+
+            <button onclick="submitSequence()" style="background: #27ae60; color: white; border: none; padding: 12px 24px; font-size: 16px; font-weight: bold; border-radius: 5px; cursor: pointer; transition: background 0.3s;">
+                📤 Submit to CO-OP Director
+            </button>
+        </div>
     </div>
     
     <div class="sidebar">
@@ -220,6 +347,7 @@
             <div style="margin-top:10px; padding-top:8px; border-top:1px dashed #ccc;"><span class="info-label" style="color:#0d47a1; font-size:10px;">IS PRE-REQ FOR:</span><p id="info_post_prereq" style="margin:2px 0 8px 0; color:#555; font-size:11px;">-</p><span class="info-label" style="color:#1e88e5; font-size:10px;">IS CO-REQ FOR:</span><p id="info_post_coreq" style="margin:2px 0; color:#555; font-size:11px;">-</p></div>
         </div>
     </div>
+
 </div>
 
 <script>
@@ -231,7 +359,7 @@
     const serverCoopData = {{ coop_data_json | safe }};
     let studentCoopData = serverCoopData.found ? serverCoopData.terms : {}; 
 
-    let defCrFW = 17, defCtFW = 5, defCrSum = 10, defCtSum = 3;
+    let defCrFW = 18, defCtFW = 5, defCrSum = 7, defCtSum = 2;
 
     document.addEventListener("DOMContentLoaded", () => {
         const currentYear = new Date().getFullYear();
@@ -256,36 +384,23 @@
 
     function injectCoopHeaders() {
         if (!serverCoopData.found) return;
-
-        const pYear = parseInt(document.getElementById('startYear').value);
-        const pTerm = document.getElementById('startTerm').value; 
+        const pYear = parseInt(document.getElementById('startYear').value), pTerm = document.getElementById('startTerm').value; 
         const baseYear = pTerm === 'Winter' ? pYear - 1 : pYear;
 
-        // Stergem headere vechi ca sa nu se dubleze
         document.querySelectorAll('.coop-header-info').forEach(e => e.remove());
+        document.querySelectorAll('.institute-wt-bg').forEach(el => el.classList.remove('institute-wt-bg'));
 
         for(let y=1; y<=7; y++) {
-            ['SUM1', 'SUM2', 'FALL', 'WIN'].forEach(t => {
-                
-                // --- ADAUGĂ ACEASTĂ LINIE AICI ---
-                if (t === 'SUM2') return; // Ignorăm complet Summer 2 pentru casetele COOP
-                // ---------------------------------
-
+            ['SUM', 'FALL', 'WIN'].forEach(t => {
                 const container = document.getElementById(`cont_Y${y}_${t}`);
                 if(!container) return;
 
                 let realYear = 0;
-                let realSeason = t;
-
                 if (t === 'FALL') realYear = baseYear + y - 1;
                 else if (t === 'WIN') realYear = baseYear + y;
-                else if (t.includes('SUM')) realYear = baseYear + y - 1; 
+                else if (t === 'SUM') realYear = baseYear + y - 1; 
 
-                let keySpecific = `${realYear}_${realSeason}`;
-                let keyGeneric = `${realYear}_SUM`; 
-
-                let info = studentCoopData[keySpecific];
-                if (!info && t.includes('SUM')) info = studentCoopData[keyGeneric];
+                let info = studentCoopData[`${realYear}_${t}`];
 
                 if (info) {
                     const headerDiv = document.createElement('div');
@@ -298,21 +413,19 @@
                     let safeWs = String(info.ws || '').trim();
                     if(safeWs && safeWs.toLowerCase() !== 'nan') html += `<div class="coop-ws">${safeWs}</div>`;
 
-                    let v = parseInt(info.views) || 0;
-                    let a = parseInt(info.applied) || 0;
+                    let v = parseInt(info.views) || 0, a = parseInt(info.applied) || 0;
                     if(v > 0 || a > 0) html += `<div class="coop-stats">View: ${v} &nbsp; Applied: ${a}</div>`;
 
                     let safeDetails = String(info.details || '').trim();
                     if(safeDetails && safeDetails.toLowerCase() !== 'nan') html += `<div class="coop-details">&nbsp;&nbsp;&nbsp;${safeDetails}</div>`;
                     
-                    // --- NOU: AFIȘARE "Transferred Withdrawn OK" ---
                     let safeTw = String(info.tw_ok || '').trim();
-                    if(safeTw && safeTw.toLowerCase() !== 'nan') {
-                        html += `<div style="color: #c0392b; font-weight: bold; font-size: 10px; margin-top: 4px; border-top: 1px solid #f5b7b1; padding-top: 3px;">⚠️ Status: ${safeTw}</div>`;
-                    }
+                    if(safeTw && safeTw.toLowerCase() !== 'nan') html += `<div style="color:#c0392b; font-weight:bold; font-size:10px; margin-top:4px; border-top:1px solid #f5b7b1; padding-top:3px;">⚠️ Status: ${safeTw}</div>`;
                     
                     headerDiv.innerHTML = html;
                     container.insertBefore(headerDiv, container.firstChild);
+
+                    if (safeWs.toUpperCase().includes('WT') || safeLabel.toUpperCase().includes('W-')) container.classList.add('institute-wt-bg');
                 }
             });
         }
@@ -339,7 +452,12 @@
             console.error(e);
             alert("Connection error.");
         }
+
+        // 👉 ADAUGĂ LINIA ASTA LA FINAL:
+         autoDetectProgram();
     }
+
+
     {% endif %}
 
     async function saveSequence() {
@@ -385,58 +503,89 @@
 
     async function openLoadModal() {
         const res = await fetch('/load_sequences');
+
         const data = await res.json();
+        coursesData = data; // 'data' este obiectul { "ENGR213": {...}, "INDU211": {...} }
         
         if(data.sequences && data.sequences.length > 0) {
             let msg = "Available sequences:\n";
-            data.sequences.forEach((s, i) => msg += `${i+1}. ${s.Sequence_Name}\n`);
-            let choice = prompt(msg + "\nEnter number to load:");
+            data.sequences.forEach((s, i) => msg += `${i+1}. ${s.Sequence_Name} [${s.Program}]\n`);
+            let choice = prompt(msg + "\nEnter number to load (without '.', e.g. 3 for 3. Submitted on ....):");
             
             if(choice && data.sequences[choice-1]) {
                 const selected = data.sequences[choice-1];
-                loadSequenceData(selected.JSON_Data, selected.Term_Data);
+                // Trimitem si programul catre functia de incarcare
+                await loadSequenceData(selected.JSON_Data, selected.Term_Data, selected.Settings_Data, selected.Program);
             }
         } else {
             alert("No saved sequences found.");
         }
     }
 
-    function loadSequenceData(seqData, termData) {
-        termAttributes = termData || {}; 
-        document.getElementById('startYear').value = seqData.startYear;
-        document.getElementById('startTerm').value = seqData.startTerm;
-        document.getElementById('coopRegistered').checked = seqData.coop;
-        toggleCoopOptions(); 
-        document.getElementById('coopStartYear').value = seqData.coopStartYear;
-        document.getElementById('coopStartTerm').value = seqData.coopStartTerm;
-        
-        document.querySelectorAll('td .drop-zone').forEach(z => z.innerHTML = '');
-        document.getElementById('unallocatedZone').innerHTML = '';
-        
-        buildGrid();
-        
-        Object.keys(seqData.placed).forEach(term => {
-            let zone = document.getElementById(`zone_${term}`);
-            if(zone) {
-                seqData.placed[term].forEach(cid => {
-                    if(coursesData[cid]) {
-                        coursesData[cid].locked = (seqData.locks && seqData.locks.includes(cid));
-                        zone.appendChild(createCourseElement(cid));
-                    }
-                });
-            }
-        });
-        
-        if(seqData.unallocated) {
-            seqData.unallocated.forEach(cid => {
-                if(coursesData[cid]) {
-                    coursesData[cid].locked = false;
-                    document.getElementById('unallocatedZone').appendChild(createCourseElement(cid));
+    async function loadSequenceData(seqData, termData, settingsData, programName) {
+        document.getElementById('loadingOverlay').style.display = 'flex'; 
+        try {
+            termAttributes = termData || {}; 
+            if (programName) {
+                document.getElementById('programSelect').value = programName;
+                document.getElementById('workspace').style.visibility = 'visible';
+                document.getElementById('toolsMenu').classList.remove('collapsed');
+                await fetchCoursesForProgram(programName);
+            } else { alert("Cannot load: Program name missing."); return; }
+
+            let sYear = seqData.startYear || (settingsData ? settingsData.startYear : null);
+            let sTerm = seqData.startTerm || (settingsData ? settingsData.startTerm : "Fall");
+            let isCoop = seqData.coop !== undefined ? seqData.coop : (settingsData && settingsData.coop !== undefined ? settingsData.coop : true);
+            
+            if (sYear) document.getElementById('startYear').value = sYear;
+            if (sTerm) document.getElementById('startTerm').value = sTerm;
+            document.getElementById('coopRegistered').checked = isCoop;
+            toggleCoopOptions(); 
+            if (seqData.coopStartYear) document.getElementById('coopStartYear').value = seqData.coopStartYear;
+            if (seqData.coopStartTerm) document.getElementById('coopStartTerm').value = seqData.coopStartTerm;
+            
+            document.querySelectorAll('td .drop-zone').forEach(z => z.innerHTML = '');
+            document.getElementById('unallocatedZone').innerHTML = '';
+            buildGrid();
+            await loadTranscriptAndMapInstitute();
+            document.querySelectorAll('td .drop-zone').forEach(z => z.innerHTML = '');
+            document.getElementById('unallocatedZone').innerHTML = '';
+
+            let placedDict = seqData.placed || seqData; 
+            let placedSet = new Set();
+            Object.keys(placedDict).forEach(term => {
+                let safeTerm = term.replace('_SUM1', '_SUM').replace('_SUM2', '_SUM');
+                let zoneId = safeTerm.startsWith('zone_') ? safeTerm : `zone_${safeTerm}`;
+                let zone = document.getElementById(zoneId);
+                if(zone && Array.isArray(placedDict[term])) {
+                    placedDict[term].forEach(cid => {
+                        if(coursesData[cid]) {
+                            coursesData[cid].locked = (seqData.locks && seqData.locks.includes(cid));
+                            zone.appendChild(createCourseElement(cid));
+                            placedSet.add(cid);
+                        }
+                    });
                 }
             });
-        }
-        
-        sortUnallocatedDOM(); enforceAndHighlightTerms(); updateCredits(); checkWT(); runLiveCheck();
+            
+            if(seqData.unallocated) {
+                seqData.unallocated.forEach(cid => {
+                    if(coursesData[cid] && !placedSet.has(cid)) {
+                        coursesData[cid].locked = false;
+                        document.getElementById('unallocatedZone').appendChild(createCourseElement(cid));
+                        placedSet.add(cid);
+                    }
+                });
+            } else {
+                Object.keys(coursesData).forEach(cid => {
+                    if (!placedSet.has(cid)) document.getElementById('unallocatedZone').appendChild(createCourseElement(cid));
+                });
+            }
+            
+            document.querySelectorAll('.course-box.wt').forEach(box => { box.style.display = isCoop ? 'block' : 'none'; });
+            updateRoutingInfo(); sortUnallocatedDOM(); enforceAndHighlightTerms(); updateCredits(); checkWT(); runLiveCheck();
+        } catch (e) { console.error("Error loading sequence:", e); alert("Error loading sequence.");
+        } finally { document.getElementById('loadingOverlay').style.display = 'none'; }
     }
 
     function sortUnallocatedDOM() {
@@ -447,7 +596,12 @@
             let bIsWT = b.id.toUpperCase().includes('WT');
             if (aIsWT && !bIsWT) return -1;
             if (!aIsWT && bIsWT) return 1;
-            return a.id.localeCompare(b.id);
+            
+            // MODIFICARE AICI: Sortam dupa full_name ca sa le tina grupate
+            let nameA = coursesData[a.id] ? coursesData[a.id].full_name : a.id;
+            let nameB = coursesData[b.id] ? coursesData[b.id].full_name : b.id;
+            
+            return nameA.localeCompare(nameB);
         });
         u.innerHTML = '';
         items.forEach(item => u.appendChild(item));
@@ -526,20 +680,30 @@
         const isChecked = document.getElementById('coopRegistered').checked;
         document.getElementById('coopDetailsGroup').style.opacity = isChecked ? '1' : '0.4';
         document.getElementById('coopStartTerm').disabled = !isChecked; document.getElementById('coopStartYear').disabled = !isChecked;
-        if(isChecked) handleStartYearChange();
+        
+        if(isChecked) {
+            updateCoopYears(); 
+            document.getElementById('coopStartYear').value = document.getElementById('startYear').value; 
+            document.getElementById('coopStartTerm').value = "FALL";
+        }
+        
+        updateAllSelectColors(); 
         
         document.querySelectorAll('.course-box.wt').forEach(box => {
-            if(!isChecked && box.parentElement.id !== 'unallocatedZone') {
+            if(!isChecked && box.parentElement && box.parentElement.id !== 'unallocatedZone') {
                 document.getElementById('unallocatedZone').appendChild(box);
             }
             box.style.display = isChecked ? 'block' : 'none';
         });
         
-        updateAllSelectColors(); enforceAndHighlightTerms(); runLiveCheck();
+        triggerGridRebuild();
     }
 
     function getTermScore(year, term) {
-        if(term === 'WIN') return year * 10 + 1; if(term === 'SUM1') return year * 10 + 2; if(term === 'SUM2') return year * 10 + 3; if(term === 'FALL') return year * 10 + 4; return 0;
+        if(term === 'WIN') return year * 10 + 1; 
+        if(term === 'SUM' || term === 'SUM1' || term === 'SUM2') return year * 10 + 2; 
+        if(term === 'FALL') return year * 10 + 4; 
+        return 0;
     }
 
     function enforceCoopLogic() {
@@ -551,9 +715,21 @@
         }
     }
 
-    function setGlobalLimits(type, value) {
+    function setGlobalLimits(type, value, btnObj) {
         if(type === 'cr') defCrFW = value; if(type === 'ct') defCtFW = value;
         document.querySelectorAll(`.val-click.${type}-val`).forEach(span => { if(!span.id.includes('SUM')) delete span.dataset.userVal; });
+        
+        // MODIFICARE AICI: Schimbam culoarea butonului apasat
+        if (btnObj) {
+            // Cautam grupul parinte (tool-group) si scoatem clasa btn-active de pe toate butoanele de acelasi tip
+            let parentGroup = btnObj.closest('.tool-group');
+            if (parentGroup) {
+                parentGroup.querySelectorAll('button').forEach(b => b.classList.remove('btn-active'));
+            }
+            // Adaugam clasa pe butonul apasat
+            btnObj.classList.add('btn-active');
+        }
+        
         enforceAndHighlightTerms();
     }
 
@@ -564,25 +740,20 @@
         document.getElementById('y0-label').innerText = `PRIOR to ${pTerm} ${pYear}`;
 
         for(let y=1; y<=7; y++) {
-            let sumHasWT = false;
-            let sum1Zone = document.getElementById(`zone_Y${y}_SUM1`), sum2Zone = document.getElementById(`zone_Y${y}_SUM2`);
-            if (sum1Zone && Array.from(sum1Zone.children).some(el => el.classList.contains('wt') && el.style.display !== 'none')) sumHasWT = true;
-            if (sum2Zone && Array.from(sum2Zone.children).some(el => el.classList.contains('wt') && el.style.display !== 'none')) sumHasWT = true;
-
-            ['SUM1', 'SUM2', 'FALL', 'WIN'].forEach(t => {
+            ['SUM', 'FALL', 'WIN'].forEach(t => {
                 let termStr = `Y${y}_${t}`, termYear = (t === 'WIN') ? (baseYear + y) : (baseYear + y - 1);
-                let cellScore = getTermScore(termYear, t);
+                let cellScore = getTermScore(termYear, t); 
                 const crSpan = document.getElementById(`maxcr_${termStr}`), ctSpan = document.getElementById(`maxct_${termStr}`);
                 const zone = document.getElementById(`zone_${termStr}`), container = document.getElementById(`cont_${termStr}`);
                 if (!zone || !container || !crSpan || !ctSpan) return;
                 
                 container.classList.remove('term-grayed');
-                let isBlockedByWT = t.includes('SUM') ? sumHasWT : Array.from(zone.children).some(el => el.classList.contains('wt') && el.style.display !== 'none');
+                let isBlockedByWT = Array.from(zone.children).some(el => el.classList.contains('wt') && el.style.display !== 'none');
 
                 if (cellScore < startScore || isBlockedByWT) {
                     crSpan.innerText = "0"; ctSpan.innerText = "0"; container.classList.add('term-grayed');
                 } else {
-                    let defCr = t.includes('SUM') ? defCrSum : defCrFW, defCt = t.includes('SUM') ? defCtSum : defCtFW;
+                    let defCr = t === 'SUM' ? 16 : defCrFW, defCt = t === 'SUM' ? 6 : defCtFW;
                     crSpan.innerText = crSpan.dataset.userVal !== undefined ? crSpan.dataset.userVal : defCr;
                     ctSpan.innerText = ctSpan.dataset.userVal !== undefined ? ctSpan.dataset.userVal : defCt;
                     if (crSpan.innerText === "0" || ctSpan.innerText === "0") container.classList.add('term-grayed');
@@ -590,7 +761,7 @@
             });
         }
         updateCredits();
-        injectCoopHeaders(); // Apelam functia ca sa adauge datele deasupra la termeni
+        injectCoopHeaders();
     }
 
     const buildGrid = () => {
@@ -602,33 +773,67 @@
             const tr = document.createElement('tr');
             tr.innerHTML = `
                 <td class="year-label">Y ${y} <span class="year-subtext">${baseYear+y-1}-${baseYear+y}</span></td>
-                <td class="col-summer-bg" style="padding: 0; vertical-align: top;">
-                    <div style="display: flex; flex-direction: column; height: 100%; min-height: 120px;">
-                        <div class="term-container" id="cont_Y${y}_SUM1" style="flex: 1; border-bottom: 3px solid #e9ecef;">
-                            <div class="term-header"><span>Cr: <span class="calc-cr" id="cr_Y${y}_SUM1">0</span></span><div class="limit-group">MaxCr:<span class="val-click cr-val" id="maxcr_Y${y}_SUM1" onclick="showLimitPopup(this, 'cr', 'Y${y}_SUM1')">8</span> Max # courses:<span class="val-click ct-val" id="maxct_Y${y}_SUM1" onclick="showLimitPopup(this, 'ct', 'Y${y}_SUM1')">2</span></div></div>
-                            <div class="drop-zone" id="zone_Y${y}_SUM1" data-term="Y${y}_SUM1" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
-                        </div>
-                        <div class="term-container" id="cont_Y${y}_SUM2" style="flex: 1;">
-                            <div class="term-header"><span>Cr: <span class="calc-cr" id="cr_Y${y}_SUM2">0</span></span><div class="limit-group">MaxCr:<span class="val-click cr-val" id="maxcr_Y${y}_SUM2" onclick="showLimitPopup(this, 'cr', 'Y${y}_SUM2')">8</span> Max # courses:<span class="val-click ct-val" id="maxct_Y${y}_SUM2" onclick="showLimitPopup(this, 'ct', 'Y${y}_SUM2')">2</span></div></div>
-                            <div class="drop-zone" id="zone_Y${y}_SUM2" data-term="Y${y}_SUM2" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
-                        </div>
-                    </div>
-                </td>
+                <td class="col-summer-bg"><div class="term-container" id="cont_Y${y}_SUM" style="height:100%; min-height:120px;">
+                    <div class="term-header"><span>Cr: <span class="calc-cr" id="cr_Y${y}_SUM">0</span></span><div class="limit-group">MaxCr:<span class="val-click cr-val" id="maxcr_Y${y}_SUM" onclick="showLimitPopup(this, 'cr', 'Y${y}_SUM')">16</span> Max # courses:<span class="val-click ct-val" id="maxct_Y${y}_SUM" onclick="showLimitPopup(this, 'ct', 'Y${y}_SUM')">6</span></div></div>
+                    <div class="drop-zone" id="zone_Y${y}_SUM" data-term="Y${y}_SUM" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
+                </div></td>
                 <td class="col-fall-bg"><div class="term-container" id="cont_Y${y}_FALL" style="height:100%; min-height:120px;">
-                    <div class="term-header"><span>Cr: <span class="calc-cr" id="cr_Y${y}_FALL">0</span></span><div class="limit-group">MaxCr:<span class="val-click cr-val" id="maxcr_Y${y}_FALL" onclick="showLimitPopup(this,'cr','Y${y}_FALL')">17</span> Max # courses:<span class="val-click ct-val" id="maxct_Y${y}_FALL" onclick="showLimitPopup(this,'ct','Y${y}_FALL')">5</span></div></div>
+                    <div class="term-header"><span>Cr: <span class="calc-cr" id="cr_Y${y}_FALL">0</span></span><div class="limit-group">MaxCr:<span class="val-click cr-val" id="maxcr_Y${y}_FALL" onclick="showLimitPopup(this,'cr','Y${y}_FALL')">18</span> Max # courses:<span class="val-click ct-val" id="maxct_Y${y}_FALL" onclick="showLimitPopup(this,'ct','Y${y}_FALL')">5</span></div></div>
                     <div class="drop-zone" id="zone_Y${y}_FALL" data-term="Y${y}_FALL" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
                 </div></td>
                 <td class="col-winter-bg"><div class="term-container" id="cont_Y${y}_WIN" style="height:100%; min-height:120px;">
-                    <div class="term-header"><span>Cr: <span class="calc-cr" id="cr_Y${y}_WIN">0</span></span><div class="limit-group">MaxCr:<span class="val-click cr-val" id="maxcr_Y${y}_WIN" onclick="showLimitPopup(this,'cr','Y${y}_WIN')">17</span> Max # courses:<span class="val-click ct-val" id="maxct_Y${y}_WIN" onclick="showLimitPopup(this,'ct','Y${y}_WIN')">5</span></div></div>
+                    <div class="term-header"><span>Cr: <span class="calc-cr" id="cr_Y${y}_WIN">0</span></span><div class="limit-group">MaxCr:<span class="val-click cr-val" id="maxcr_Y${y}_WIN" onclick="showLimitPopup(this,'cr','Y${y}_WIN')">18</span> Max # courses:<span class="val-click ct-val" id="maxct_Y${y}_WIN" onclick="showLimitPopup(this,'ct','Y${y}_WIN')">5</span></div></div>
                     <div class="drop-zone" id="zone_Y${y}_WIN" data-term="Y${y}_WIN" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
                 </div></td>`;
             tbody.appendChild(tr);
         }
     };
 
-    function triggerGridRebuild() { if(document.getElementById('workspace').style.visibility === 'visible') { buildGrid(); enforceAndHighlightTerms(); } }
+    async function triggerGridRebuild() { 
+        if(document.getElementById('workspace').style.visibility === 'visible') { 
+            document.getElementById('loadingOverlay').style.display = 'flex'; // BLOCAM ECRANUL
+            
+            try {
+                const unalloc = document.getElementById('unallocatedZone');
+                document.querySelectorAll('td .drop-zone').forEach(z => {
+                    if (z.id !== 'zone_Y0_ANY') {
+                        Array.from(z.children).forEach(c => unalloc.appendChild(c));
+                    }
+                });
+                
+                buildGrid(); 
+                
+                await loadTranscriptAndMapInstitute();
+
+                enforceAndHighlightTerms(); 
+                sortUnallocatedDOM();
+                updateCredits();
+                checkWT();
+                runLiveCheck();
+            } finally {
+                // DEBLOCAM ECRANUL
+                document.getElementById('loadingOverlay').style.display = 'none';
+            }
+        } 
+    }
+
     function toggleTools() { document.getElementById('toolsMenu').classList.toggle('collapsed'); }
     
+    function lockAllPlacedCourses() {
+        // Cautam doar in interiorul tabelului (ceea ce exclude unallocatedZone)
+        document.querySelectorAll('td .drop-zone').forEach(z => { 
+            Array.from(z.children).forEach(c => {
+                if (coursesData[c.id] && !coursesData[c.id].locked) {
+                    // Bifam cursul
+                    coursesData[c.id].locked = true;
+                    // Il redesenam ca sa apara bifa fizic pe ecran
+                    let newEl = createCourseElement(c.id);
+                    z.replaceChild(newEl, c);
+                }
+            }); 
+        });
+    }
+
     function resetAllCourses() {
         const unalloc = document.getElementById('unallocatedZone');
         document.querySelectorAll('td .drop-zone').forEach(z => { 
@@ -640,33 +845,288 @@
     }
 
     function addRepeatCourse() {
-        const sel = document.getElementById('repeatCourseSelect'); const cid = sel.value; if(!cid) return;
-        const orig = coursesData[cid], fakeId = "REP_" + cid; if(coursesData[fakeId]) { alert("Already added!"); return; }
+        const sel = document.getElementById('repeatCourseSelect'); 
+        const cid = sel.value; 
+        if(!cid) return;
+        
+        const orig = coursesData[cid];
+        
+        // 1. Numerotare in caz de repetari multiple
+        let i = 1; 
+        while(coursesData[`REP${i}_${cid}`]) i++;
+        const fakeId = `REP${i}_${cid}`;
+        
+        // 2. Denumirea ceruta: "CURS REPEATED"
+        const suffixStr = i > 1 ? ` ${i}` : "";
+        const newName = `${orig.full_name} REPEATED${suffixStr}`;
+        
         repeatedCoursesList.push(cid);
-        orig.prereqs = (orig.prereqs && orig.prereqs !== 'None' && orig.prereqs !== 'N/A') ? orig.prereqs + ", " + fakeId : fakeId;
-        coursesData[fakeId] = { id: fakeId, display: `1st attempt ${orig.full_name}`, full_name: `1st attempt ${orig.full_name}`, title: "Previous attempt", credit: 0, type: "REPEAT", is_wt: false, is_ecp: false, prereqs: "None", coreqs: "None", is_prereq_for: cid, is_coreq_for: "None", terms: orig.terms, locked: false };
-        document.getElementById('unallocatedZone').appendChild(createCourseElement(fakeId)); sortUnallocatedDOM();
-        alert(`Block created for ${orig.full_name}! Place it BEFORE the original course.`); runLiveCheck();
+        
+        // 3. Logica de pre-req pentru blocul nou creat (daca e a 2-a repetare, cere prima)
+        let localPrereq = "None";
+        if (i > 1) localPrereq = `REP${i-1}_${cid}`;
+        
+        // 4. Cursul ORIGINAL trebuie luat DUPA aceasta repetare (astfel fortam ordinea: Fail -> Pass)
+        if (orig.prereqs && orig.prereqs !== 'None' && orig.prereqs !== 'N/A') {
+            if (!orig.prereqs.includes(fakeId)) orig.prereqs += ", " + fakeId;
+        } else {
+            orig.prereqs = fakeId;
+        }
+
+        // 5. NOU: Cautam TOATE cursurile viitoare care depindeau de cursul original 
+        // si le obligam sa astepte si dupa cursul "REPEATED"
+        Object.values(coursesData).forEach(c => {
+            if (c.id !== cid && c.id !== fakeId) {
+                if (c.prereqs && c.prereqs !== 'None' && c.prereqs !== 'N/A') {
+                    let reqList = parseCourseIDs(c.prereqs);
+                    if (reqList.includes(cid)) {
+                        if (!c.prereqs.includes(fakeId)) {
+                            c.prereqs += `, ${fakeId}`;
+                        }
+                    }
+                }
+            }
+        });
+
+        // 6. Cream cursul in memorie (preia 'terms' exact de la original)
+        coursesData[fakeId] = { 
+            id: fakeId, 
+            display: newName, 
+            full_name: newName, 
+            title: "Previous attempt (Failed)", 
+            credit: 0, 
+            type: orig.type, 
+            is_wt: false, 
+            is_ecp: false, 
+            prereqs: localPrereq, 
+            coreqs: "None", 
+            is_prereq_for: orig.is_prereq_for, // Vizual
+            is_coreq_for: "None", 
+            terms: orig.terms, // <- Preia doar termenele in care se da originalul
+            locked: false 
+        };
+        
+        document.getElementById('unallocatedZone').appendChild(createCourseElement(fakeId)); 
+        sortUnallocatedDOM();
+        alert(`Added ${newName}. It is now a pre-req for the original course and its dependents.`); 
+        runLiveCheck();
     }
 
+    async function loadTranscriptAndMapInstitute() {
+        const prog = document.getElementById('programSelect').value;
+        const sYear = parseInt(document.getElementById('startYear').value);
+        
+        // 1. Găsim ID-ul corect al studentului
+        let currentSid = "";
+        let adminInput = document.getElementById('adminSidInput');
+        
+        if (adminInput && adminInput.value.trim() !== "") {
+            currentSid = adminInput.value.trim();
+        } else {
+            // MODIFICARE AICI: Am schimbat din "span b" în "displayViewingSid" 
+            let displaySid = document.getElementById('displayViewingSid');
+            if (displaySid) {
+                currentSid = displaySid.innerText.split('-')[0].trim();
+            }
+        }
+        
+        if (!currentSid || currentSid === "ADMIN") return;
+
+        
+
+        // 3. Extragem datele din Excel
+        try {
+            const res = await fetch('/get_transcript', {
+                method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({student_id: currentSid})
+            });
+            const data = await res.json();
+            
+            // --- NOU: Afisam numele studentului sus in bara ---
+            if (data.student_name) {
+                let displaySid = document.getElementById('displayViewingSid');
+                if (displaySid) {
+                    displaySid.innerText = currentSid + " - " + data.student_name;
+                }
+            }
+
+            if (!data.transcript) return;
+            
+            const currentYr = new Date().getFullYear();
+            let transcriptIds = new Set();
+
+            data.transcript.forEach(t => {
+                let coursesToProcess = [t];
+
+                // --- SPLIT PENTRU CAPSTONE (490 sau 6990) ---
+                let matchSplit = t.course.match(/^([A-Z]{3,4})(490|6990)$/);
+                if (matchSplit) {
+                    let base = matchSplit[1]; 
+                    let num = matchSplit[2];  
+                    let halfCredit = (parseFloat(t.credit) || 6.0) / 2;
+
+                    coursesToProcess = [
+                        { ...t, course: `${base}${num}A`, credit: halfCredit, forceSeason: 'FALL' },
+                        { ...t, course: `${base}${num}B`, credit: halfCredit, forceSeason: 'WIN' }
+                    ];
+                }
+
+                coursesToProcess.forEach(item => {
+                    let rawCid = item.course.toUpperCase();
+                    
+                    // --- MAPARE WT-uri (prindem si CWTE301, CWT200, etc) ---
+                    if (rawCid.startsWith('CWTE10') || rawCid.startsWith('CWT10') || rawCid === 'WT1') rawCid = 'WT1';
+                    if (rawCid.startsWith('CWTE20') || rawCid.startsWith('CWT20') || rawCid.startsWith('ACCE10') || rawCid === 'WT2') rawCid = 'WT2';
+                    if (rawCid.startsWith('CWTE30') || rawCid.startsWith('CWT30') || rawCid === 'WT3') rawCid = 'WT3';
+                    
+                    // --- SMART MATCHER (Ignoram spatiile pentru a potrivi INDU411 cu INDU 411 din baza de date) ---
+                    let cleanId = rawCid.replace(/\s+/g, '');
+                    let matchedKey = Object.keys(coursesData).find(k => k.replace(/\s+/g, '').toUpperCase() === cleanId);
+                    
+                    // Dacă îl găsim, folosim numele cu spațiu din baza de date. Altfel, rămâne cleanId-ul (ex: ECON201)
+                    let finalCid = matchedKey ? matchedKey : cleanId;
+                    transcriptIds.add(finalCid);
+
+                    let tCredit = parseFloat(item.credit) || 0;
+
+                    // --- Curs NOU (Extra / ECP) care nu e in secventa ---
+                    if (!matchedKey) {
+                        // Rescriem numele frumos cu spatiu: INDU441 -> INDU 441
+                        let formattedName = finalCid.replace(/^([A-Z]+)(\d+.*)$/, '$1 $2');
+                        let isWt = finalCid.includes('WT');
+
+                        // Deducem tipul: ECP, Basic Science sau Extra
+                        let inferredType = "EXTRA";
+                        if (cleanId.match(/^(ECON|PHIL|ENGL|HIST|POLI|RELI|SOCI|THEO|ANTH|PSYC|SPAN|FREN|MANA)/)) inferredType = "ECP";
+                        else if (cleanId.match(/^(MATH|PHYS|CHEM|BIOL)/)) inferredType = "BASIC SCIENCE";
+
+                        coursesData[finalCid] = {
+                            id: finalCid, 
+                            display: `${formattedName} (${isWt ? 0 : tCredit} cr)`, 
+                            full_name: formattedName, 
+                            title: "From Transcript",
+                            credit: isWt ? 0 : tCredit, 
+                            type: inferredType, // <--- Aici primește eticheta inteligentă
+                            is_wt: isWt, 
+                            is_ecp: inferredType === "ECP",
+                            prereqs: "None", coreqs: "None", is_prereq_for: "None", is_coreq_for: "None",
+                            terms: "ANY", locked: true,
+                            from_transcript: true
+                        };
+
+                        let div = createCourseElement(finalCid);
+                        document.getElementById('zone_Y0_ANY').appendChild(div);
+                    } else {
+                        // Cursul ESTE in secventa (Core, TE). Ii pastram eticheta originala, dar suprascriem creditele!
+                        if (!finalCid.includes('WT')) {
+                            coursesData[finalCid].credit = tCredit;
+                        }
+                        coursesData[finalCid].from_transcript = true; 
+                    }
+
+                    // --- PLASARE IN ANI (Logica ta originală, neschimbată) ---
+                    let el = document.getElementById(finalCid);
+                    if(el) {
+                        let currentYr = new Date().getFullYear();
+                        let startYearInput = document.getElementById('startYear').value;
+                        let sYear = parseInt(startYearInput) || currentYr;
+                        
+                        let tYearMatch = item.term.match(/\d{4}/);
+                        let tYear = tYearMatch ? parseInt(tYearMatch[0]) : currentYr;
+                        
+                        let tSeason;
+                        if (item.forceSeason) {
+                            tSeason = item.forceSeason;
+                        } else {
+                            tSeason = item.term.toLowerCase().includes('win') ? 'WIN' : (item.term.toLowerCase().includes('fall') ? 'FALL' : 'SUM');
+                        }
+                        
+                        let targetZoneId = 'zone_Y0_ANY';
+                        
+                        // Plasare in ani
+                        if (tYear < sYear) {
+                            targetZoneId = 'zone_Y0_ANY'; 
+                        } else {
+                            let relativeYear = tYear - sYear + 1;
+                            if (relativeYear >= 1 && relativeYear <= 7) {
+                                targetZoneId = `zone_Y${relativeYear}_${tSeason}`;
+                            }
+                        }
+
+                        let tz = document.getElementById(targetZoneId);
+                        if(!tz) tz = document.getElementById('zone_Y0_ANY');
+                        
+                        coursesData[finalCid].locked = true; 
+                        if (finalCid.includes('WT')) coursesData[finalCid].credit = 0; 
+                        
+                        tz.appendChild(el);
+                        let newEl = createCourseElement(finalCid); // Re-desenam ca sa aiba creditele si eticheta noua pe ecran
+                        tz.replaceChild(newEl, el);
+                    }
+                });
+            });
+
+            // 4. Deducere ECP
+            Object.keys(coursesData).forEach(id => {
+                let c = coursesData[id];
+                if (c.is_ecp && !transcriptIds.has(id)) {
+                    let postReqs = parseCourseIDs(c.is_prereq_for);
+                    let eNevoieDeEl = postReqs.some(req => transcriptIds.has(req));
+                    if (eNevoieDeEl) {
+                        coursesData[id].locked = true;
+                        let el = document.getElementById(id);
+                        if(el) {
+                            document.getElementById('zone_Y0_ANY').appendChild(el);
+                            let newEl = createCourseElement(id);
+                            document.getElementById('zone_Y0_ANY').replaceChild(newEl, el);
+                        }
+                    }
+                }
+            });
+            
+            // Fortam recalcularea si afisarea numarului de credite pe ecrane dupa ce s-au actualizat din Excel
+            updateCredits();
+            
+        } catch(e) {
+            console.error("Eroare la citirea transcript-ului:", e);
+        }
+    }
+
+
     function getCourseHTML(c) {
-        let typeStr = c.type.toUpperCase();
-        if(typeStr.includes("ENG") && typeStr.includes("CORE")) typeStr = "<b>engCORE</b>"; 
+        let typeStr = (c.type || "").toUpperCase();
+        
+        // Logica corectă de etichetare
+        if(c.is_wt) typeStr = "<b>WT</b>"; 
+        else if(typeStr.includes("ENG") && typeStr.includes("CORE")) typeStr = "<b>engCORE</b>"; 
         else if(typeStr.includes("PRG") && typeStr.includes("CORE")) typeStr = "<b>prgCORE</b>"; 
         else if(typeStr === "REPEAT") typeStr = "<b>REPEAT</b>"; 
         else if(typeStr.includes("TE")) typeStr = "TE"; 
-        else if(typeStr.includes("GEN") || typeStr.includes("ELECTIVE")) typeStr = "Gen"; 
-        else typeStr = "ECP"; 
+        else if(typeStr.includes("GEN") || typeStr.includes("ELECTIVE") || typeStr === "ECP") typeStr = "ECP"; 
+        else if(typeStr === "EXTRA") typeStr = "EXTRA"; 
+        else typeStr = typeStr ? typeStr : "EXTRA"; // Dacă nu e definit, îl marcăm ca EXTRA din transcript
 
-        const orderMap = { 'SUM1': 1, 'SUM2': 2, 'FALL': 3, 'WIN': 4 }; const colorMap = { 'SUM1': 'tag-sum', 'SUM2': 'tag-sum', 'FALL': 'tag-fall', 'WIN': 'tag-win' };
-        let termsArr = c.terms.split(',').map(t => t.trim().toUpperCase().replace("WINTER","WIN").replace("SUM ","SUM")).filter(t => t && t !== "N/A");
+        const orderMap = { 'SUM': 1, 'FALL': 2, 'WIN': 3 }; 
+        const colorMap = { 'SUM': 'tag-sum', 'FALL': 'tag-fall', 'WIN': 'tag-win' };
+        
+        // Transformam orice variatie de SUM1/SUM2 intr-un simplu 'SUM' si stergem duplicatele
+        let termsArr = (c.terms || "").split(',').map(t => t.trim().toUpperCase()
+            .replace("WINTER","WIN")
+            .replace(/SUM\s*1/g, "SUM")
+            .replace(/SUM\s*2/g, "SUM")
+            .replace("SUMMER", "SUM")
+        ).filter(t => t && t !== "N/A");
+        
+        termsArr = [...new Set(termsArr)]; // Evitam sa apara eticheta de 2 ori daca avea si SUM1 si SUM2
         termsArr.sort((a, b) => (orderMap[a] || 99) - (orderMap[b] || 99));
-        let termHTML = (c.is_wt || c.is_ecp) ? '<span class="term-tag tag-any">ANY</span>' : termsArr.map(t => `<span class="term-tag ${colorMap[t] || 'tag-any'}">${t}</span>`).join('');
-        let dispCr = (c.is_wt || typeStr.includes("REPEAT")) ? 0 : c.credit;
+        
+        let termHTML = (c.is_wt || c.is_ecp || typeStr === "EXTRA") ? '<span class="term-tag tag-any">ANY</span>' : termsArr.map(t => `<span class="term-tag ${colorMap[t] || 'tag-any'}">${t}</span>`).join('');
+        let dispCr = (c.is_wt || typeStr === "<b>REPEAT</b>") ? 0 : c.credit;
         
         let checkbox = `<input type="checkbox" class="lock-checkbox" ${c.locked ? 'checked' : ''} onclick="toggleLock('${c.id}'); event.stopPropagation();">`;
 
-        return `${checkbox}<div style="font-weight: bold;">${c.full_name} (${dispCr} cr)</div><div style="font-style: italic; font-size: 10px; color: #555; margin: 2px 0; line-height: 1.1;">${c.title || ''}</div><span class="course-meta">[${typeStr}] ${termHTML}</span>`;
+        let titleClass = c.locked ? "locked-text" : "";
+
+        return `${checkbox}<div class="${titleClass}" style="font-weight: bold;">${c.full_name} (${dispCr} cr)</div><div style="font-style: italic; font-size: 10px; color: #555; margin: 2px 0; line-height: 1.1;">${c.title || ''}</div><span class="course-meta">[${typeStr}] ${termHTML}</span>`;
     }
 
     function createCourseElement(cid) {
@@ -702,14 +1162,66 @@
         document.getElementById('info_post_coreq').innerText = (c.is_coreq_for && c.is_coreq_for !== 'None') ? c.is_coreq_for : 'None';
     }
 
+    async function fetchCoursesForProgram(progName) {
+        if(!progName) return;
+        const res = await fetch('/get_courses', { 
+            method:'POST', 
+            headers:{'Content-Type':'application/json'}, 
+            body:JSON.stringify({program: progName}) 
+        });
+        const data = await res.json();
+        
+        coursesData = {};
+        if (data.courses) {
+            data.courses.forEach(c => { coursesData[c.id] = c; });
+        }
+    }
+
     document.getElementById('programSelect').onchange = async function() {
-        repeatedCoursesList = []; document.getElementById('workspace').style.visibility = 'visible'; document.getElementById('toolsMenu').classList.remove('collapsed');
-        buildGrid(); enforceAndHighlightTerms(); document.getElementById('courseInfoPanel').style.display = 'none';
-        const res = await fetch('/get_courses', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({program:this.value}) });
-        const data = await res.json(); const unalloc = document.getElementById('unallocatedZone'); unalloc.innerHTML = ''; coursesData = {};
-        data.courses.forEach(c => { coursesData[c.id] = c; unalloc.appendChild(createCourseElement(c.id)); });
-        Object.keys(data.pre_placed).forEach(tid => { const z = document.getElementById(`zone_${tid}`); if(z) data.pre_placed[tid].forEach(cid => { const el = document.getElementById(cid); if(el) z.appendChild(el); }); });
-        sortUnallocatedDOM(); populateRepeatSelect(); toggleCoopOptions(); updateCredits(); checkWT(); enforceAndHighlightTerms(); runLiveCheck();
+        document.getElementById('loadingOverlay').style.display = 'flex'; // BLOCAM ECRANUL
+        
+        try {
+            updateRoutingInfo(); // <--- ADAUGA ASTA AICI
+            document.getElementById('workspace').style.visibility = 'visible'; 
+            document.getElementById('toolsMenu').classList.remove('collapsed');
+            
+            const isChecked = document.getElementById('coopRegistered').checked;
+            document.getElementById('coopDetailsGroup').style.opacity = isChecked ? '1' : '0.4';
+            document.getElementById('coopStartTerm').disabled = !isChecked; document.getElementById('coopStartYear').disabled = !isChecked;
+            
+            if (isChecked) {
+                updateCoopYears();
+                document.getElementById('coopStartYear').value = document.getElementById('startYear').value;
+                document.getElementById('coopStartTerm').value = "FALL";
+            }
+            updateAllSelectColors();
+            
+            buildGrid(); 
+            
+            const unalloc = document.getElementById('unallocatedZone');
+            unalloc.innerHTML = '';
+            
+            await fetchCoursesForProgram(this.value);
+            Object.values(coursesData).forEach(c => { unalloc.appendChild(createCourseElement(c.id)); });
+
+            await loadTranscriptAndMapInstitute();
+
+            document.querySelectorAll('.course-box.wt').forEach(box => {
+                box.style.display = isChecked ? 'block' : 'none';
+            });
+
+            sortUnallocatedDOM(); 
+            populateRepeatSelect(); 
+            updateCredits(); 
+            checkWT(); 
+            enforceAndHighlightTerms(); 
+            runLiveCheck();
+        } catch (error) {
+            console.error("Eroare la incarcare:", error);
+        } finally {
+            // Indiferent daca a reusit sau a dat eroare, DEBLOCAM ecranul la final
+            document.getElementById('loadingOverlay').style.display = 'none';
+        }
     };
 
     function allowDrop(e) { e.preventDefault(); e.currentTarget.classList.add('dragover'); }
@@ -723,7 +1235,7 @@
 
     function updateCredits() {
         for(let y=1; y<=7; y++) {
-            ['SUM1', 'SUM2', 'FALL', 'WIN'].forEach(t => {
+            ['SUM', 'FALL', 'WIN'].forEach(t => {
                 let total = 0, zone = document.getElementById(`zone_Y${y}_${t}`); if(!zone) return;
                 Array.from(zone.children).forEach(b => {
                     const isSpc = b.classList.contains('wt') || (coursesData[b.id] && coursesData[b.id].type === "REPEAT");
@@ -742,18 +1254,7 @@
         document.getElementById('generateBtn').disabled = false; 
     }
 
-    document.getElementById('wtStandardBtn').onclick = function() {
-        const targets = { 'WT1': 'zone_Y2_FALL', 'WT2': 'zone_Y3_WIN', 'WT3': 'zone_Y4_SUM1' };
-        Object.keys(coursesData).forEach(cid => {
-            const course = coursesData[cid];
-            if (course.is_wt) {
-                let tz = null; if (course.full_name.includes('WT1')) tz = targets['WT1']; else if (course.full_name.includes('WT2')) tz = targets['WT2']; else if (course.full_name.includes('WT3')) tz = targets['WT3'];
-                const targetZone = document.getElementById(tz), courseElement = document.getElementById(cid);
-                if (targetZone && courseElement) targetZone.appendChild(courseElement);
-            }
-        });
-        enforceAndHighlightTerms(); updateCredits(); checkWT(); runLiveCheck();
-    };
+    
 
     document.getElementById('moveEcpBtn').onclick = () => {
         const z0 = document.getElementById('zone_Y0_ANY'); Object.keys(coursesData).forEach(id => { if(coursesData[id].is_ecp) z0.appendChild(document.getElementById(id)); });
@@ -784,13 +1285,11 @@
             
             Object.keys(result.sequence).forEach(year => {
                 const yNum = year.split(' ')[1]; 
-                ['SUM1','SUM2','FALL','WIN'].forEach(t => {
+                ['SUM','FALL','WIN'].forEach(t => {
                     const z = document.getElementById(`zone_Y${yNum}_${t}`); 
                     if(z && result.sequence[year][t].cursuri) { 
                         result.sequence[year][t].cursuri.forEach(c => { 
-                            if(coursesData[c.id]) {
-                                z.appendChild(createCourseElement(c.id)); 
-                            }
+                            if(coursesData[c.id]) z.appendChild(createCourseElement(c.id)); 
                         }); 
                     }
                 });
@@ -812,12 +1311,12 @@
                 let c = coursesData[el.id];
                 if (c && (isCoop || !c.is_wt)) {
                     let t = c.type.toUpperCase();
-                    if (t.includes('CORE') || t === 'GEN') errors.push(`Course <b>${c.id}</b> (${t}) must be placed.`);
+                    if (t.includes('CORE') || t === 'GEN' || t === 'ECP') errors.push(`Course <b>${c.id}</b> (${t}) must be placed.`);
                 }
             }
         });
 
-        let tNames = ['SUM1', 'SUM2', 'FALL', 'WIN'];
+        let tNames = ['SUM', 'FALL', 'WIN'];
         currentSequence.push({ id: 'Y0_ANY', courses: Array.from(document.getElementById('zone_Y0_ANY').children).map(c=>c.id) });
         for(let y=1; y<=7; y++) {
             tNames.forEach(t => {
@@ -851,29 +1350,37 @@
                     realCoursesCount++;
                     totalCr += c.credit;
                     
-                    let map = {'FALL':'Fall', 'WIN':'Winter', 'SUM1':'Sum 1', 'SUM2':'Sum 2'};
-                    if (!c.terms.toLowerCase().includes(map[term.type].toLowerCase())) {
-                        errors.push(`<b>${cid}</b> is not offered in <b>${map[term.type]}</b>.`);
-                    }
+                    // NOU: Folosim DOAR SUM, FALL, WIN
+                    let map = {'FALL':'FALL', 'WIN':'WIN', 'SUM':'SUM'};
+                    
+                    if (!c.from_transcript) {
+                        let termsUp = (c.terms || "ANY").toUpperCase();
+                        let targetUp = map[term.type];
+                        
+                        // Ignorăm eroarea dacă cursul are setat termenul 'ANY'
+                        if (termsUp !== 'ANY' && !termsUp.includes(targetUp)) {
+                            errors.push(`<b>${cid}</b> is not offered in <b>${targetUp}</b>.`);
+                        }
 
-                    if (c.prereqs && c.prereqs !== 'None' && c.prereqs !== 'N/A') {
-                        c.prereqs.split(/[;,]/).forEach(grp => {
-                            let opts = parseCourseIDs(grp).filter(o => coursesData[o]);
-                            if (opts.length > 0) {
-                                let satisfied = opts.some(opt => { return takenSet.has(opt) && !term.courses.includes(opt); });
-                                if (!satisfied) errors.push(`<b>${cid}</b> in ${term.id} missing pre-req group: [${opts.join(' or ')}].`);
-                            }
-                        });
-                    }
+                        if (c.prereqs && c.prereqs !== 'None' && c.prereqs !== 'N/A') {
+                            c.prereqs.split(/[;,]/).forEach(grp => {
+                                let opts = parseCourseIDs(grp).filter(o => coursesData[o]);
+                                if (opts.length > 0) {
+                                    let satisfied = opts.some(opt => { return takenSet.has(opt) && !term.courses.includes(opt); });
+                                    if (!satisfied) errors.push(`<b>${cid}</b> in ${term.id} missing pre-req group: [${opts.join(' or ')}].`);
+                                }
+                            });
+                        }
 
-                    if (c.coreqs && c.coreqs !== 'None' && c.coreqs !== 'N/A') {
-                        c.coreqs.split(/[;,]/).forEach(grp => {
-                            let opts = parseCourseIDs(grp).filter(o => coursesData[o]);
-                            if (opts.length > 0 && !opts.some(opt => takenSet.has(opt))) {
-                                errors.push(`<b>${cid}</b> in ${term.id} missing co-req group: [${opts.join(' or ')}].`);
-                            }
-                        });
-                    }
+                        if (c.coreqs && c.coreqs !== 'None' && c.coreqs !== 'N/A') {
+                            c.coreqs.split(/[;,]/).forEach(grp => {
+                                let opts = parseCourseIDs(grp).filter(o => coursesData[o]);
+                                if (opts.length > 0 && !opts.some(opt => takenSet.has(opt))) {
+                                    errors.push(`<b>${cid}</b> in ${term.id} missing co-req group: [${opts.join(' or ')}].`);
+                                }
+                            });
+                        }
+                    } 
                 }
             });
 
@@ -881,10 +1388,7 @@
                 if (hasWT) {
                     wtIndices.push(index);
                     if (isSummer) {
-                        let otherSum = term.type === 'SUM1' ? 'SUM2' : 'SUM1';
-                        let otherZone = document.getElementById(`zone_Y${term.year}_${otherSum}`);
-                        let otherCount = otherZone ? Array.from(otherZone.children).filter(el => !coursesData[el.id]?.is_wt && coursesData[el.id]?.type !== 'REPEAT').length : 0;
-                        if (realCoursesCount + otherCount > 1) errors.push(`Year ${term.year} Summer: Max 1 course allowed alongside WT.`);
+                        if (realCoursesCount > 1) errors.push(`Year ${term.year} Summer: Max 1 course allowed alongside WT.`);
                     } else {
                         if (realCoursesCount > 1) errors.push(`Term ${term.id}: Max 1 course allowed alongside WT.`);
                     }
@@ -893,7 +1397,7 @@
                     }
                 } else if (!isSummer && index < (wt3Index > -1 ? wt3Index : 999)) {
                     if (term.courses.length > 0 && totalCr < 12) {
-                        errors.push(`Term ${term.id} has < 12 credits. Must be Full-Time before WT3.`);
+                        errors.push(`Term ${term.id} has < 12 credits. Fall or Winter must be Full-Time (12CR) before WT3.`);
                     }
                 }
             }
@@ -933,11 +1437,329 @@
         list.innerHTML = '';
         errors = [...new Set(errors)];
         if (errors.length === 0) {
-            list.innerHTML = `<li style="color:#27ae60; font-weight:bold;">✅ Sequence looks perfect! All rules satisfied.</li>`;
+            list.innerHTML = `<li style="color:#27ae60; font-weight:bold;">✅ Sequence looks good! All rules implemented in this tool seem to be satisfied. Students are ultimately responsabile for their sequences. </li>`;
         } else {
             errors.forEach(msg => { list.innerHTML += `<li style="color:#c0392b; margin-bottom:5px;">❌ ${msg}</li>`; });
         }
+
+        let justBox = document.getElementById('justificationBox');
+        let justLabel = document.getElementById('justificationLabel');
+        let justText = document.getElementById('justificationText');
+        
+        if (justBox && justLabel && justText) {
+            if (errors.length > 0) {
+                justBox.style.background = '#fff3f3';
+                justBox.style.borderLeftColor = '#e74c3c';
+                justLabel.style.color = '#c0392b';
+                justLabel.innerHTML = '⚠️ Warnings detected! You MUST provide a justification below before submitting:';
+                
+                let plainTextErrors = errors.map(err => "• " + err.replace(/<[^>]*>?/gm, '')).join('\n');
+                let newContent = "WARNINGS TO JUSTIFY:\n" + plainTextErrors + "\n\nMY JUSTIFICATION:\n";
+                
+                justText.value = newContent;
+                justText.style.height = ''; 
+                justText.style.height = justText.scrollHeight + 'px';
+            } else {
+                justBox.style.background = '#f9fff9';
+                justBox.style.borderLeftColor = '#27ae60';
+                justLabel.style.color = '#27ae60';
+                justLabel.innerHTML = '💬 All rules implemented in this tool seem to be satisfied. Students are ultimately responsabile for their sequences. ';
+                
+                justText.value = "";
+                justText.style.height = '80px'; 
+            }
+        }
+    } // <--- AICI SE ÎNCHIDE CORECT FUNCȚIA runLiveCheck() !!!
+
+    // --- FUNCȚIA GLOBALĂ updateRoutingInfo ---
+    function updateRoutingInfo() {
+        let progSelect = document.getElementById('programSelect');
+        if (!progSelect || !progSelect.value) return;
+        let prog = progSelect.value.toUpperCase();
+        
+        let currentSid = "";
+        let adminInput = document.getElementById('adminSidInput');
+        if (adminInput && adminInput.value.trim() !== "") {
+            currentSid = adminInput.value.trim();
+        } else {
+            let displayViewingSid = document.getElementById('displayViewingSid');
+            if (displayViewingSid) currentSid = displayViewingSid.innerText.trim();
+        }
+
+        // Implicit este Frederick (INDU sau 0-4)
+        let coordName = "Frederick Francis";
+        let coordEmail = "Frederick.francis@concordia.ca";
+
+        if (!prog.includes("INDU") && currentSid.length > 0) {
+            // Dacă nu e INDU (ex: MECH), verificăm ultima cifră a ID-ului
+            let lastDigit = parseInt(currentSid.slice(-1));
+            if (!isNaN(lastDigit) && lastDigit >= 5 && lastDigit <= 9) {
+                coordName = "Nathalie Steverman";
+                coordEmail = "Nathalie.steverman@concordia.ca";
+            }
+        }
+        
+        let nameEl = document.getElementById('coopCoordName');
+        let emailEl = document.getElementById('coopCoordEmail');
+        if (nameEl) nameEl.innerText = coordName;
+        if (emailEl) emailEl.innerText = coordEmail;
     }
+
+
+    async function submitSequence() {
+        const justTextElement = document.getElementById('justificationText');
+        const justText = justTextElement.value.trim();
+        const hasErrors = document.getElementById('justificationLabel').innerHTML.includes('⚠️');
+
+        // Validare: Daca sunt erori, studentul trebuie sa scrie ceva DUPA textul auto-generat
+        //if (hasErrors) {
+            let parts = justText.split("MY JUSTIFICATION:");
+            //let studentReply = parts.length > 1 ? parts[1].trim() : "";
+            //let studentReply = parts.length > 1 ? parts[1].trim() : "";
+            
+            //if (studentReply === "") {
+            //    alert("⚠️ Your sequence has validation warnings. Please provide your justification below the 'MY JUSTIFICATION:' line before submitting.");
+            //    justTextElement.focus();
+            //    return;
+           // }
+        //}
+
+        document.getElementById('loadingOverlay').style.display = 'flex';
+        
+        try {
+            let seqData = {};
+            document.querySelectorAll('td .drop-zone').forEach(z => {
+                seqData[z.id.replace('zone_', '')] = Array.from(z.children).map(c => c.id);
+            });
+
+            let currentSid = "";
+            let displayViewingSid = document.getElementById('displayViewingSid');
+            if (displayViewingSid) currentSid = displayViewingSid.innerText.trim();
+
+            let payload = {
+                name: "Submitted on " + new Date().toISOString().split('T')[0],
+                program: document.getElementById('programSelect').value,
+                student_id: currentSid,
+                sequence_data: seqData,
+                term_data: {}, 
+                settings_data: {
+                    startYear: document.getElementById('startYear').value,
+                    coop: document.getElementById('coopRegistered').checked
+                },
+                status: "PENDING APPROVAL",
+                justification: justText, // Trimitem tot textul din casuta (inclusiv erorile + raspunsul)
+                student_comments: ""     // Nu mai folosim a doua casuta
+            };
+
+            const res = await fetch('/save_sequence', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            // ... (restul functiei ramane la fel: await res.json(), alert(success), etc) ...
+            
+            const result = await res.json();
+            if (result.success) {
+                alert("✅ Sequence successfully submitted to the CO-OP Director! Status: PENDING APPROVAL.");
+                document.getElementById('justificationText').value = ""; // Golim casuta dupa succes
+            } else {
+                alert("❌ Trimiterea a eșuat: " + result.error);
+            }
+        } catch (error) {
+            console.error(error);
+            alert("A aparut o eroare de conexiune.");
+        } finally {
+            document.getElementById('loadingOverlay').style.display = 'none';
+        }
+    }
+
+    async function openPendingModal() {
+        document.getElementById('pendingModal').style.display = 'block';
+        let ul = document.getElementById('pendingListUl');
+        ul.innerHTML = '<li style="text-align:center;">Fetching fresh data...</li>';
+        
+        try {
+            let res = await fetch('/api/pending_approvals');
+            let data = await res.json();
+            
+            document.getElementById('pendingBadge').innerText = `(${data.length})`;
+            ul.innerHTML = '';
+            
+            if (data.length === 0) {
+                ul.innerHTML = '<li style="padding: 10px; text-align: center; color: #7f8c8d;">No pending sequences.</li>';
+                return;
+            }
+            
+            data.forEach(seq => {
+                let safeData = encodeURIComponent(JSON.stringify(seq));
+                
+                let li = document.createElement('li');
+                li.style.cssText = "padding: 10px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center;";
+                
+                // MODIFICARE AICI: Am adăugat seq.timestamp pe rândul 2 și am coborât restul pe rândul 3
+                li.innerHTML = `
+                    <div>
+                        <strong>${seq.student_id}</strong><br>
+                        <span style="font-size: 11px; color: #e67e22; font-weight: bold;">🕒 Submitted: ${seq.timestamp || 'Unknown Date'}</span><br>
+                        <span style="font-size: 12px; color: #555;">${seq.student_name} - ${seq.program}</span>
+                    </div>
+                    <button onclick="loadFromEncodedInbox('${safeData}')" style="background:#27ae60; color:white; border:none; padding:6px 15px; border-radius:4px; cursor:pointer; font-weight:bold; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">Load</button>
+                `;
+                ul.appendChild(li);
+            });
+        } catch(e) {
+            ul.innerHTML = '<li style="color:red; text-align:center;">Error loading. Check connection.</li>';
+        }
+    }
+
+    function loadFromEncodedInbox(encodedData) {
+        let fullData = JSON.parse(decodeURIComponent(encodedData));
+        
+        let seqObj = JSON.parse(fullData.sequence_data || '{}');
+        let termObj = JSON.parse(fullData.term_data || '{}');
+        let settObj = JSON.parse(fullData.settings_data || '{}');
+
+        // Setam ID-ul vizual sus ca sa stim a cui e secventa pe care o privim
+        let displaySidEl = document.getElementById('displayViewingSid');
+        if (displaySidEl) displaySidEl.innerText = `${fullData.student_id} - ${fullData.student_name}`;
+        
+        // NOU: Golim casuta de ADMIN VIEW, asa cum ai cerut (nu mai completam nimic)
+        let adminInput = document.getElementById('adminSidInput');
+        if (adminInput) adminInput.value = '';
+        
+        let progSelect = document.getElementById('programSelect');
+        if (progSelect && fullData.program) progSelect.value = fullData.program;
+
+        loadSequenceData(seqObj, termObj, settObj, fullData.program);
+        document.getElementById('pendingModal').style.display = 'none';
+    }
+
+    // --- NOU: AUTO-DETECTIE PROGRAM INTELIGENTA ---
+    // --- NOU: AUTO-DETECTIE PROGRAM & START YEAR INTELIGENTA ---
+    async function autoDetectProgram() {
+
+        // Am lasat log-ul pentru tine ca sa vezi cand ruleaza!
+        console.log("🚨 BEEP! Funcția de autodetectare a fost apelată!");
+        
+        let currentSid = "";
+        let adminInput = document.getElementById('adminSidInput');
+        
+        // 1. Căutăm ID-ul
+        if (adminInput && adminInput.value.trim() !== "") {
+            currentSid = adminInput.value.trim();
+        } else {
+            let displaySid = document.getElementById('displayViewingSid');
+            if (displaySid) {
+                currentSid = displaySid.innerText.split('-')[0].trim();
+            }
+        }
+
+        if (!currentSid || currentSid === "ADMIN") return;
+
+        try {
+            document.getElementById('loadingOverlay').style.display = 'flex';
+            
+            // 2. Cerem datele de la server
+            const res = await fetch('/get_transcript', {
+                method: 'POST', 
+                headers: { 'Content-Type': 'application/json' }, 
+                body: JSON.stringify({ student_id: currentSid })
+            });
+            const data = await res.json();
+            
+            if (data.student_name) {
+                let displaySid = document.getElementById('displayViewingSid');
+                if (displaySid) displaySid.innerText = currentSid + " - " + data.student_name;
+            }
+
+            // 3. --- AUTO-DETECT START YEAR ---
+            if (data.transcript && data.transcript.length > 0) {
+                // Extragem toti anii gasiti in transcript
+                let validYears = data.transcript.map(t => {
+                    let m = t.term.match(/\d{4}/);
+                    return m ? parseInt(m[0]) : 9999;
+                }).filter(y => y !== 9999);
+                
+                if (validYears.length > 0) {
+                    let minYear = Math.min(...validYears);
+                    let startYearEl = document.getElementById('startYear');
+                    
+                    if (startYearEl) {
+                        let options = Array.from(startYearEl.options).map(o => parseInt(o.value));
+                        // Daca anul studentului e mai vechi decat ce avem in dropdown, il adaugam
+                        if (!options.includes(minYear)) {
+                            startYearEl.add(new Option(minYear, minYear));
+                            // Re-sortam anii descrescator
+                            let opts = Array.from(startYearEl.options);
+                            opts.sort((a,b) => parseInt(b.value) - parseInt(a.value));
+                            startYearEl.innerHTML = '';
+                            opts.forEach(o => startYearEl.add(o));
+                        }
+                        
+                        startYearEl.value = minYear;
+                        
+                        // Sincronizam si variabilele de CO-OP sa nu ramana in urma
+                        updateCoopYears();
+                        if (document.getElementById('coopRegistered').checked) {
+                            document.getElementById('coopStartYear').value = minYear;
+                        }
+                        updateAllSelectColors();
+                    }
+                }
+            }
+
+            let progSelect = document.getElementById('programSelect');
+            if (progSelect) {
+                let targetOpt = null;
+                
+                // 4. Încercăm potrivirea pe bază de nume (Server)
+                if (data.suggested_program) {
+                    let sug = data.suggested_program.toUpperCase();
+                    targetOpt = Array.from(progSelect.options).find(o => {
+                        let val = o.value.toUpperCase();
+                        if ((sug.includes("MECH") || sug.includes("MECHANICAL")) && val.includes("MECHANICAL")) return true;
+                        if ((sug.includes("INDU") || sug.includes("INDUSTRIAL")) && val.includes("INDUSTRIAL")) return true;
+                        if ((sug.includes("AERO") || sug.includes("AEROSPACE")) && val.includes("AERO")) return true;
+                        return false;
+                    });
+                }
+
+                // 5. BACKUP: Numărăm materiile dacă n-am găsit numele (Smart Deduct)
+                if (!targetOpt && data.transcript && data.transcript.length > 0) {
+                    let mechCount = data.transcript.filter(t => t.course.includes("MECH")).length;
+                    let induCount = data.transcript.filter(t => t.course.includes("INDU")).length;
+                    let aeroCount = data.transcript.filter(t => t.course.includes("AERO")).length;
+                    
+                    let deduced = "";
+                    if (mechCount > induCount && mechCount >= aeroCount) deduced = "MECHANICAL";
+                    else if (induCount > mechCount && induCount >= aeroCount) deduced = "INDUSTRIAL";
+                    else if (aeroCount > mechCount && aeroCount > induCount) deduced = "AERO";
+                    
+                    if (deduced) {
+                        targetOpt = Array.from(progSelect.options).find(o => o.value.toUpperCase().includes(deduced));
+                    }
+                }
+                
+                // 6. Aplicăm decizia
+                if (targetOpt) {
+                    progSelect.value = targetOpt.value;
+                    progSelect.dispatchEvent(new Event('change')); // Asta trage cursurile si reconstruieste!
+                } else {
+                    if (progSelect.value) progSelect.dispatchEvent(new Event('change'));
+                    document.getElementById('loadingOverlay').style.display = 'none';
+                }
+            } else {
+                document.getElementById('loadingOverlay').style.display = 'none';
+            }
+        } catch(e) {
+            console.error(`EROARE CRITICĂ: ${e.message}`);
+            document.getElementById('loadingOverlay').style.display = 'none';
+        }
+    }
+    
+    // Rulam functia IMEDIAT, fara a astepta DOMContentLoaded, pentru ca HTML-ul s-a parsat deja!
+    autoDetectProgram();
+</script>
 </script>
 
 </body>

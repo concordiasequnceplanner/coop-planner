@@ -707,7 +707,11 @@ def save_sequence():
         current_user_id = str(session.get('student_id', ''))
         is_guest = session.get('is_guest', False)
         is_power_user = current_user_id.startswith('9') and not is_guest
-        current_name = f"GUEST - {session.get('guest_name', '')}" if is_guest else "Official Student"
+        student_name_ui = data.get('student_name', '').strip()
+        if is_guest:
+            current_name = f"GUEST - {session.get('guest_name', '')}"
+        else:
+            current_name = student_name_ui if student_name_ui else "Official Student"
         
         # ... Codul de identificare a utilizatorului rămâne la fel ...
         email_to_save = session['user_email']
@@ -801,7 +805,7 @@ def save_sequence():
                     {terms_html}
                     
                     <div style="text-align: center; margin: 35px 0;">
-                        <a href="https://concordia-sequence-planner.onrender.com/" style="background-color: #27ae60; color: #ffffff; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 16px; display: inline-block; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">Log in to Review Sequence</a>
+                        <a href="https://concordia-sequence-planner.onrender.com/" style="background-color: #2742ae; color: #ffffff; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 16px; display: inline-block; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">Log in to Review Sequence</a>
                     </div>
                 </div>
                 """
@@ -809,7 +813,7 @@ def save_sequence():
                 resend.Emails.send({
                     "from": "MIAE Planner <auth@concordiasequenceplanner.ca>", 
                     "to": recipients,
-                    "subject": f"Sequence Approval Needed - {target_id} ({program})",
+                    "subject": f"Sequence Approval Requested for {target_id} ({program})",
                     "html": html_body,
                     "reply_to": email_to_save 
                 })
@@ -1154,6 +1158,55 @@ def generate():
         rep_id = "REP_" + cid
         if rep_id in all_courses_dict and rep_id not in taken_courses: remaining.add(rep_id)
 
+    # =========================================================
+    # --- 1. PRE-CHECK: VERIFICĂRI WORK TERMS (ÎNAINTE DE AI) ---
+    # =========================================================
+    unallocated_wts = [c for c in unallocated_ids if 'WT' in c.upper()]
+    if unallocated_wts:
+        return jsonify({"error": "Please place all Work Terms (WT) on the grid before generating."})
+        
+    all_wts_in_prog = sorted([c for c in all_courses_dict.keys() if 'WT' in c.upper()])
+    
+    if all_wts_in_prog:
+        # Obținem indecșii unde au fost plasate WT-urile
+        placed_wt_indices = sorted([placements[wt][2] for wt in all_wts_in_prog if wt in placements])
+        
+        # =========================================================
+    # --- 1. PRE-CHECK: VERIFICĂRI WORK TERMS (ÎNAINTE DE AI) ---
+    # =========================================================
+    unallocated_wts = [c for c in unallocated_ids if 'WT' in c.upper()]
+    if unallocated_wts:
+        return jsonify({"error": "Please place all Work Terms (WT) on the grid before generating."})
+        
+    all_wts_in_prog = sorted([c for c in all_courses_dict.keys() if 'WT' in c.upper()])
+    
+    if all_wts_in_prog:
+        # Obținem indecșii și termenele (SUM/FALL/WIN) unde au fost plasate WT-urile
+        placed_wt_indices = sorted([placements[wt][2] for wt in all_wts_in_prog if wt in placements])
+        
+        # REGULA: Fără 3 termene consecutive de WT
+        #for i in range(len(placed_wt_indices) - 2):
+        #    if placed_wt_indices[i+2] - placed_wt_indices[i] == 2:
+        #        return jsonify({"error": "You cannot have 3 consecutive Work Terms. Please adjust them."})
+
+        # REGULA NOUĂ: Fără 3 WT-uri plasate în Summer
+        #summer_wts = sum(1 for wt in all_wts_in_prog if wt in placements and placements[wt][1] == 'SUM')
+        #if summer_wts >= 3:
+        #    return jsonify({"error": "You cannot have 3 Work Terms in the Summer semester. Please move at least one to Fall or Winter."})
+                
+        # REGULA: Cel puțin 2 termene înainte de primul WT (raportat la grilă)
+        #first_wt = all_wts_in_prog[0]
+        #if first_wt in placements:
+        #   if placements[first_wt][2] < 2:
+        #        return jsonify({"error": "There must be at least 2 study terms before your first Work Term."})
+    # =========================================================
+    # =========================================================
+
+
+    for cid in data.get('repeated', []):
+        rep_id = "REP_" + cid
+        if rep_id in all_courses_dict and rep_id not in taken_courses: remaining.add(rep_id)
+
     def get_reqs(cid, rt): 
         if cid in all_courses_dict: return parse_requirements(all_courses_dict[cid].get(rt, ''))
         return []
@@ -1389,6 +1442,50 @@ def generate():
             if removed_any: break
         if not removed_any: break
 
+    # =========================================================
+    # --- 2. POST-CHECK: VALIDARE CREDITE MINIME ---
+    # =========================================================
+    warning_msgs = []
+    
+    if all_wts_in_prog:
+        # REGULA: 30 CR (CORE/PROG/TE) înainte de primul WT
+        first_wt = all_wts_in_prog[0]
+        if first_wt in placements:
+            first_wt_idx = placements[first_wt][2]
+            core_credits = 0
+            for cy in range(1, 8):
+                for ct in ["SUM", "FALL", "WIN"]:
+                    c_idx = (cy - 1) * 3 + ["SUM", "FALL", "WIN"].index(ct)
+                    if c_idx < first_wt_idx:
+                        for c in sequence_dict[str(cy)][ct]["cursuri"]:
+                            ctype = str(c.get('CORE_TE', '')).upper().strip()
+                            if ctype in ['CORE', 'TE', 'PROG'] or 'CORE' in ctype:
+                                core_credits += float(c.get('CREDIT', 0) or 0)
+            if core_credits < 30.0:
+                warning_msgs.append(f"Only {core_credits} credits of CORE/TE before {first_wt}. You need at least 30 CR.")
+                
+        # REGULA: Full-Time (>= 12 CR) înainte de ULTIMUL WT
+        last_wt = all_wts_in_prog[-1]
+        if last_wt in placements:
+            last_wt_idx = placements[last_wt][2]
+            prev_idx = last_wt_idx - 1
+            if prev_idx >= 0:
+                p_y = (prev_idx // 3) + 1
+                p_t = ["SUM", "FALL", "WIN"][prev_idx % 3]
+                
+                # Excepția 1: Fără limită de 12CR dacă termenul precedent este Summer
+                if p_t != "SUM":
+                    # Excepția 2: Fără limită dacă termenul precedent este tot un WT
+                    prev_has_wt = any('WT' in str(c.get('COURSE', '')).upper() for c in sequence_dict[str(p_y)][p_t]["cursuri"])
+                    
+                    if not prev_has_wt:
+                        # Calculăm totalul de credite valide în acel termen anterior
+                        prev_cr = sum(float(c.get('CREDIT', 0) or 0) for c in sequence_dict[str(p_y)][p_t]["cursuri"] if 'WT' not in str(c.get('COURSE', '')).upper())
+                        if prev_cr < 12.0:
+                            warning_msgs.append(f"Term before {last_wt} must be Full-Time (≥ 12 credits). Currently has {prev_cr} CR.")
+
+    # --- Construim raspunsul final de trimis catre Javascript ---
+
     # --- Construim raspunsul final de trimis catre Javascript ---
     res_seq = {}
     for y in range(1, 8):
@@ -1410,7 +1507,7 @@ def generate():
     unalloc_list = [{"id": c, "display": all_courses_dict[c]["COURSE"]} for c in remaining if c in all_courses_dict]
     
     # NOU: Returnam efectiv rezultatul catre browser! (Aceasta linie lipsea din ultimul tau fisier)
-    return jsonify({"sequence": res_seq, "unallocated": unalloc_list})
+    return jsonify({"sequence": res_seq, "unallocated": unalloc_list, "warnings": warning_msgs})
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)), debug=True, use_reloader=False)

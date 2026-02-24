@@ -203,19 +203,56 @@ def index():
     if 'user_email' not in session: return redirect(url_for('login'))
     
     df = load_data()
-    programs = sorted(df['Program'].apply(lambda x: str(x).strip()).unique().tolist())
     
+    # 1. NORMALIZEAZA COLOANELE (Litere mari, fara spatii la capete)
+    df.columns = [str(c).strip().upper() for c in df.columns]
+    
+    programs = []
+    if not df.empty and 'PROGRAM' in df.columns:
+        # 2. STERGE SPATIILE DUBLE SI INVIZIBILE DIN NUMELE PROGRAMELOR
+        df['PROGRAM'] = df['PROGRAM'].astype(str).replace(r'\s+', ' ', regex=True).str.strip()
+        
+        programs = sorted(df['PROGRAM'].unique().tolist())
+        programs = [p for p in programs if p and p.lower() != 'nan']
+    else:
+        programs = ["Mechanical Engineering", "Industrial Engineering"]
+        
     current_sid = str(session.get('student_id', ''))
-    is_power_user = current_sid.startswith('9')
-    viewing_sid = session.get('admin_view_sid', current_sid)
+    is_guest = session.get('is_guest', False)
+    is_power_user = current_sid.startswith('9') and not is_guest
+    viewing_sid = session.get('admin_view_sid', current_sid) if not is_guest else f"{current_sid} - GUEST"
+    coop_data = get_student_coop_data(viewing_sid) if not is_guest else {"found": False}
     
-    coop_data = get_student_coop_data(viewing_sid)
-    
-    return render_template("planner.html", 
-                           programe=programs, 
-                           coop_data_json=json.dumps(coop_data),
-                           is_power_user=is_power_user,
-                           viewing_sid=viewing_sid)
+    pending_list = []
+    if is_power_user:
+        try:
+            client = get_gspread_client()
+            sheet = client.open("Sid_Email_Mirror").worksheet("Saved_Sequences")
+            
+            # Folosim get_all_values() în loc de records, citim strict după poziția coloanei
+            rows = sheet.get_all_values()
+            
+            for r in rows[1:]: # Sărim peste primul rând (headerele)
+                # Verificăm coloana 7 (Index 7 = Statusul "PENDING APPROVAL")
+                if len(r) > 7 and str(r[7]).strip().upper() == 'PENDING APPROVAL':
+                    pending_list.append({
+                        "email": r[0] if len(r) > 0 else "N/A",
+                        "name": r[1] if len(r) > 1 else "Untitled",
+                        "program": r[2] if len(r) > 2 else "",
+                        "sequence_data": r[3] if len(r) > 3 else "{}",
+                        "timestamp": r[4] if len(r) > 4 else "",
+                        "term_data": r[5] if len(r) > 5 else "{}",
+                        "settings_data": r[6] if len(r) > 6 else "{}",
+                        "status": r[7],
+                        "justification": r[8] if len(r) > 8 else "",
+                        "student_comments": r[9] if len(r) > 9 else "",
+                        "student_id": r[10] if len(r) > 10 else "Unknown ID",
+                        "student_name": r[11] if len(r) > 11 else "Student"
+                    })
+        except Exception as e:
+            print(f"Pending List Error: {e}")
+    return render_template("planner.html", programe=programs, coop_data_json=json.dumps(coop_data),
+                           is_power_user=is_power_user, viewing_sid=viewing_sid, pending_list=pending_list)
 
 @app.route("/admin_change_sid", methods=["POST"])
 def admin_change_sid():
@@ -231,16 +268,37 @@ def admin_change_sid():
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        email = request.form.get("email").strip().lower()
-        is_valid, sid = verify_email_in_sheets(email)
-        if is_valid:
+        action = request.form.get("action", "check_email")
+        email = request.form.get("email", "").strip().lower()
+
+        if action == "check_email":
+            is_valid, sid = verify_email_in_sheets(email)
+            if is_valid:
+                otp = str(random.randint(100000, 999999))
+                pending_otps[email] = otp
+                send_otp_email(email, otp)
+                session['pre_auth_email'] = email
+                session['temp_sid'] = sid
+                session['temp_is_guest'] = False
+                return redirect(url_for('verify'))
+            else:
+                # Dacă nu găsim emailul, încărcăm formularul de Guest
+                return render_template("login.html", ask_guest_info=True, email=email)
+        
+        elif action == "guest_login":
+            guest_name = request.form.get("guest_name", "Unknown").strip()
+            guest_sid = request.form.get("guest_sid", "00000000").strip()
+            
             otp = str(random.randint(100000, 999999))
             pending_otps[email] = otp
             send_otp_email(email, otp)
+            
             session['pre_auth_email'] = email
-            session['temp_sid'] = sid
+            session['temp_sid'] = guest_sid
+            session['temp_is_guest'] = True
+            session['temp_guest_name'] = guest_name
             return redirect(url_for('verify'))
-        return render_template("login.html", error="Email not authorized.")
+
     return render_template("login.html")
 
 @app.route("/verify", methods=["GET", "POST"])
@@ -251,6 +309,8 @@ def verify():
         if pending_otps.get(email) == request.form.get("otp").strip():
             session['user_email'] = email
             session['student_id'] = session.get('temp_sid', '')
+            session['is_guest'] = session.get('temp_is_guest', False)
+            session['guest_name'] = session.get('temp_guest_name', '')
             pending_otps.pop(email, None)
             return redirect(url_for('index'))
         return render_template("verify.html", error="Incorrect code!")
@@ -261,6 +321,39 @@ def logout():
     session.clear()
     return redirect(url_for('login'))
 
+
+@app.route("/api/pending_approvals", methods=["GET"])
+def get_pending_approvals():
+    current_sid = str(session.get('student_id', ''))
+    is_guest = session.get('is_guest', False)
+    if not (current_sid.startswith('9') and not is_guest):
+        return jsonify([]) # Dacă nu e Power User, returnează listă goală
+        
+    pending_list = []
+    try:
+        client = get_gspread_client()
+        sheet = client.open("Sid_Email_Mirror").worksheet("Saved_Sequences")
+        rows = sheet.get_all_values()
+        
+        for r in rows[1:]:
+            if len(r) > 7 and str(r[7]).strip().upper() == 'PENDING APPROVAL':
+                pending_list.append({
+                    "email": r[0] if len(r) > 0 else "N/A",
+                    "name": r[1] if len(r) > 1 else "Untitled",
+                    "program": r[2] if len(r) > 2 else "",
+                    "sequence_data": r[3] if len(r) > 3 else "{}",
+                    "timestamp": r[4] if len(r) > 4 else "",
+                    "term_data": r[5] if len(r) > 5 else "{}",
+                    "settings_data": r[6] if len(r) > 6 else "{}",
+                    "student_id": r[10] if len(r) > 10 else "Unknown ID",
+                    "student_name": r[11] if len(r) > 11 else "Student"
+                })
+    except Exception as e:
+        print(f"Pending List Error: {e}")
+        
+    return jsonify(pending_list)
+
+
 @app.route("/save_sequence", methods=["POST"])
 def save_sequence():
     if 'user_email' not in session: return jsonify({"error": "Unauthorized"}), 401
@@ -268,20 +361,113 @@ def save_sequence():
         data = request.json
         name = data.get('name', 'Untitled')
         program = data.get('program', '')
+        target_id = str(data.get('student_id', session.get('student_id', '')))
         seq_json = json.dumps(data.get('sequence_data', {}))
         term_json = json.dumps(data.get('term_data', {}))
         settings_json = json.dumps(data.get('settings_data', {}))
         
+        status = data.get('status', 'SAVED DRAFT') 
+        justification = data.get('justification', '')
+        student_comments = data.get('student_comments', '')
+        
+        # Identificăm cine face salvarea
+        current_user_id = str(session.get('student_id', ''))
+        is_guest = session.get('is_guest', False)
+        is_power_user = current_user_id.startswith('9') and not is_guest
+        current_name = f"GUEST - {session.get('guest_name', '')}" if is_guest else "Official Student"
+        
+        # Setează email-ul implicit cu adresa de logare a sesiunii
+        email_to_save = session['user_email']
+        
         client = get_gspread_client()
+        
+        # --- NOU: Dacă ești Power User, caută email-ul real al studentului! ---
+        if is_power_user and target_id != current_user_id:
+            current_name = f"ADMIN (PowerUser)"
+            try:
+                mirror_sheet = client.open("Sid_Email_Mirror").worksheet("Mirror")
+                mirror_data = mirror_sheet.get_all_values()
+                # Căutăm ID-ul studentului în tabel
+                for row in mirror_data:
+                    if target_id in [str(cell).strip() for cell in row]:
+                        # Extragem celula care conține un "@" (e-mailul)
+                        for cell in row:
+                            if '@' in str(cell):
+                                email_to_save = str(cell).strip()
+                                break
+                        break
+            except Exception as e:
+                print(f"Eroare cautare email student: {e}")
+                # Fallback de siguranță
+                email_to_save = f"admin_saved_for_{target_id}@concordia.ca"
+        
         sheet = client.open("Sid_Email_Mirror").worksheet("Saved_Sequences")
-        email = session['user_email']
         timestamp = str(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         
-        sheet.append_row([email, name, program, seq_json, timestamp, term_json, settings_json])
+        # 1. Salvăm in Google Sheets (folosind email_to_save care acum este cel al studentului)
+        sheet.append_row([email_to_save, name, program, seq_json, timestamp, term_json, settings_json, status, justification, student_comments, target_id, current_name])
+        
+        # ... Restul funcției cu trimiterea de e-mail (resend) rămâne neschimbat! ...
+
+        # 2. Trimitem E-mailul daca este Submit Oficial
+        if status == "PENDING APPROVAL":
+            try:
+                # Logica coordonatorului (din backend)
+                coord_email = "sorin.voiculescu@concordia.ca" # "Frederick.francis@concordia.ca"
+                if "INDU" not in program.upper() and target_id:
+                    try:
+                        last_digit = int(str(target_id)[-1])
+                        if 5 <= last_digit <= 9:
+                            coord_email = "sorin.voiculescu@concordia.ca"   #"Nathalie.steverman@concordia.ca"
+                    except ValueError:
+                        pass
+                else:
+                    coord_email = "sorin.voiculescu@concordia.ca"
+                
+                # Lista destinatarilor
+                recipients = ["sorin.voiculescu@concordia.ca", "sorin.voiculescu@concordia.ca", coord_email]
+
+                html_body = f"""
+                <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; padding: 20px; border-radius: 8px;">
+                    <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">New Course Sequence Submitted for Approval</h2>
+                    <p><b>Student Email:</b> {email}</p>
+                    <p><b>Student Name:</b> {current_name}</p>
+                    <p><b>Student ID:</b> {target_id}</p>
+                    <p><b>Program:</b> {program}</p>
+                    <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+                    
+                    <p><b>Validation Warnings & Student Justification:</b><br>
+                    <span style="color: #c0392b; background-color: #fdf2f2; padding: 10px; display: inline-block; margin-top: 5px; border-radius: 4px; border: 1px solid #fadbd8; width: 95%; white-space: pre-wrap;">{justification if justification else '✅ Sequence is valid. No warnings or justification provided.'}</span></p>
+                    
+                    <p><b>Student Comments:</b><br>
+                    <span style="color: #2980b9; background-color: #f0f8ff; padding: 10px; display: inline-block; margin-top: 5px; border-radius: 4px; border: 1px solid #d6eaf8; width: 95%; white-space: pre-wrap;">{student_comments if student_comments else 'No extra comments provided.'}</span></p>
+
+                    <div style="text-align: center; margin: 35px 0;">
+                        <a href="https://concordia-sequence-planner.onrender.com/" style="background-color: #27ae60; color: #ffffff; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 16px; display: inline-block; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">Log in to Review Sequence</a>
+                    </div>
+                    
+                    <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+                    <p style="font-size: 12px; color: #7f8c8d; text-align: center;">This is an automated message from the MIAE Academic Planner Tool.</p>
+                </div>
+                """
+                
+                resend.Emails.send({
+                    "from": "MIAE Planner <auth@concordiasequenceplanner.ca>", 
+                    "to": recipients,
+                    "subject": f"Sequence Approval Needed - {target_id} ({program})",
+                    "html": html_body,
+                    "reply_to": email # Setează reply-ul direct către e-mailul studentului!
+                })
+                print(f"E-mail trimis cu succes catre: {recipients}")
+            except Exception as mail_err:
+                print(f"Eroare la trimiterea e-mailului prin Resend: {mail_err}")
+                # Nu vrem sa dam fail la intreaga salvare doar pentru ca e-mailul nu a plecat
+
         return jsonify({"success": True})
     except Exception as e:
         print(f"Save Error: {e}")
         return jsonify({"error": str(e)}), 500
+    
 
 @app.route("/load_sequences", methods=["GET"])
 def load_sequences():
@@ -310,11 +496,125 @@ def load_sequences():
         print(f"Load Error: {e}")
         return jsonify({"error": str(e)}), 500
 
+
+@app.route("/get_transcript", methods=["POST"])
+def get_transcript():
+    if 'user_email' not in session: return jsonify({"error": "Unauthorized"}), 401
+    
+    target_id = request.json.get("student_id", "").strip()
+    
+    # --- NOU: Blocăm 100% citirea Excelului dacă este un Guest ---
+    if session.get('is_guest'):
+        guest_name = session.get('guest_name', 'Unknown')
+        return jsonify({
+            "transcript": [], 
+            "student_name": f"GUEST - {guest_name}", 
+            "suggested_program": ""
+        })
+
+    if not target_id or target_id == "ADMIN": 
+        return jsonify({"transcript": [], "student_name": "", "suggested_program": ""})
+    
+    # ... restul logicii ramane neschimbata
+
+    try:
+        client = get_gspread_client()
+        sheet = client.open("Sid_Email_Mirror").worksheet("Transcripts")
+        
+        raw_data = sheet.get_all_values()
+        if not raw_data: return jsonify({"transcript": [], "student_name": "", "suggested_program": ""})
+        
+        headers = [str(h).strip() for h in raw_data[0]]
+        
+        try:
+            idx_sid = headers.index('Student ID')
+            idx_course = headers.index('COURSE')
+            idx_term = headers.index('Academic Term')
+            idx_grade = headers.index('GRADE')
+            idx_cred = headers.index('CREDVAL') if 'CREDVAL' in headers else -1
+            idx_name = headers.index('NAME') if 'NAME' in headers else -1
+            
+            # NOU: Cautam coloanele pentru detectia automata a programului
+            idx_prog = headers.index('PROG_LINK') if 'PROG_LINK' in headers else -1
+            idx_disc = headers.index('DISCIPLINE1_DESCR') if 'DISCIPLINE1_DESCR' in headers else -1
+        except ValueError:
+            return jsonify({"transcript": [], "student_name": "", "suggested_program": ""})
+
+        my_courses = []
+        student_name = ""
+        last_prog_link = ""
+        last_disc = ""
+
+        for row in raw_data[1:]:
+            if len(row) > max(idx_sid, idx_course, idx_term) and str(row[idx_sid]).strip() == target_id:
+                
+                if not student_name and idx_name != -1 and len(row) > idx_name:
+                    student_name = str(row[idx_name]).strip()
+                
+                # NOU: Actualizam "ultimul program/disciplina" vazut (ignoram celulele goale)
+                if idx_prog != -1 and len(row) > idx_prog:
+                    val_prog = str(row[idx_prog]).strip().upper()
+                    if val_prog: last_prog_link = val_prog
+                    
+                if idx_disc != -1 and len(row) > idx_disc:
+                    val_disc = str(row[idx_disc]).strip().upper()
+                    if val_disc: last_disc = val_disc
+                
+                cred_val = 0.0
+                if idx_cred != -1 and len(row) > idx_cred:
+                    try: cred_val = float(str(row[idx_cred]).strip())
+                    except ValueError: cred_val = 0.0
+
+                my_courses.append({
+                    "course": str(row[idx_course]).strip().replace(" ", "").upper(),
+                    "term": str(row[idx_term]).strip(),
+                    "grade": str(row[idx_grade]).strip() if len(row) > idx_grade else "",
+                    "credit": cred_val
+                })
+                
+        # NOU: Aplicam logica ta extinsă pentru a deduce programul (UGRD vs GRAD)
+        suggested_program = ""
+        last_prog_link_upper = last_prog_link.upper()
+        last_disc_upper = last_disc.upper()
+        
+        if "UGRD" in last_prog_link_upper:
+            if "AERODY" in last_disc_upper: suggested_program = "AERODYNAMICS"
+            elif "STRUCTURES" in last_disc_upper: suggested_program = "STRUCTURES"
+            elif "AVIONICS" in last_disc_upper: suggested_program = "AVIONICS"
+            elif "MECH" in last_disc_upper: suggested_program = "MECHANICAL"
+            elif "INDU" in last_disc_upper: suggested_program = "INDUSTRIAL"
+        elif "GRAD" in last_prog_link_upper:
+            if "MECH" in last_disc_upper: suggested_program = "MECHANICAL GRAD"
+            elif "INDU" in last_disc_upper: suggested_program = "INDUSTRIAL GRAD"
+
+        return jsonify({
+            "transcript": my_courses, 
+            "student_name": student_name, 
+            "suggested_program": suggested_program # Trimitem sugestia catre frontend
+        })
+    except Exception as e:
+        print("Transcript fetch error:", e)
+        return jsonify({"transcript": [], "student_name": "", "suggested_program": ""})
+    
 @app.route("/get_courses", methods=["POST"])
 def get_courses():
     if 'user_email' not in session: return jsonify({"error": "Unauthorized"}), 401
+    
     df_prog = load_data()
-    df_prog = df_prog[df_prog['Program'].str.strip() == request.json.get('program').strip()].copy()
+    
+    # 1. NORMALIZEAZA COLOANELE
+    df_prog.columns = [str(c).strip().upper() for c in df_prog.columns]
+    
+    # 2. NORMALIZEAZA PROGRAMUL CERUT DE FRONTEND (sterge spatiile duble)
+    program_name = request.json.get('program', '').strip()
+    program_name = " ".join(program_name.split()) 
+    
+    if 'PROGRAM' in df_prog.columns:
+        # NORMALIZEAZA DATELE DIN EXCEL
+        df_prog['PROGRAM'] = df_prog['PROGRAM'].astype(str).replace(r'\s+', ' ', regex=True).str.strip()
+        df_prog = df_prog[df_prog['PROGRAM'] == program_name].copy()
+    else:
+        return jsonify({"error": "Coloana 'PROGRAM' nu exista in Excel"}), 500
     
     for idx in df_prog.index:
         c_name = str(df_prog.at[idx, 'COURSE']).upper()
@@ -323,42 +623,63 @@ def get_courses():
     
     reverse_deps = defaultdict(lambda: {"is_prereq_for": set(), "is_coreq_for": set()})
     for _, row in df_prog.iterrows():
-        ccid = extract_course_code(row['COURSE'])
+        ccid = extract_course_code(row.get('COURSE', ''))
         for r in re.findall(r'[A-Z]{3,4}\s*\d{3}[A-Z]?|WT\d', str(row.get('PRE-REQUISITE', '')).upper()): reverse_deps[r.replace(" ","").replace("-","")]["is_prereq_for"].add(ccid)
         for r in re.findall(r'[A-Z]{3,4}\s*\d{3}[A-Z]?|WT\d', str(row.get('CO-REQUISITE', '')).upper()): reverse_deps[r.replace(" ","").replace("-","")]["is_coreq_for"].add(ccid)
 
-    all_courses, pre_placed = [], defaultdict(list)
+    all_courses = []
     def safe_str(val): return "" if str(val).strip().lower() == 'nan' else str(val).strip()
 
     for _, row in df_prog.iterrows():
-        cid = extract_course_code(row['COURSE'])
-        terms_offered = [t for t, col in zip(['Fall', 'Winter', 'Sum 1', 'Sum 2'], ['FALL', 'WIN', 'SUM 1', 'SUM 2']) if safe_str(row.get(col, '')).upper() == 'X']
+        cid = extract_course_code(row.get('COURSE', ''))
+        
+        # Combinam verile citind coloanele normalizate
+        terms_offered = []
+        if safe_str(row.get('FALL', '')).upper() == 'X': terms_offered.append('FALL')
+        if safe_str(row.get('WIN', '')).upper() == 'X': terms_offered.append('WIN')
+        if safe_str(row.get('SUM 1', '')).upper() == 'X' or safe_str(row.get('SUM 2', '')).upper() == 'X' or safe_str(row.get('SUM', '')).upper() == 'X':
+            terms_offered.append('SUM')
+            
         all_courses.append({
-            "id": cid, "display": f"{safe_str(row['COURSE'])} ({row.get('CREDIT', 0)} cr)",
-            "credit": float(row.get('CREDIT', 0) or 0), "full_name": safe_str(row['COURSE']), 
-            "title": safe_str(row.get('TITLE', '')), "is_wt": 'WT' in safe_str(row['COURSE']).upper(),
-            "is_ecp": safe_str(row.get('CORE_TE', '')).upper() == 'ECP', "type": safe_str(row.get('CORE_TE', '')),
-            "terms": ", ".join(terms_offered) if terms_offered else "N/A",
-            "prereqs": safe_str(row.get('PRE-REQUISITE', '')), "coreqs": safe_str(row.get('CO-REQUISITE', '')),
-            "is_prereq_for": ", ".join(reverse_deps[cid]["is_prereq_for"]) or "None", "is_coreq_for": ", ".join(reverse_deps[cid]["is_coreq_for"]) or "None",
+            "id": cid, 
+            "display": f"{safe_str(row.get('COURSE', ''))} ({row.get('CREDIT', 0)} cr)",
+            "credit": float(row.get('CREDIT', 0) or 0), 
+            "full_name": safe_str(row.get('COURSE', '')), 
+            "title": safe_str(row.get('TITLE', '')), 
+            "is_wt": 'WT' in safe_str(row.get('COURSE', '')).upper(),
+            "is_ecp": safe_str(row.get('CORE_TE', '')).upper() == 'ECP', 
+            "type": safe_str(row.get('CORE_TE', '')),
+            "terms": ", ".join(terms_offered) if terms_offered else "ANY", 
+            "prereqs": safe_str(row.get('PRE-REQUISITE', '')), 
+            "coreqs": safe_str(row.get('CO-REQUISITE', '')),
+            "is_prereq_for": ", ".join(reverse_deps[cid]["is_prereq_for"]) or "None", 
+            "is_coreq_for": ", ".join(reverse_deps[cid]["is_coreq_for"]) or "None",
             "already_taken": 0
         })
-    return jsonify({"courses": all_courses, "pre_placed": dict(pre_placed)})
+        
+    return jsonify({"courses": all_courses, "pre_placed": {}})
+    
 
 @app.route("/generate", methods=["POST"])
 def generate():
     if 'user_email' not in session: return jsonify({"error": "Unauthorized"}), 401
     
     data = request.json
-    program_name = data.get('program').strip()
+    # Stergem spatiile duble din numele venit de la browser
+    program_name = " ".join(data.get('program', '').strip().upper().split())
+    
     term_limits = data.get('term_limits', {})
     count_limits = data.get('count_limits', {})
     placed_ui = data.get('placed', {})
     unallocated_ids = data.get('unallocated', [])
 
     df = load_data()
-    df_prog = df[df['Program'].str.strip() == program_name].copy()
+    df.columns = [str(c).strip().upper() for c in df.columns]
     
+    # Filtrare blindată: stergem spatiile duble si din Excel inainte de comparare
+    df['PROGRAM'] = df['PROGRAM'].astype(str).replace(r'\s+', ' ', regex=True).str.strip().str.upper()
+    df_prog = df[df['PROGRAM'] == program_name].copy()
+
     for idx in df_prog.index:
         c_name = str(df_prog.at[idx, 'COURSE']).upper()
         if 'WT2' in c_name: df_prog.at[idx, 'PRE-REQUISITE'] = 'WT1'
@@ -384,17 +705,43 @@ def generate():
                 new_prqs_str = "; ".join(to_add)
                 c_data['PRE-REQUISITE'] = (existing_prqs + "; " + new_prqs_str) if (existing_prqs and existing_prqs.lower() not in ['n/a', 'none']) else new_prqs_str
 
+    # --- LOGICA PENTRU CURSURI REPETATE ---
+    rep_counts = defaultdict(int)
     for cid in data.get('repeated', []):
         if cid in all_courses_dict:
-            rep_id = "REP_" + cid
+            rep_counts[cid] += 1
+            count = rep_counts[cid]
+            rep_id = f"REP{count}_{cid}"
+            
+            # Denumire cu REPEATED
+            suffix = f" {count}" if count > 1 else ""
             dummy = all_courses_dict[cid].copy()
-            dummy['COURSE'] = "1st attempt " + str(dummy['COURSE'])
-            dummy['CORE_TE'] = "REPEAT"; dummy['_id'] = rep_id 
+            dummy['COURSE'] = f"{str(dummy['COURSE'])} REPEATED{suffix}"
+            #dummy['CORE_TE'] = "REPEAT"
+            dummy['_id'] = rep_id 
+            
+            # Repetarea 2 cere Repetarea 1
+            dummy['PRE-REQUISITE'] = f"REP{count-1}_{cid}" if count > 1 else ""
             all_courses_dict[rep_id] = dummy
+            
+            # 1. Cursul original trebuie sa astepte dupa aceasta repetare
             orig_prq = str(all_courses_dict[cid].get('PRE-REQUISITE', ''))
-            all_courses_dict[cid]['PRE-REQUISITE'] = (orig_prq + "; " + rep_id) if orig_prq else rep_id
+            if orig_prq and orig_prq.lower() not in ['n/a', 'none']:
+                all_courses_dict[cid]['PRE-REQUISITE'] = orig_prq + "; " + rep_id
+            else:
+                all_courses_dict[cid]['PRE-REQUISITE'] = rep_id
 
-    sequence_dict = {str(y): {t: {"cursuri": [], "credite": 0.0, "coduri": set()} for t in ["SUM1", "SUM2", "FALL", "WIN"]} for y in range(1, 8)}
+            # 2. Orice ALT curs care depindea de original, va depinde acum SI de repetare
+            for other_cid, c_data in all_courses_dict.items():
+                if other_cid != cid and other_cid != rep_id:
+                    other_prq = str(c_data.get('PRE-REQUISITE', ''))
+                    if other_prq and other_prq.lower() not in ['n/a', 'none']:
+                        # Folosim regex pentru a gasi cursul original in text (ex: INDU320)
+                        if re.search(rf'\b{cid}\b', other_prq):
+                            c_data['PRE-REQUISITE'] = other_prq + "; " + rep_id
+    
+    # Folosim o singura cutie pentru SUM, la fel ca in frontend, si adaugam sertarul 'coduri'
+    sequence_dict = {str(i): {t: {"credite": 0, "cursuri": [], "coduri": set()} for t in ["SUM", "FALL", "WIN"]} for i in range(1, 8)}
 
     for tk, cids in placed_ui.items():
         if not cids: continue
@@ -402,6 +749,9 @@ def generate():
             for cid in cids: taken_courses.add(cid); placements[cid] = (0, 'ANY', -1)
             continue
         y_str = tk.split("_")[0]; t = tk.split("_")[1]; y = int(y_str[1:])
+        # NOU: Orice variatie de SUM1 sau SUM2 devine automat SUM
+        if "SUM" in t: 
+            t = "SUM"
         for cid in cids:
             if cid in all_courses_dict:
                 c = all_courses_dict[cid]
@@ -411,7 +761,9 @@ def generate():
                 sequence_dict[str(y)][t]["credite"] += cr
                 sequence_dict[str(y)][t]["coduri"].add(cid)
                 taken_courses.add(cid)
-                placements[cid] = (y, t, (y - 1) * 4 + ["SUM1", "SUM2", "FALL", "WIN"].index(t))
+                
+                # MODIFICAT: Folosim noul sistem de 3 semestre (index de la 0 la 2)
+                placements[cid] = (str(y), t, (int(y) - 1) * 3 + ["SUM", "FALL", "WIN"].index(t))
 
     remaining = set(c for c in unallocated_ids if c in all_courses_dict and c not in taken_courses)
     for cid in data.get('repeated', []):
@@ -438,54 +790,98 @@ def generate():
     elif "MECHANICAL" in program_name.upper(): std_prog = STANDARD_SEQUENCES.get("MECHANICAL", {})
 
     def get_std_idx(cid):
-        base_cid = cid.replace("REP_", "")
-        loc = std_prog.get(base_cid)
-        if loc:
-            y = int(loc.split('_')[0][1:]); t_idx = {"SUM": 0, "SUM1": 0, "SUM2": 1, "FALL": 2, "WIN": 3}.get(loc.split('_')[1], 2)
-            return (y - 1) * 4 + t_idx
+        # Cautam indexul standard pe noul sistem de 3 trimestre (0-20)
+        pos_str = std_prog.get(cid, "") # <--- AICI ERA PROBLEMA (standard_seq in loc de std_prog)
+        if not pos_str: return 999
+        try:
+            parts = pos_str.split('_')
+            y = int(parts[0].replace('Y', ''))
+            t = parts[1]
+            if "SUM" in t: t = "SUM" # Absoarbe orice variatie de SUM din STANDARD_SEQUENCES
+            if t in ["SUM", "FALL", "WIN"]:
+                return (y - 1) * 3 + ["SUM", "FALL", "WIN"].index(t)
+        except: pass
         return 999
 
     def place_temporarily(cid, idx):
-        y = (idx // 4) + 1; t = ["SUM1", "SUM2", "FALL", "WIN"][idx % 4]
-        target = sequence_dict[str(y)][t]; c_data = all_courses_dict[cid]
-        cr = 0.0 if ('WT' in cid.upper() or c_data.get('CORE_TE', '') == 'REPEAT') else float(c_data.get('CREDIT', 0) or 0)
-        target["cursuri"].append(c_data); target["credite"] += cr; target["coduri"].add(cid); taken_courses.add(cid); placements[cid] = (y, t, idx)
+        # Impartirea inteligenta la 3
+        y = (idx // 3) + 1
+        t = ["SUM", "FALL", "WIN"][idx % 3]
+        
+        c_data = all_courses_dict.get(cid, {"COURSE": cid})
+        is_wt_c = 'WT' in cid.upper()
+        is_rep_c = str(c_data.get('CORE_TE', '')).upper() == 'REPEAT'
+        cr = 0.0 if (is_wt_c or is_rep_c) else float(c_data.get('CREDIT', 0) or 0)
+        
+        sequence_dict[str(y)][t]["cursuri"].append(c_data)
+        sequence_dict[str(y)][t]["credite"] += cr
+        sequence_dict[str(y)][t]["coduri"].add(cid)
+        placements[cid] = (str(y), t, idx)
+        taken_courses.add(cid)
 
     def undo_placement(cid):
-        idx = placements[cid][2]; y = (idx // 4) + 1; t = ["SUM1", "SUM2", "FALL", "WIN"][idx % 4]
-        target = sequence_dict[str(y)][t]; c_data = all_courses_dict[cid]
-        cr = 0.0 if ('WT' in cid.upper() or c_data.get('CORE_TE', '') == 'REPEAT') else float(c_data.get('CREDIT', 0) or 0)
-        target["cursuri"] = [c for c in target["cursuri"] if c['_id'] != cid]
-        target["credite"] -= cr; target["coduri"].remove(cid); taken_courses.remove(cid); del placements[cid]
-
-    def is_valid_slot(cid, idx):
-        y = (idx // 4) + 1; t = ["SUM1", "SUM2", "FALL", "WIN"][idx % 4]
-        if y > 7: return False
-        c_data = all_courses_dict[cid]; col_map = {"SUM1": "SUM 1", "SUM2": "SUM 2", "FALL": "FALL", "WIN": "WIN"}
-        if str(c_data.get(col_map[t], '')).strip().upper() != 'X': return False
+        if cid not in placements: return
+        y, t, idx = placements[cid]
+        c_data = all_courses_dict.get(cid, {"COURSE": cid})
         
-        is_wt_c = 'WT' in cid.upper(); is_rep_c = str(c_data.get('CORE_TE', '')).upper() == 'REPEAT'
+        is_wt_c = 'WT' in cid.upper()
+        is_rep_c = str(c_data.get('CORE_TE', '')).upper() == 'REPEAT'
+        cr = 0.0 if (is_wt_c or is_rep_c) else float(c_data.get('CREDIT', 0) or 0)
+        
+        target = sequence_dict[str(y)][t]
+        if c_data in target["cursuri"]: target["cursuri"].remove(c_data)
+        target["credite"] -= cr
+        if cid in target["coduri"]: target["coduri"].remove(cid)
+            
+        del placements[cid]
+        taken_courses.remove(cid) 
+    
+    
+    def is_valid_slot(cid, idx, ignore_offering=False): # <-- Adăugat parametrul aici
+        # 1. Impartim la 3 (pentru SUM, FALL, WIN)
+        y = (idx // 3) + 1
+        t = ["SUM", "FALL", "WIN"][idx % 3]
+        
+        if y > 7: return False
+        
+        c_data = all_courses_dict.get(cid, {})
+        
+        # 2. Verificam daca e oferit in acest trimestru (cautam in Excel)
+        if not ignore_offering: # <-- Folosim parametrul
+            if t == "SUM":
+                # Verificăm dacă e oferit în oricare variantă de vară din Excel
+                is_offered = (str(c_data.get('SUM 1', '')).strip().upper() == 'X' or 
+                              str(c_data.get('SUM 2', '')).strip().upper() == 'X' or
+                              str(c_data.get('SUM', '')).strip().upper() == 'X')
+            else:
+                is_offered = str(c_data.get(t, '')).strip().upper() == 'X'
+                
+            # AICI ERA PROBLEMA: Daca nu e oferit, trebuie sa ii spunem AI-ului sa se opreasca!
+            if not is_offered: 
+                return False
+        
+        is_wt_c = 'WT' in cid.upper()
+        is_rep_c = str(c_data.get('CORE_TE', '')).upper() == 'REPEAT'
         cr = 0.0 if (is_wt_c or is_rep_c) else float(c_data.get('CREDIT', 0) or 0)
         target = sequence_dict[str(y)][t]
+        
         term_has_wt = any('WT' in str(cx.get('COURSE', '')).upper() for cx in target["cursuri"])
         
-        other_summer_has_wt = False; other_summer_has_courses = False
-        if 'SUM' in t:
-            other_t = 'SUM2' if t == 'SUM1' else 'SUM1'; other_target = sequence_dict[str(y)][other_t]
-            other_summer_has_wt = any('WT' in str(cx.get('COURSE', '')).upper() for cx in other_target["cursuri"])
-            other_summer_has_courses = len(other_target["cursuri"]) > 0
+        # 3. Nu permitem unui curs sa se aseze peste un WT (si invers)
+        if term_has_wt and not is_wt_c and len(target["cursuri"]) >= 1: return False
+        if is_wt_c and len(target["cursuri"]) > 0: return False
 
-        if term_has_wt or other_summer_has_wt: return False
-        if is_wt_c and (len(target["cursuri"]) > 0 or other_summer_has_courses): return False
-
-        l_cr = float(term_limits.get(f"Y{y}_{t}", 10.0 if 'SUM' in t else 17.0))
-        l_cnt = int(count_limits.get(f"Y{y}_{t}", 3 if 'SUM' in t else 5))
+        # 4. Limitele noi (16 cr / 6 cursuri pentru vara, 18 / 5 pentru restul)
+        l_cr = float(term_limits.get(f"Y{y}_{t}", 16.0 if t == 'SUM' else 18.0))
+        l_cnt = int(count_limits.get(f"Y{y}_{t}", 6 if t == 'SUM' else 5))
+        
         if l_cr == 0 or l_cnt == 0: return False
 
         if not is_wt_c and not is_rep_c:
             if target["credite"] + cr > l_cr: return False
             if len(target["cursuri"]) >= l_cnt: return False
 
+        # 5. Reguli de pre-requisites nivel 200 vs 400
         if get_level(cid) >= 4:
             for k in taken_courses:
                 if get_level(k) == 2 and placements[k][2] >= idx: return False
@@ -493,64 +889,83 @@ def generate():
             for k in taken_courses:
                 if get_level(k) >= 4 and placements[k][2] <= idx: return False
 
+        # 6. Reguli stricte Capstone (490A obligatoriu toamna, 490B obligatoriu iarna)
         if '490B' in cid and t != 'WIN': return False
         if '490A' in cid and t != 'FALL': return False
         if '490A' in cid:
             req_490b = cid.replace('490A', '490B')
             if req_490b in placements:
                 if idx != placements[req_490b][2] - 1: return False
+                
         return True
+    
 
     def solve_branch(cid, max_allowed_idx, depth):
-        if cid in taken_courses: return placements[cid][2] <= max_allowed_idx
-        if cid not in all_courses_dict: return True
-        min_term_index = -1 
-        for grp in get_reqs(cid, 'PRE-REQUISITE'):
-            opts = [placements[o][2] for o in grp if o in taken_courses]
-            if opts: min_term_index = max(min_term_index, min(opts))
-        start_idx = max(0, min_term_index + 1)
-        if get_level(cid) >= 4:
-            opts_200 = [placements[k][2] for k in taken_courses if get_level(k) == 2]
-            if opts_200: start_idx = max(start_idx, max(opts_200) + 1)
-        if '490B' in cid:
-            req_490a = cid.replace('490B', '490A')
-            if req_490a in taken_courses: start_idx = max(start_idx, placements[req_490a][2] + 1)
-        std_idx = get_std_idx(cid)
-        if 'WT' in cid.upper() and std_idx != 999: start_idx = max(start_idx, std_idx)
-        if start_idx > max_allowed_idx: return False
-        search_space = list(range(start_idx, max_allowed_idx + 1))
-        if std_idx != 999:
-            search_space.sort(key=lambda x: abs(x - std_idx))
-        else:
-            if depth == 0: search_space.sort()
-            else: search_space.sort(reverse=True)
-
-        for idx in search_space:
-            if not is_valid_slot(cid, idx): continue
-            place_temporarily(cid, idx)
-            success = True
+            # NOU: Preventie impotriva infinite loops la pre-requisites incrucisate
+            if depth > 15: return False 
+            
+            if cid in taken_courses: return placements[cid][2] <= max_allowed_idx
+            if cid not in all_courses_dict: return True
+            
+            min_term_index = -1 
             for grp in get_reqs(cid, 'PRE-REQUISITE'):
-                valid_opts = [o for o in grp if o in all_courses_dict]
-                if not valid_opts: continue 
-                grp_ok = False
-                for opt in valid_opts:
-                    if solve_branch(opt, idx - 1, depth + 1):
-                        grp_ok = True; break
-                if not grp_ok: success = False; break
-            if success:
-                for grp in get_reqs(cid, 'CO-REQUISITE'):
+                opts = [placements[o][2] for o in grp if o in taken_courses]
+                if opts: min_term_index = max(min_term_index, min(opts))
+                
+            start_idx = max(0, min_term_index + 1)
+            
+            if get_level(cid) >= 4:
+                opts_200 = [placements[k][2] for k in taken_courses if get_level(k) == 2]
+                if opts_200: start_idx = max(start_idx, max(opts_200) + 1)
+                
+            if '490B' in cid:
+                req_490a = cid.replace('490B', '490A')
+                if req_490a in taken_courses: start_idx = max(start_idx, placements[req_490a][2] + 1)
+                
+            std_idx = get_std_idx(cid)
+            if 'WT' in cid.upper() and std_idx != 999: start_idx = max(start_idx, std_idx)
+            
+            if start_idx > max_allowed_idx: return False
+            
+            search_space = list(range(start_idx, max_allowed_idx + 1))
+            if std_idx != 999:
+                search_space.sort(key=lambda x: abs(x - std_idx))
+            else:
+                if depth == 0: search_space.sort()
+                else: search_space.sort(reverse=True)
+
+            for idx in search_space:
+                if not is_valid_slot(cid, idx): continue
+                
+                place_temporarily(cid, idx)
+                success = True
+                
+                for grp in get_reqs(cid, 'PRE-REQUISITE'):
                     valid_opts = [o for o in grp if o in all_courses_dict]
-                    if not valid_opts: continue
+                    if not valid_opts: continue 
                     grp_ok = False
                     for opt in valid_opts:
-                        if solve_branch(opt, idx, depth + 1):
+                        if solve_branch(opt, idx - 1, depth + 1):
                             grp_ok = True; break
                     if not grp_ok: success = False; break
-            if success:
-                if cid in remaining: remaining.remove(cid)
-                return True
-            undo_placement(cid)
-        return False
+                        
+                if success:
+                    for grp in get_reqs(cid, 'CO-REQUISITE'):
+                        valid_opts = [o for o in grp if o in all_courses_dict]
+                        if not valid_opts: continue
+                        grp_ok = False
+                        for opt in valid_opts:
+                            if solve_branch(opt, idx, depth + 1):
+                                grp_ok = True; break
+                        if not grp_ok: success = False; break
+                        
+                if success:
+                    if cid in remaining: remaining.remove(cid)
+                    return True
+                    
+                undo_placement(cid)
+                
+            return False
 
     print("\n" + "="*50 + "\n🚀 STARTING BACKWARD-CHAINING AI PLANNER 🚀\n" + "="*50)
     remaining_list = list(remaining)
@@ -561,22 +976,28 @@ def generate():
         return (-is_te, anc_count, get_level(c_id))
     remaining_list.sort(key=goal_priority, reverse=True)
     for c in remaining_list:
-        if c in remaining: solve_branch(c, 27, 0)
+        if c in remaining: solve_branch(c, 20, 0)
     print("="*50 + "\n")
 
+    # --- Bucla de limitare la 120 credite ---
     while True:
-        total_cr = sum(float(c.get('CREDIT', 0) or 0) for y in range(1, 8) for t in ["SUM1", "SUM2", "FALL", "WIN"] for c in sequence_dict[str(y)][t]["cursuri"] if str(c.get('CORE_TE', '')).strip().upper() not in ['REPEAT', 'ECP'] and 'WT' not in str(c['COURSE']).upper())
+        # NOU: Folosim "SUM", "FALL", "WIN"
+        total_cr = sum(float(c.get('CREDIT', 0) or 0) for y in range(1, 8) for t in ["SUM", "FALL", "WIN"] for c in sequence_dict[str(y)][t]["cursuri"] if str(c.get('CORE_TE', '')).strip().upper() not in ['REPEAT', 'ECP'] and 'WT' not in str(c['COURSE']).upper())
         if total_cr <= 120: break
+        
         removed_any = False
         for y in range(7, 0, -1):
-            for t in ["WIN", "FALL", "SUM2", "SUM1"]:
+            # NOU: Folosim "WIN", "FALL", "SUM" in ordine inversa
+            for t in ["WIN", "FALL", "SUM"]:
                 target = sequence_dict[str(y)][t]
                 tes = [c for c in target["cursuri"] if str(c.get('CORE_TE', '')).strip().upper() == 'TE']
                 if tes:
                     for te in reversed(tes):
                         cr = float(te.get('CREDIT', 0) or 0)
                         if total_cr - cr >= 120:
-                            target["cursuri"].remove(te); target["credite"] -= cr; cid = te.get('_id', extract_course_code(te['COURSE']))
+                            target["cursuri"].remove(te)
+                            target["credite"] -= cr
+                            cid = te.get('_id', extract_course_code(te['COURSE']))
                             if cid in target["coduri"]: target["coduri"].remove(cid)
                             if cid not in remaining: remaining.add(cid)
                             removed_any = True; break
@@ -584,11 +1005,13 @@ def generate():
             if removed_any: break
         if not removed_any: break
 
+    # --- Construim raspunsul final de trimis catre Javascript ---
     res_seq = {}
     for y in range(1, 8):
         res_seq[f"Year {y}"] = {}
-        for t in ["SUM1", "SUM2", "FALL", "WIN"]:
+        for t in ["SUM", "FALL", "WIN"]:
             cursuri_list = []
+            
             for c in sequence_dict[str(y)][t]["cursuri"]:
                 cid_for_json = c.get('_id', extract_course_code(c['COURSE']))
                 is_wt = 'WT' in str(c['COURSE']).upper()
@@ -596,9 +1019,13 @@ def generate():
                 display_cr = 0 if (is_wt or is_rep) else c.get('CREDIT', 0)
                 display = f"{str(c['COURSE']).strip()} ({display_cr} cr)"
                 cursuri_list.append({"id": cid_for_json, "display": display, "is_wt": is_wt})
+                    
             res_seq[f"Year {y}"][t] = {"credite": sequence_dict[str(y)][t]["credite"], "cursuri": cursuri_list}
-            
-    unalloc_list = [{"id": cid, "display": all_courses_dict[cid]['COURSE']} for cid in remaining]
+
+    # Formatam cursurile ramase (unallocated)
+    unalloc_list = [{"id": c, "display": all_courses_dict[c]["COURSE"]} for c in remaining if c in all_courses_dict]
+    
+    # NOU: Returnam efectiv rezultatul catre browser! (Aceasta linie lipsea din ultimul tau fisier)
     return jsonify({"sequence": res_seq, "unallocated": unalloc_list})
 
 if __name__ == "__main__":

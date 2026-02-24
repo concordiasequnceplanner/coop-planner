@@ -198,6 +198,13 @@ def get_student_coop_data(target_sid):
 pending_otps = {}
 
 # --- ROUTES ---
+
+@app.route("/health", methods=["GET"])
+def health_check():
+    # Returnează un simplu 200 OK pentru Render, ca să nu ne mai restarteze aplicația
+    return "OK", 200
+
+
 @app.route("/", methods=["GET"])
 def index():
     if 'user_email' not in session: return redirect(url_for('login'))

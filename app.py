@@ -59,6 +59,20 @@ def verify_email_in_sheets(email):
         return False, ""
     except Exception: return False, ""
 
+
+def get_student_email(target_sid, fallback_email="student@concordia.ca"):
+    try:
+        client = get_gspread_client()
+        # Ne uitam in sheet-ul corect pentru a lega ID-ul de Email!
+        sheet = client.open("Sid_Email_Mirror").worksheet("Sid_Email_Admission")
+        for row in sheet.get_all_records():
+            if str(row.get('Student ID', '')).strip() == str(target_sid).strip():
+                em = str(row.get('Primary Email', '')).strip()
+                return em if em else fallback_email
+    except Exception as e:
+        print("Error finding email:", e)
+    return fallback_email
+
 def send_otp_email(recipient, otp):
     try:
         resend.Emails.send({
@@ -71,6 +85,44 @@ def send_otp_email(recipient, otp):
         })
         return True
     except Exception: return False
+
+def get_email_recipients(program, target_sid, student_email, action_type):
+    # Logica de selectare a coordonatorului
+    # Poti inlocui "sorin.voiculescu@concordia.ca" cu adresele lor reale cand esti gata
+    coord_email = "sorin.voiculescu@concordia.ca" # coop_miae@concordia.ca
+    
+    if "INDU" in str(program).upper():
+        # Nathalie
+        coord_email = "sorin.voiculescu@concordia.ca" # nathalie.steverman@concordia.ca
+    elif target_sid:
+        try:
+            last_digit = int(str(target_sid)[-1])
+            if 0 <= last_digit <= 4:
+                # Frederick
+                coord_email = "sorin.voiculescu@concordia.ca" # frederick.francis@concordia.ca
+            elif 5 <= last_digit <= 9:
+                # Nadia
+                coord_email = "sorin.voiculescu@concordia.ca" # nadia.mazzaferro@concordia.ca
+        except ValueError:
+            pass
+            
+    # Lista de bază (Folosită la SUBMIT și REWORK)
+    recipients = [
+        student_email, 
+        "sorin.voiculescu@concordia.ca", 
+        #"sabrina.poirier@concordia.ca", 
+        coord_email
+    ]
+    
+    # Dacă acțiunea este APPROVE, adăugăm adresa specială
+    if action_type == "APPROVED":
+        email_coop_approval = "sorin.voiculescu@concordia.ca" # coopresequence@concordia.ca
+        recipients.append(email_coop_approval)
+        
+    # Eliminam duplicatele (daca ai pus adresa ta peste tot acum, va trimite un singur mail)
+    return list(set(recipients))
+
+
 
 def load_data():
     try:
@@ -227,6 +279,237 @@ pending_otps = {}
 
 # --- ROUTES ---
 
+@app.route("/save_comments", methods=["POST"])
+def save_comments():
+    # Doar Power Userii au voie să salveze comentarii automat
+    if not str(session.get('student_id', '')).startswith('9'): 
+        return jsonify({"error": "Unauthorized"}), 403
+        
+    data = request.json
+    target_sid = str(data.get("student_id", "")).strip()
+    pub_comment = data.get("public_comments", "")
+    priv_comment = data.get("private_comments", "")
+    
+    if not target_sid: return jsonify({"error": "No ID"}), 400
+    
+    try:
+        client = get_gspread_client()
+        comments_sheet = client.open("Sid_Email_Mirror").worksheet("S_id_comments")
+        records = comments_sheet.get_all_values()
+        
+        found_row = -1
+        for i, row in enumerate(records[1:], start=2): # +2 pt că indexăm de la rândul 2 (după headere)
+            if len(row) > 0 and str(row[0]).strip() == target_sid:
+                found_row = i
+                break
+                
+        if found_row != -1:
+            # Rândul există, dăm update
+            comments_sheet.update(values=[[pub_comment, priv_comment]], range_name=f"B{found_row}:C{found_row}")
+        else:
+            # Studentul nu are comentarii încă, adăugăm un rând nou
+            comments_sheet.append_row([target_sid, pub_comment, priv_comment])
+            
+        return jsonify({"success": True})
+    except Exception as e:
+        print(f"Error auto-saving comments: {e}")
+        return jsonify({"error": str(e)}), 500
+    
+
+@app.route("/get_comments", methods=["POST"])
+def get_comments():
+    if 'user_email' not in session: return jsonify({"error": "Unauthorized"}), 401
+    sid = str(request.json.get("student_id", "")).strip()
+    if not sid: return jsonify({"public": "", "private": ""})
+    
+    try:
+        client = get_gspread_client()
+        sheet = client.open("Sid_Email_Mirror").worksheet("S_id_comments")
+        records = sheet.get_all_values() # Folosim values, nu records
+        
+        for row in records[1:]: # Sarim peste primul rand (headerele)
+            if len(row) > 0 and str(row[0]).strip() == sid:
+                return jsonify({
+                    "public": str(row[1]).strip() if len(row) > 1 else "",
+                    "private": str(row[2]).strip() if len(row) > 2 else ""
+                })
+    except Exception as e:
+        print(f"Error fetching comments: {e}")
+    return jsonify({"public": "", "private": ""})
+
+
+@app.route("/update_status", methods=["POST"])
+def update_status():
+    if not str(session.get('student_id', '')).startswith('9'): 
+        return jsonify({"error": "Unauthorized"}), 403
+        
+    data = request.json
+    status = data.get("status") # 'APPROVED' or 'REWORK'
+    target_sid = str(data.get("student_id", ""))
+    timestamp = data.get("timestamp", "")
+    pub_comment = data.get("public_comments", "")
+    priv_comment = data.get("private_comments", "")
+    student_name = data.get("student_name", "Student")
+    program = data.get("program", "")
+    wt_summary = data.get("wt_summary", {})
+    term_summary = data.get("term_summary", [])
+    original_timestamp_title = data.get("original_title", "Untitled")
+    
+    try:
+        client = get_gspread_client()
+        
+        # 1. Update S_id_comments (Corectat pentru noul format gspread)
+        comments_sheet = client.open("Sid_Email_Mirror").worksheet("S_id_comments")
+        records = comments_sheet.get_all_values()
+        found_row = -1
+        for i, row in enumerate(records[1:], start=2):
+            if len(row) > 0 and str(row[0]).strip() == target_sid:
+                found_row = i
+                break
+                
+        if found_row != -1:
+            # Formatul corect: specificam argumentele cu nume (values si range_name)
+            comments_sheet.update(values=[[pub_comment, priv_comment]], range_name=f"B{found_row}:C{found_row}")
+        else:
+            comments_sheet.append_row([target_sid, pub_comment, priv_comment])
+            
+        row_idx = data.get("row_index") # Extragem randul sigur
+        
+        # 2. Update Saved_Sequences Status (FOLOSIND RANDUL EXACT + CLEANUP PENDING)
+        seq_sheet = client.open("Sid_Email_Mirror").worksheet("Saved_Sequences")
+        
+        if status == "APPROVED":
+            status_to_save = f"APPROVED on {datetime.datetime.now().strftime('%Y-%m-%d')}"
+            seq_records = seq_sheet.get_all_values()
+            
+            # Parcurgem tot fisierul pentru a aproba secventa curenta si a le anula pe restul
+            for i, row in enumerate(seq_records[1:], start=2):
+                row_sid = str(row[10]).strip() if len(row) > 10 else ""
+                row_time = str(row[4]).strip() if len(row) > 4 else ""
+                row_status = str(row[7]).strip().upper() if len(row) > 7 else ""
+                
+                # A. Aceasta este secventa pe care o aprobam ACUM
+                if (row_idx is not None and i == row_idx) or (row_idx is None and row_sid == target_sid and row_time == str(timestamp).strip()):
+                    seq_sheet.update_cell(i, 8, status_to_save)
+                    
+                # B. Daca e acelasi student si secventa e inca in Pending, o trecem pe IGNORED
+                elif row_sid == target_sid and row_status == "PENDING APPROVAL":
+                    seq_sheet.update_cell(i, 8, "IGNORED")
+                    
+        else:
+            # Daca statusul este REWORK, modificam STRICT secventa selectata, nu ne atingem de restul
+            status_to_save = status
+            if row_idx is not None:
+                seq_sheet.update_cell(row_idx, 8, status_to_save)
+            else:
+                seq_records = seq_sheet.get_all_values()
+                for i, row in enumerate(seq_records[1:], start=2):
+                    row_sid = str(row[10]).strip() if len(row) > 10 else ""
+                    row_time = str(row[4]).strip() if len(row) > 4 else ""
+                    if row_sid == target_sid and row_time == str(timestamp).strip():
+                        seq_sheet.update_cell(i, 8, status_to_save) 
+                        break
+                
+        # 3. Trimitem Emailul
+        student_email = get_student_email(target_sid)
+        power_user_name = session.get('guest_name', 'Coordinator') if session.get('is_guest') else session.get('user_email').split('@')[0]
+        recipients = get_email_recipients(program, target_sid, student_email, status)
+
+        if status == "APPROVED":
+            subject = f"Approved sequence for {student_name} {target_sid} {program}"
+            
+            wt_html = ""
+            for wt in ["WT1", "WT2", "WT3"]:
+                if wt in wt_summary:
+                    info = wt_summary[wt]
+                    change_text = f"<span style='color:red; font-weight:bold;'>changed from ({info['original']})</span>" if info['changed'] else "<span style='font-weight:bold;'>NO CHANGE</span>"
+                    wt_html += f"<p style='margin: 4px 0;'><b>{wt}:</b> {info['new_term']} - {change_text}</p>"
+                    
+            # --- CONSTRUIRE TABEL 4 COLOANE / 2 RANDURI ---
+            terms_html = ""
+            if term_summary:
+                terms_html += "<table style='width: 100%; border-collapse: collapse; margin-top: 15px; font-family: Arial, sans-serif; font-size: 13px;'>"
+                terms_html += "<thead><tr style='background-color: #34495e; color: white;'><th style='padding: 10px; border: 1px solid #ddd; text-align: center; width: 16%;'>Year</th><th style='padding: 10px; border: 1px solid #ddd; text-align: center; width: 28%;'>Summer</th><th style='padding: 10px; border: 1px solid #ddd; text-align: center; width: 28%;'>Fall</th><th style='padding: 10px; border: 1px solid #ddd; text-align: center; width: 28%;'>Winter</th></tr></thead>"
+                terms_html += "<tbody>"
+                
+                for ts in term_summary:
+                    year_str = ts.get('year', '')
+                    data_term = ts.get('data', {})
+                    
+                    # Randul 1: Credite si Nota "WAS W-x"
+                    terms_html += "<tr>"
+                    terms_html += f"<td rowspan='2' style='padding: 10px; border: 1px solid #ddd; vertical-align: middle; background-color: #f8f9fa; text-align: center; font-weight: bold;'>{year_str}</td>"
+                    
+                    for t in ["SUM", "FALL", "WIN"]:
+                        t_data = data_term.get(t, {})
+                        cr = t_data.get('cr', 0)
+                        wt_change = t_data.get('wt_change', '')
+                        wt_note_html = f"<br><span style='color: #c0392b; font-size: 11px;'>{wt_change}</span>" if wt_change else ""
+                        terms_html += f"<td style='padding: 5px; border: 1px solid #ddd; text-align: center; font-weight: bold; background-color: #fcfcfc;'>{cr} CR{wt_note_html}</td>"
+                    terms_html += "</tr>"
+                    
+                    # Randul 2: Cursurile
+                    terms_html += "<tr>"
+                    for t in ["SUM", "FALL", "WIN"]:
+                        t_data = data_term.get(t, {})
+                        courses = t_data.get('courses', [])
+                        courses_html = ""
+                        for c in courses:
+                            if c.get('is_wt'):
+                                courses_html += f"<div style='background-color: #d5f5e3; font-weight: bold; padding: 4px; border-radius: 4px; color: #27ae60; border: 1px solid #abebc6; margin-bottom: 3px; text-align: center;'>{c.get('name')}</div>"
+                            else:
+                                courses_html += f"<div style='margin-bottom: 2px; text-align: center;'>{c.get('name')} <span style='font-size: 11px; color: #7f8c8d;'>({c.get('credit')} cr)</span></div>"
+                        terms_html += f"<td style='padding: 10px; border: 1px solid #ddd; vertical-align: top;'>{courses_html}</td>"
+                    terms_html += "</tr>"
+                    
+                terms_html += "</tbody></table>"
+
+            html_body = f"""
+            <div style="font-family: Arial, sans-serif; max-width: 750px; margin: 0 auto; color: #333;">
+                <p>Hello,</p>
+                <p>Please find the approved sequence for {student_name} ({target_sid}) - {program}</p>
+                <div style="background-color: #f0f7ff; border-left: 4px solid #3498db; padding: 10px; margin: 15px 0;">
+                    {wt_html}
+                </div>
+                
+                <p><b>Coordinator Comments:</b></p>
+                <div style="background-color: #e8f5e9; border: 1px solid #c8e6c9; padding: 12px; border-radius: 5px; white-space: pre-wrap; font-style: italic;">{pub_comment if pub_comment else 'No additional comments.'}</div>
+                
+                <h3 style="color: #2c3e50; margin-top: 25px; border-bottom: 1px solid #eee; padding-bottom: 5px;">Approved Sequence Breakdown</h3>
+                {terms_html}
+                
+                <p style="margin-top: 30px;">Best Regards,<br><b>{power_user_name}</b></p>
+            </div>
+            """
+            
+        else: # REWORK
+            subject = f"REWORK for sequence submitted on {original_timestamp_title}"
+            html_body = f"""
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+                <p>Hello {student_name},</p>
+                <p>Please consider the comments below and update your sequence.</p>
+                <div style="background-color: #fff8e1; border-left: 4px solid #f39c12; padding: 10px; border-radius: 5px; white-space: pre-wrap; margin: 15px 0;">{pub_comment if pub_comment else 'Please review your sequence rules.'}</div>
+                <br>
+                <p>Best Regards,<br><b>{power_user_name}</b></p>
+            </div>
+            """
+            
+        resend.Emails.send({
+            "from": "MIAE Planner <auth@concordiasequenceplanner.ca>", 
+            "to": recipients,
+            "subject": subject,
+            "html": html_body,
+            "reply_to": session.get('user_email')
+        })
+        
+        return jsonify({"success": True})
+    except Exception as e:
+        print(f"Status Update Error: {e}")
+        return jsonify({"error": str(e)}), 500
+    
+
+
+
 @app.route("/health", methods=["GET"])
 def health_check():
     # Returnează un simplu 200 OK pentru Render, ca să nu ne mai restarteze aplicația
@@ -357,6 +640,16 @@ def logout():
     return redirect(url_for('login'))
 
 
+@app.route("/api/get_coop_data", methods=["POST"])
+def api_get_coop_data():
+    if 'user_email' not in session: return jsonify({"error": "Unauthorized"}), 401
+    
+    # Primim ID-ul studentului de la interfață și cerem excel-ul
+    target_sid = str(request.json.get("student_id", "")).strip()
+    coop_data = get_student_coop_data(target_sid)
+    
+    return jsonify(coop_data)
+
 @app.route("/api/pending_approvals", methods=["GET"])
 def get_pending_approvals():
     current_sid = str(session.get('student_id', ''))
@@ -370,9 +663,10 @@ def get_pending_approvals():
         sheet = client.open("Sid_Email_Mirror").worksheet("Saved_Sequences")
         rows = sheet.get_all_values()
         
-        for r in rows[1:]:
+        for idx, r in enumerate(rows[1:], start=2): # Memoram exact randul din Excel!
             if len(r) > 7 and str(r[7]).strip().upper() == 'PENDING APPROVAL':
                 pending_list.append({
+                    "row_index": idx,  # <-- ADAUGAT
                     "email": r[0] if len(r) > 0 else "N/A",
                     "name": r[1] if len(r) > 1 else "Untitled",
                     "program": r[2] if len(r) > 2 else "",
@@ -386,6 +680,9 @@ def get_pending_approvals():
     except Exception as e:
         print(f"Pending List Error: {e}")
         
+    # NOU: Sortăm descrescător după timestamp
+    pending_list.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+    
     return jsonify(pending_list)
 
 
@@ -405,84 +702,107 @@ def save_sequence():
         justification = data.get('justification', '')
         student_comments = data.get('student_comments', '')
         
+        # ... existing save_sequence code ...
         # Identificăm cine face salvarea
         current_user_id = str(session.get('student_id', ''))
         is_guest = session.get('is_guest', False)
         is_power_user = current_user_id.startswith('9') and not is_guest
         current_name = f"GUEST - {session.get('guest_name', '')}" if is_guest else "Official Student"
         
-        # Setează email-ul implicit cu adresa de logare a sesiunii
+        # ... Codul de identificare a utilizatorului rămâne la fel ...
         email_to_save = session['user_email']
-        
         client = get_gspread_client()
         
-        # --- NOU: Dacă ești Power User, caută email-ul real al studentului! ---
+        # --- REQUIREMENT 3: Find real student email AND change sequence name ---
         if is_power_user and target_id != current_user_id:
-            current_name = f"ADMIN (PowerUser)"
-            try:
-                mirror_sheet = client.open("Sid_Email_Mirror").worksheet("Mirror")
-                mirror_data = mirror_sheet.get_all_values()
-                # Căutăm ID-ul studentului în tabel
-                for row in mirror_data:
-                    if target_id in [str(cell).strip() for cell in row]:
-                        # Extragem celula care conține un "@" (e-mailul)
-                        for cell in row:
-                            if '@' in str(cell):
-                                email_to_save = str(cell).strip()
-                                break
-                        break
-            except Exception as e:
-                print(f"Eroare cautare email student: {e}")
-                # Fallback de siguranță
-                email_to_save = f"admin_saved_for_{target_id}@concordia.ca"
+            # MODIFICARE AICI: Folosim helper-ul 
+            email_to_save = get_student_email(target_id, fallback_email=session['user_email'])
+                
+            # Override the name of the sequence
+            power_user_name = session.get('guest_name', 'Coordinator') if is_guest else session.get('user_email').split('@')[0]
+            name = f"Submitted on {datetime.datetime.now().strftime('%Y-%m-%d')} by {power_user_name}"
+            current_name = "ADMIN (PowerUser)"
         
         sheet = client.open("Sid_Email_Mirror").worksheet("Saved_Sequences")
         timestamp = str(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         
-        # 1. Salvăm in Google Sheets (folosind email_to_save care acum este cel al studentului)
         sheet.append_row([email_to_save, name, program, seq_json, timestamp, term_json, settings_json, status, justification, student_comments, target_id, current_name])
         
-        # ... Restul funcției cu trimiterea de e-mail (resend) rămâne neschimbat! ...
-
         # 2. Trimitem E-mailul daca este Submit Oficial
         if status == "PENDING APPROVAL":
             try:
-                # Logica coordonatorului (din backend)
-                coord_email = "sorin.voiculescu@concordia.ca" # "Frederick.francis@concordia.ca"
-                if "INDU" not in program.upper() and target_id:
-                    try:
-                        last_digit = int(str(target_id)[-1])
-                        if 5 <= last_digit <= 9:
-                            coord_email = "sorin.voiculescu@concordia.ca"   #"Nathalie.steverman@concordia.ca"
-                    except ValueError:
-                        pass
-                else:
-                    coord_email = "sorin.voiculescu@concordia.ca"
+                recipients = get_email_recipients(program, target_id, email_to_save, "SUBMIT")
                 
-                # Lista destinatarilor
-                recipients = ["sorin.voiculescu@concordia.ca", "sorin.voiculescu@concordia.ca", coord_email]
+                # --- NOU: Preluăm sumarul trimis de pe frontend ---
+                wt_summary = data.get('wt_summary', {})
+                term_summary = data.get('term_summary', [])
+                
+                wt_html = ""
+                for wt in ["WT1", "WT2", "WT3"]:
+                    if wt in wt_summary:
+                        info = wt_summary[wt]
+                        change_text = f"<span style='color:red; font-weight:bold;'>changed from ({info['original']})</span>" if info['changed'] else "<span style='font-weight:bold;'>NO CHANGE</span>"
+                        wt_html += f"<p style='margin: 4px 0;'><b>{wt}:</b> {info['new_term']} - {change_text}</p>"
+                
+                terms_html = ""
+                if term_summary:
+                    terms_html += "<table style='width: 100%; border-collapse: collapse; margin-top: 15px; font-family: Arial, sans-serif; font-size: 13px;'>"
+                    terms_html += "<thead><tr style='background-color: #34495e; color: white;'><th style='padding: 10px; border: 1px solid #ddd; text-align: center; width: 16%;'>Year</th><th style='padding: 10px; border: 1px solid #ddd; text-align: center; width: 28%;'>Summer</th><th style='padding: 10px; border: 1px solid #ddd; text-align: center; width: 28%;'>Fall</th><th style='padding: 10px; border: 1px solid #ddd; text-align: center; width: 28%;'>Winter</th></tr></thead>"
+                    terms_html += "<tbody>"
+                    
+                    for ts in term_summary:
+                        year_str = ts.get('year', '')
+                        data_term = ts.get('data', {})
+                        
+                        terms_html += "<tr>"
+                        terms_html += f"<td rowspan='2' style='padding: 10px; border: 1px solid #ddd; vertical-align: middle; background-color: #f8f9fa; text-align: center; font-weight: bold;'>{year_str}</td>"
+                        
+                        for t in ["SUM", "FALL", "WIN"]:
+                            t_data = data_term.get(t, {})
+                            cr = t_data.get('cr', 0)
+                            wt_change = t_data.get('wt_change', '')
+                            wt_note_html = f"<br><span style='color: #c0392b; font-size: 11px;'>{wt_change}</span>" if wt_change else ""
+                            terms_html += f"<td style='padding: 5px; border: 1px solid #ddd; text-align: center; font-weight: bold; background-color: #fcfcfc;'>{cr} CR{wt_note_html}</td>"
+                        terms_html += "</tr><tr>"
+                        
+                        for t in ["SUM", "FALL", "WIN"]:
+                            t_data = data_term.get(t, {})
+                            courses = t_data.get('courses', [])
+                            courses_html = ""
+                            for c in courses:
+                                if c.get('is_wt'):
+                                    courses_html += f"<div style='background-color: #d5f5e3; font-weight: bold; padding: 4px; border-radius: 4px; color: #27ae60; border: 1px solid #abebc6; margin-bottom: 3px; text-align: center;'>{c.get('name')}</div>"
+                                else:
+                                    courses_html += f"<div style='margin-bottom: 2px; text-align: center;'>{c.get('name')} <span style='font-size: 11px; color: #7f8c8d;'>({c.get('credit')} cr)</span></div>"
+                            terms_html += f"<td style='padding: 10px; border: 1px solid #ddd; vertical-align: top;'>{courses_html}</td>"
+                        terms_html += "</tr>"
+                        
+                    terms_html += "</tbody></table>"
 
+                # Incorporăm totul în HTML-ul E-mailului de Submit
                 html_body = f"""
-                <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; padding: 20px; border-radius: 8px;">
+                <div style="font-family: Arial, sans-serif; color: #333; max-width: 750px; margin: 0 auto; border: 1px solid #e0e0e0; padding: 20px; border-radius: 8px;">
                     <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">New Course Sequence Submitted for Approval</h2>
-                    <p><b>Student Email:</b> {email}</p>
+                    <p><b>Student Email:</b> {email_to_save}</p>
                     <p><b>Student Name:</b> {current_name}</p>
                     <p><b>Student ID:</b> {target_id}</p>
                     <p><b>Program:</b> {program}</p>
+                    
+                    <div style="background-color: #f0f7ff; border-left: 4px solid #3498db; padding: 10px; margin: 15px 0;">
+                        {wt_html}
+                    </div>
+                    
                     <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
                     
                     <p><b>Validation Warnings & Student Justification:</b><br>
                     <span style="color: #c0392b; background-color: #fdf2f2; padding: 10px; display: inline-block; margin-top: 5px; border-radius: 4px; border: 1px solid #fadbd8; width: 95%; white-space: pre-wrap;">{justification if justification else '✅ Sequence is valid. No warnings or justification provided.'}</span></p>
                     
-                    <p><b>Student Comments:</b><br>
-                    <span style="color: #2980b9; background-color: #f0f8ff; padding: 10px; display: inline-block; margin-top: 5px; border-radius: 4px; border: 1px solid #d6eaf8; width: 95%; white-space: pre-wrap;">{student_comments if student_comments else 'No extra comments provided.'}</span></p>
-
+                    <h3 style="color: #2c3e50; margin-top: 25px; border-bottom: 1px solid #eee; padding-bottom: 5px;">Submitted Sequence Breakdown</h3>
+                    {terms_html}
+                    
                     <div style="text-align: center; margin: 35px 0;">
                         <a href="https://concordia-sequence-planner.onrender.com/" style="background-color: #27ae60; color: #ffffff; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 16px; display: inline-block; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">Log in to Review Sequence</a>
                     </div>
-                    
-                    <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-                    <p style="font-size: 12px; color: #7f8c8d; text-align: center;">This is an automated message from the MIAE Academic Planner Tool.</p>
                 </div>
                 """
                 
@@ -491,12 +811,10 @@ def save_sequence():
                     "to": recipients,
                     "subject": f"Sequence Approval Needed - {target_id} ({program})",
                     "html": html_body,
-                    "reply_to": email # Setează reply-ul direct către e-mailul studentului!
+                    "reply_to": email_to_save 
                 })
-                print(f"E-mail trimis cu succes catre: {recipients}")
             except Exception as mail_err:
-                print(f"Eroare la trimiterea e-mailului prin Resend: {mail_err}")
-                # Nu vrem sa dam fail la intreaga salvare doar pentru ca e-mailul nu a plecat
+                print(f"Eroare la trimiterea e-mailului: {mail_err}")
 
         return jsonify({"success": True})
     except Exception as e:
@@ -511,10 +829,26 @@ def load_sequences():
         client = get_gspread_client()
         sheet = client.open("Sid_Email_Mirror").worksheet("Saved_Sequences")
         raw_rows = sheet.get_all_values() 
+        
+        current_sid = str(session.get('student_id', ''))
+        is_power_user = current_sid.startswith('9') and not session.get('is_guest', False)
+        viewing_sid = str(session.get('admin_view_sid', current_sid)).strip()
         target_email = session['user_email'].lower().strip()
+        
         my_recs = []
         for row in raw_rows[1:]:
-            if len(row) > 0 and str(row[0]).lower().strip() == target_email:
+            if len(row) == 0: continue
+            row_email = str(row[0]).lower().strip()
+            row_sid = str(row[10]).strip() if len(row) > 10 else ""
+            
+            # Daca e admin, filtreaza dupa studentul vizualizat. Daca e student, dupa email!
+            is_match = False
+            if is_power_user and viewing_sid and viewing_sid != "ADMIN":
+                if row_sid == viewing_sid: is_match = True
+            else:
+                if row_email == target_email: is_match = True
+                
+            if is_match:
                 def safe_json(idx):
                     if len(row) > idx and row[idx].strip():
                         try: return json.loads(row[idx])
@@ -524,13 +858,17 @@ def load_sequences():
                     "Sequence_Name": row[1] if len(row) > 1 else "Untitled",
                     "Program": row[2] if len(row) > 2 else "",
                     "Date_Saved": row[4] if len(row) > 4 else "",
-                    "JSON_Data": safe_json(3), "Term_Data": safe_json(5), "Settings_Data": safe_json(6)
+                    "JSON_Data": safe_json(3), "Term_Data": safe_json(5), "Settings_Data": safe_json(6),
+                    "Status": row[7] if len(row) > 7 else "",
+                    "Student_ID": row_sid,
+                    "Student_Name": row[11] if len(row) > 11 else ""
                 })
-        return jsonify({"sequences": my_recs[::-1]}) 
+                
+        my_recs.sort(key=lambda x: x.get('Date_Saved', ''), reverse=True)
+        return jsonify({"sequences": my_recs}) 
     except Exception as e:
         print(f"Load Error: {e}")
         return jsonify({"error": str(e)}), 500
-
 
 
 @app.route("/get_transcript", methods=["POST"])

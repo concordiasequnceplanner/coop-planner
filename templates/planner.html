@@ -37,7 +37,7 @@
 
             <span style="color: #2c3e50; font-size: 13px;">Logged in as: <b>{{ session.get('user_email') }}</b></span>
 
-            <a href="/logout" style="text-decoration: none; background: #e74c3c; color: white; padding: 6px 15px; border-radius: 15px; font-size: 13px; font-weight: bold; transition: background 0.3s;">Logout</a>
+            <a href="#" onclick="handleLogout(event)" style="text-decoration: none; background: #e74c3c; color: white; padding: 6px 15px; border-radius: 15px; font-size: 13px; font-weight: bold; transition: background 0.3s;">Logout</a>
         </div>
     </div>
     <script>
@@ -45,7 +45,7 @@
         function timerIncrement() {
             idleTime++;
             if (idleTime >= 10) { // 10 minutes
-                window.location.href = '/logout';
+                handleLogout(null, true); // <--- AICI am modificat
             }
         }
         setInterval(timerIncrement, 60000); // 1 minute
@@ -303,7 +303,7 @@
     <button class="btn-primary" id="generateBtn" disabled>Generate Sequence</button>
     
     <div style="flex: 1; min-width: 300px;">
-        <label style="font-size:11px; font-weight:bold; color:#27ae60;">💬 Public Comments (Visible to Student):</label>
+        <label style="font-size:11px; font-weight:bold; color:#27ae60;">💬 ADMIN comments (Visible to Student):</label>
         <textarea id="publicComments" 
             oninput="this.style.height = ''; this.style.height = this.scrollHeight + 'px'" 
             {% if is_power_user %}
@@ -332,24 +332,14 @@
             <table>
                 <thead><tr><th class="th-year">Year</th><th class="th-summer">Summer</th><th class="th-fall">Fall</th><th class="th-winter">Winter</th></tr></thead>
                 <tbody id="tableBody">
-                    <tr><td class="year-label">Y 0 <span class="year-subtext" id="y0-label"></span></td><td colspan="3" style="padding: 8px;"><div style="font-size: 11px; color: #7f8c8d; margin-bottom: 5px; font-weight: 600;">Exemptions & Transfer Credits (ECP)</div><div class="drop-zone" id="zone_Y0_ANY" data-term="Y0_ANY" ondrop="drop(event)" ondragover="allowDrop(event)" style="flex-direction: row; flex-wrap: wrap;"></div></td></tr>
+                    <tr><td class="year-label">Y 0 <span class="year-subtext" id="y0-label"></span></td>
+                        <td colspan="3" style="padding: 8px;">
+                            <div style="font-size: 11px; color: #7f8c8d; margin-bottom: 5px; font-weight: 600;">Exemptions & Transfer Credits (ECP)</div><div class="drop-zone" id="zone_Y0_ANY" data-term="Y0_ANY" ondrop="drop(event)" ondragover="allowDrop(event)" style="flex-direction: row; flex-wrap: wrap;"></div></td></tr>
                 </tbody>
             </table>
         </div>
         
-        <div class="validation-box" id="liveValidationBox">
-            <h4 style="margin: 0 0 10px 0; color: #333;">Live Sequence Check 
-                <span style="font-size:11px; color:#7f8c8d; font-weight:normal; float:right;">Updates automatically</span>
-            </h4>
-            <ul id="liveValidationList" style="margin: 0; padding-left: 20px; line-height: 1.6; font-size: 13px;">
-                <li style="color:#27ae60; font-weight:bold;">✅ Sequence looks good! All rules seems to be satisfied.</li>
-            </ul>
-        </div>
-            </h4>
-            <ul id="liveValidationList" style="margin: 0; padding-left: 20px; line-height: 1.6; font-size: 13px;">
-                <li style="color:#27ae60; font-weight:bold;">✅ Sequence looks good! All rules seems to be satisfied.</li>
-            </ul>
-                   
+        
 
         {% if not is_power_user %}
         <div id="submitPanel" style="margin-top: 40px; padding: 25px; background: #f8f9fa; border: 1px solid #dcdde1; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05);">
@@ -387,10 +377,14 @@
  
     </div>
     
-    <div class="sidebar">
-        <h4 style="margin: 0 0 10px 0; color: #912338; font-size: 14px; border-bottom: 2px solid #f0f0f0; padding-bottom: 8px;">Unallocated Courses</h4>
-        <div class="drop-zone" id="unallocatedZone" ondrop="drop(event)" ondragover="allowDrop(event)"></div>
-        <div id="courseInfoPanel" style="display:none;">
+    <div class="sidebar" style="display: flex; flex-direction: column; max-height: 90vh;">
+        
+        <h4 style="margin: 0 0 10px 0; color: #912338; font-size: 14px; border-bottom: 2px solid #f0f0f0; padding-bottom: 8px; flex-shrink: 0;">Unallocated Courses</h4>
+        <div class="drop-zone" id="unallocatedZone" ondrop="drop(event)" ondragover="allowDrop(event)" style="flex-grow: 1; overflow-y: auto; min-height: 150px;"></div>
+        
+        
+
+        <div id="courseInfoPanel" style="display:none; margin-top: 15px; flex-shrink: 0; max-height: 30vh; overflow-y: auto;">
             <h5 id="info_title">Course Name</h5>
             <div class="info-row"><span class="info-label">Type:</span><span class="info-val" id="info_type">-</span></div>
             <div class="info-row"><span class="info-label">Credits:</span><span class="info-val" id="info_cr">-</span></div>
@@ -398,12 +392,24 @@
             <div style="margin-top:10px; padding-top:8px; border-top:1px dashed #ccc;"><span class="info-label" style="color:#f57f17; font-size:10px;">PRE-REQUISITES:</span><p id="info_prereq" style="margin:2px 0 8px 0; color:#555; font-size:11px;">-</p><span class="info-label" style="color:#fbc02d; font-size:10px;">CO-REQUISITES:</span><p id="info_coreq" style="margin:2px 0; color:#555; font-size:11px;">-</p></div>
             <div style="margin-top:10px; padding-top:8px; border-top:1px dashed #ccc;"><span class="info-label" style="color:#0d47a1; font-size:10px;">IS PRE-REQ FOR:</span><p id="info_post_prereq" style="margin:2px 0 8px 0; color:#555; font-size:11px;">-</p><span class="info-label" style="color:#1e88e5; font-size:10px;">IS CO-REQ FOR:</span><p id="info_post_coreq" style="margin:2px 0; color:#555; font-size:11px;">-</p></div>
         </div>
+
+        <div class="validation-box" id="liveValidationBox" style="margin-top: 15px; flex-shrink: 0; max-height: 20vh; display: flex; flex-direction: column;">
+            <h4 style="margin: 0 0 10px 0; color: #333; font-size: 14px; flex-shrink: 0;">Live Check 
+                <span style="font-size:10px; color:#7f8c8d; font-weight:normal; float:right;">Updates automatically</span>
+            </h4>
+            <div style="overflow-y: auto; flex-grow: 1; padding-right: 5px;">
+                <ul id="liveValidationList" style="margin: 0; padding-left: 15px; line-height: 1.5; font-size: 12px;">
+                    <li style="color:#27ae60; font-weight:bold;">✅ Sequence looks good!</li>
+                </ul>
+            </div>
+        </div>
+
     </div>
 
 </div>
 
 <script>
-   let windowLoadedSeqTimestamp = null;
+    let windowLoadedSeqTimestamp = null;
     let windowLoadedSeqTitle = "";
     let windowLoadedSeqRowIndex = null; // NOU: Memoram randul exact din Excel
     let currentPendingList = [];        // NOU: Salvam lista in memorie, nu in HTML
@@ -440,6 +446,89 @@
         fetchPendingCountSilently();
     });
 
+
+    // --- NOU: Funcție pentru mascarea emailului (b******@g***.com) ---
+    function getMaskedEmail(email) {
+        if (!email || !email.includes('@')) return email;
+        let parts = email.split('@');
+        let name = parts[0];
+        let domainFull = parts[1];
+        
+        let domainParts = domainFull.split('.');
+        let tld = domainParts.pop(); 
+        let host = domainParts.join('.'); 
+        
+        let maskedName = name.charAt(0) + "******";
+        let maskedHost = host.charAt(0) + "***";
+        
+        return `${maskedName}@${maskedHost}.${tld}`;
+    }
+
+    // --- NOU: Funcție de Auto-Save la Logout (sau Idle) ---
+    async function handleLogout(e, isIdle = false) {
+        if (e) e.preventDefault();
+        
+        let loadingOverlay = document.getElementById('loadingOverlay');
+        if (loadingOverlay) {
+            loadingOverlay.style.display = 'flex';
+            loadingOverlay.querySelector('h2').innerText = isIdle ? "Idle Timeout. Saving data..." : "Saving sequence before log off...";
+        }
+
+        try {
+            let seqData = {};
+            let locks = [];
+            document.querySelectorAll('td .drop-zone').forEach(z => {
+                let termId = z.id.replace('zone_', '');
+                seqData[termId] = Array.from(z.children).map(c => c.id);
+                Array.from(z.children).forEach(el => {
+                    if (coursesData[el.id] && coursesData[el.id].locked) locks.push(el.id);
+                });
+            });
+            let unalloc = Array.from(document.getElementById('unallocatedZone').children).map(c => c.id);
+
+            let sequence_data = {
+                startYear: document.getElementById('startYear').value,
+                startTerm: document.getElementById('startTerm').value,
+                coop: document.getElementById('coopRegistered').checked,
+                coopStartYear: document.getElementById('coopStartYear').value,
+                coopStartTerm: document.getElementById('coopStartTerm').value,
+                placed: seqData,
+                unallocated: unalloc,
+                locks: locks
+            };
+
+            let currentSid = "";
+            let displayViewingSid = document.getElementById('displayViewingSid');
+            if (displayViewingSid) currentSid = displayViewingSid.innerText.split('-')[0].trim();
+
+            let payload = {
+                name: "Auto-Saved on LogOff",
+                program: document.getElementById('programSelect').value,
+                student_id: currentSid,
+                sequence_data: sequence_data,
+                term_data: typeof termAttributes !== 'undefined' ? termAttributes : {},
+                settings_data: {
+                    startYear: document.getElementById('startYear').value,
+                    coop: document.getElementById('coopRegistered').checked
+                },
+                status: "SAVED DRAFT",
+                justification: document.getElementById('justificationText') ? document.getElementById('justificationText').value : "",
+                student_comments: ""
+            };
+
+            // Trimitem salvarea silențios către server
+            await fetch('/save_sequence', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+        } catch (err) {
+            console.error("Auto-save on logout failed:", err);
+        } finally {
+            // Indiferent dacă salvarea reușește sau nu, delogăm utilizatorul
+            window.location.href = '/logout';
+        }
+    }
     function injectCoopHeaders() {
         // AM STERS: if (!serverCoopData.found) return;
         
@@ -792,6 +881,12 @@
         
         updateAllSelectColors(); 
         
+        // --- NOU: Ascundem/Afișăm panoul de Submit ---
+        const submitPanel = document.getElementById('submitPanel');
+        if (submitPanel) {
+            submitPanel.style.display = isChecked ? 'block' : 'none';
+        }
+
         document.querySelectorAll('.course-box.wt').forEach(box => {
             if(!isChecked && box.parentElement && box.parentElement.id !== 'unallocatedZone') {
                 document.getElementById('unallocatedZone').appendChild(box);
@@ -908,6 +1003,13 @@
                 
                 await loadTranscriptAndMapInstitute();
 
+                // --- NOU: RE-APLICĂM VIZIBILITATEA WT-URILOR DUPĂ REBUILD ---
+                const isChecked = document.getElementById('coopRegistered').checked;
+                document.querySelectorAll('.course-box.wt').forEach(box => {
+                    box.style.display = isChecked ? 'block' : 'none';
+                });
+                // -----------------------------------------------------------
+
                 enforceAndHighlightTerms(); 
                 sortUnallocatedDOM();
                 updateCredits();
@@ -1013,6 +1115,58 @@
         sortUnallocatedDOM();
         alert(`Added ${newName}. It is now a pre-req for the original course and its dependents.`); 
         runLiveCheck();
+    }
+
+    // --- NOU: Funcție pentru a bloca automat termenele din trecut ---
+    function lockPastTerms() {
+        const pTerm = document.getElementById('startTerm').value;
+        const pYear = parseInt(document.getElementById('startYear').value);
+        const baseYear = pTerm === 'Winter' ? pYear - 1 : pYear;
+        
+        const now = new Date();
+        const currYear = now.getFullYear();
+        const currMonth = now.getMonth(); // 0-indexed: 0 = Ian, 1 = Feb, 4 = Mai, 8 = Sept
+        const currDay = now.getDate();
+
+        for(let y=1; y<=7; y++) {
+            ['SUM', 'FALL', 'WIN'].forEach(t => {
+                let termYear = (t === 'WIN') ? (baseYear + y) : (baseYear + y - 1);
+                
+                let isPast = false;
+                if (termYear < currYear) {
+                    isPast = true;
+                } else if (termYear === currYear) {
+                    if (t === 'WIN' && (currMonth > 1 || (currMonth === 1 && currDay > 1))) isPast = true;
+                    if (t === 'SUM' && (currMonth > 4 || (currMonth === 4 && currDay > 25))) isPast = true;
+                    if (t === 'FALL' && (currMonth > 8 || (currMonth === 8 && currDay > 20))) isPast = true;
+                }
+
+                if (isPast) {
+                    let zone = document.getElementById(`zone_Y${y}_${t}`);
+                    let ctSpan = document.getElementById(`maxct_Y${y}_${t}`);
+                    let container = document.getElementById(`cont_Y${y}_${t}`);
+                    
+                    if (zone && ctSpan) {
+                        // Numărăm cursurile reale pe care transcriptul le-a pus deja aici
+                        let courseCount = Array.from(zone.children).filter(el => {
+                            let c = coursesData[el.id];
+                            return c && !c.is_wt && c.type !== 'REPEAT';
+                        }).length;
+                        
+                        // Setăm limita maximă la câte cursuri există efectiv.
+                        // Dacă e 0, devine 0 -> AI-ul ignoră complet termenul.
+                        // Dacă are 3 cursuri luate, limita devine 3 -> e "plin", AI-ul trece mai departe.
+                        ctSpan.innerText = courseCount;
+                        ctSpan.dataset.userVal = courseCount; // Salvăm valoarea ca să nu fie suprascrisă de limitele globale
+                        
+                        // Colorăm cu gri termenul ca să se vadă clar că e în trecut
+                        if (courseCount === 0 && container) {
+                            container.classList.add('term-grayed');
+                        }
+                    }
+                }
+            });
+        }
     }
 
     async function loadTranscriptAndMapInstitute() {
@@ -1159,10 +1313,13 @@
                         if(!tz) tz = document.getElementById('zone_Y0_ANY');
                         
                         coursesData[finalCid].locked = true; 
+                        coursesData[finalCid].from_transcript = true; // Ne asigurăm că are acest flag
+                        coursesData[finalCid].original_zone = tz.id;  // <--- NOU: Memorăm locația istorică din transcript!
+                        
                         if (finalCid.includes('WT')) coursesData[finalCid].credit = 0; 
                         
                         tz.appendChild(el);
-                        let newEl = createCourseElement(finalCid); // Re-desenam ca sa aiba creditele si eticheta noua pe ecran
+                        let newEl = createCourseElement(finalCid);
                         tz.replaceChild(newEl, el);
                     }
                 });
@@ -1185,6 +1342,9 @@
                     }
                 }
             });
+
+            // --- NOU: Blocăm termenele din trecut pe baza datei de azi ---
+            lockPastTerms();
             
             // Fortam recalcularea si afisarea numarului de credite pe ecrane dupa ce s-au actualizat din Excel
             updateCredits();
@@ -1331,9 +1491,35 @@
     function dragLeave(e) { e.currentTarget.classList.remove('dragover'); }
     
     function drop(e) {
-        e.preventDefault(); const targetZone = e.target.closest('.drop-zone'); if(targetZone) targetZone.classList.remove('dragover');
-        const id = e.dataTransfer.getData("text"), el = document.getElementById(id);
-        if(el && targetZone) { targetZone.appendChild(el); if(targetZone.id === 'unallocatedZone') sortUnallocatedDOM(); enforceAndHighlightTerms(); updateCredits(); checkWT(); runLiveCheck(); }
+        e.preventDefault(); 
+        const targetZone = e.target.closest('.drop-zone'); 
+        if(targetZone) targetZone.classList.remove('dragover');
+        
+        const id = e.dataTransfer.getData("text");
+        let el = document.getElementById(id);
+        
+        if(el && targetZone) { 
+            targetZone.appendChild(el); 
+            
+            // --- NOU: Auto-Lock pentru Work Terms ---
+            if (coursesData[id] && coursesData[id].is_wt) {
+                if (targetZone.id === 'unallocatedZone') {
+                    coursesData[id].locked = false; // Deblocăm dacă e aruncat înapoi
+                } else {
+                    coursesData[id].locked = true;  // Blocăm automat pe grilă
+                }
+                // Redesenăm caseta ca să apară/dispară bifa de pe checkbox
+                let newEl = createCourseElement(id);
+                targetZone.replaceChild(newEl, el);
+                el = newEl; 
+            }
+            
+            if(targetZone.id === 'unallocatedZone') sortUnallocatedDOM(); 
+            enforceAndHighlightTerms(); 
+            updateCredits(); 
+            checkWT(); 
+            runLiveCheck(); 
+        }
     }
 
     function updateCredits() {
@@ -1365,9 +1551,12 @@
     };
 
     document.getElementById('generateBtn').onclick = async function() {
-        this.innerText = "Processing sequence..."; this.disabled = true;
+        this.innerText = "Processing sequence..."; 
+        this.disabled = true;
         const limits = {}, counts = {}, isCoop = document.getElementById('coopRegistered').checked, placed = {}; 
-        document.querySelectorAll('.cr-val').forEach(i => limits[i.id.replace('maxcr_','')] = i.innerText); document.querySelectorAll('.ct-val').forEach(i => counts[i.id.replace('maxct_','')] = i.innerText);
+        
+        document.querySelectorAll('.cr-val').forEach(i => limits[i.id.replace('maxcr_','')] = i.innerText); 
+        document.querySelectorAll('.ct-val').forEach(i => counts[i.id.replace('maxct_','')] = i.innerText);
         
         document.querySelectorAll('td .drop-zone').forEach(z => { 
             if(z.children.length > 0) {
@@ -1377,12 +1566,38 @@
             }
         });
         
-        const unallocZone = document.getElementById('unallocatedZone'); const unalloc = Array.from(unallocZone.children).filter(c => isCoop || !coursesData[c.id]?.is_wt).map(c => c.id);
+        const unallocZone = document.getElementById('unallocatedZone'); 
+        const unalloc = Array.from(unallocZone.children).filter(c => isCoop || !coursesData[c.id]?.is_wt).map(c => c.id);
         
         try {
-            const res = await fetch('/generate', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ program: document.getElementById('programSelect').value, term_limits: limits, count_limits: counts, placed: placed, unallocated: unalloc, repeated: repeatedCoursesList }) });
+            const res = await fetch('/generate', { 
+                method:'POST', 
+                headers:{'Content-Type':'application/json'}, 
+                body:JSON.stringify({ 
+                    program: document.getElementById('programSelect').value, 
+                    term_limits: limits, 
+                    count_limits: counts, 
+                    placed: placed, 
+                    unallocated: unalloc, 
+                    repeated: repeatedCoursesList 
+                }) 
+            });
+            
             if (!res.ok) throw new Error('Generation failed on server.');
             const result = await res.json();
+            
+            // --- NOU: Prindem Erorile Fatale ---
+            // Dacă e o problemă cu amplasarea WT-urilor, oprim execuția și nu stricăm grila
+            if (result.error) {
+                alert("❌ Generation Error:\n" + result.error);
+                return; 
+            }
+
+            // --- NOU: Prindem Avertismentele de Credite (Warnings) ---
+            // Dacă AI-ul a reușit să pună cursurile dar nu respectă limitările de WT (30cr sau Full-Time)
+            //if (result.warnings && result.warnings.length > 0) {
+            //    alert("⚠️ Sequence generated with academic warnings:\n\n" + result.warnings.join("\n\n") + "\n\nPlease review and adjust manually if needed.");
+            //}
             
             document.querySelectorAll('td .drop-zone:not(#zone_Y0_ANY)').forEach(z => z.innerHTML = '');
             
@@ -1397,10 +1612,28 @@
                     }
                 });
             });
+            
             unallocZone.innerHTML = '';
-            if(result.unallocated) result.unallocated.forEach(c => { if(coursesData[c.id]) unallocZone.appendChild(createCourseElement(c.id)); });
-            sortUnallocatedDOM(); enforceAndHighlightTerms(); updateCredits(); checkWT(); runLiveCheck();
-        } catch (error) { console.error(error); alert("An error occurred while generating."); } finally { this.innerText = "Generate Sequence"; checkWT(); }
+            if(result.unallocated) {
+                result.unallocated.forEach(c => { 
+                    if(coursesData[c.id]) unallocZone.appendChild(createCourseElement(c.id)); 
+                });
+            }
+            
+            sortUnallocatedDOM(); 
+            enforceAndHighlightTerms(); 
+            updateCredits(); 
+            checkWT(); 
+            runLiveCheck();
+            
+        } catch (error) { 
+            console.error(error); 
+            alert("An error occurred while generating."); 
+        } finally { 
+            this.innerText = "Generate Sequence"; 
+            this.disabled = false; // Ne asigurăm că butonul redevine activ
+            checkWT(); 
+        }
     };
 
     function runLiveCheck() {
@@ -1412,9 +1645,19 @@
         Array.from(document.getElementById('unallocatedZone').children).forEach(el => {
             if (el.style.display !== 'none') {
                 let c = coursesData[el.id];
-                if (c && (isCoop || !c.is_wt)) {
-                    let t = c.type.toUpperCase();
-                    if (t.includes('CORE') || t === 'GEN' || t === 'ECP') errors.push(`Course <b>${c.id}</b> (${t}) must be placed.`);
+                if (c) {
+                    // --- NOU: Dacă e curs din transcript aruncat în Unallocated ---
+                    if (c.from_transcript && c.original_zone) {
+                        let readableZone = c.original_zone.replace('zone_', '').replace('_', ' ');
+                        errors.push(`<b>${c.id}</b> is on your transcript (taken in ${readableZone}) and cannot be unallocated.`);
+                    } 
+                    // Logica normală pentru cursuri neplasate
+                    else if (isCoop || !c.is_wt) {
+                        let t = (c.type || "").toUpperCase();
+                        if (t.includes('CORE') || t === 'GEN' || t === 'ECP') {
+                            errors.push(`Course <b>${c.id}</b> (${t}) must be placed.`);
+                        }
+                    }
                 }
             }
         });
@@ -1445,8 +1688,19 @@
                 let c = coursesData[cid];
                 if (!c) return;
 
+                // --- NOU: Verificăm dacă a fost mutat față de transcript ---
+                if (c.from_transcript && c.original_zone) {
+                    let currentZoneId = term.id === 'Y0_ANY' ? 'zone_Y0_ANY' : `zone_${term.id}`;
+                    if (currentZoneId !== c.original_zone) {
+                        let readableOrig = c.original_zone.replace('zone_', '').replace('_', ' ');
+                        let readableCurr = term.id.replace('_', ' ');
+                        errors.push(`Transcript mismatch: <b>${c.id}</b> was taken in <b>${readableOrig}</b> but moved to <b>${readableCurr}</b>.`);
+                    }
+                }
+
                 if (c.is_wt) {
                     hasWT = true;
+                    // ... (restul codului rămâne neschimbat)
                     if (isSummer) summerWTs++;
                     if (cid.includes('WT3')) wt3Index = index;
                 } else if (c.type !== 'REPEAT') {
@@ -1498,22 +1752,93 @@
                     if (term.courses.some(id => id.includes('490A') || id.includes('490B'))) {
                         errors.push(`Term ${term.id}: Capstone and WT in same term is not allowed.`);
                     }
-                } else if (!isSummer && index < (wt3Index > -1 ? wt3Index : 999)) {
-                    if (term.courses.length > 0 && totalCr < 12) {
-                        errors.push(`Term ${term.id} has < 12 credits. Fall or Winter must be Full-Time (12CR) before WT3.`);
-                    }
-                }
+                } 
+                // AM STERS regula gresita cu WT3 de aici, o mutam la final ca sa o facem inteligenta!
             }
         });
 
         if (isCoop) {
+            // Regula 1: Maxim 2 veri cu WT (acoperă să nu fie 3 WTs în Summer)
             let summerSeasonsWithWT = new Set();
             wtIndices.forEach(idx => {
                 let term = currentSequence[idx];
                 if (term.type.includes('SUM')) summerSeasonsWithWT.add(term.year);
             });
-            if (summerSeasonsWithWT.size > 2) errors.push(`Limit exceeded: WT in ${summerSeasonsWithWT.size} summers (Max: 2).`);
+            if (summerSeasonsWithWT.size > 2) errors.push(`Limit exceeded: WT placed in ${summerSeasonsWithWT.size} summers (Max: 2 allowed).`);
 
+            // Regula 2: Fără 3 termene consecutive de WT
+            if (wtIndices.length >= 3) {
+                for (let i = 0; i < wtIndices.length - 2; i++) {
+                    if (wtIndices[i+1] === wtIndices[i] + 1 && wtIndices[i+2] === wtIndices[i] + 2) {
+                        errors.push("Invalid Sequence: You cannot have 3 consecutive Work Terms.");
+                        break;
+                    }
+                }
+            }
+
+            // Reguli specifice dacă există cel puțin un WT plasat pe grilă
+            if (wtIndices.length > 0) {
+                let firstWtIdx = wtIndices[0];
+                let studyTermsBefore = 0;
+                
+                // Calculăm câte termene de studiu (cu credite > 0) sunt înaintea primului WT
+                for (let i = 1; i < firstWtIdx; i++) { // Pornim de la 1 ca să ignorăm Y0_ANY
+                    let hasCredits = currentSequence[i].courses.some(cid => coursesData[cid] && !coursesData[cid].is_wt && coursesData[cid].credit > 0);
+                    if (hasCredits) studyTermsBefore++;
+                }
+
+                // Regula 3: Cel puțin 2 termene de studiu înainte de primul WT
+                if (studyTermsBefore < 2) {
+                    errors.push("Invalid Sequence: There must be at least 2 study terms before your first Work Term.");
+                }
+
+                // Regula 4: 30 CR de CORE/TE înainte de primul WT (DOAR dacă sunt MAI MULTE WT-uri în program)
+                if (wtIndices.length > 1) {
+                    let coreCrBefore = 0;
+                    for (let i = 1; i < firstWtIdx; i++) {
+                        currentSequence[i].courses.forEach(cid => {
+                            let c = coursesData[cid];
+                            if (c && !c.is_wt) {
+                                let t = (c.type || "").toUpperCase();
+                                if (t.includes('CORE') || t.includes('TE') || t.includes('PROG')) {
+                                    coreCrBefore += c.credit;
+                                }
+                            }
+                        });
+                    }
+                    if (coreCrBefore < 30) {
+                        let firstWtName = currentSequence[firstWtIdx].courses.find(id => id.includes('WT')) || "WT";
+                        errors.push(`Requirement not met: Only ${coreCrBefore} credits of CORE/TE before ${firstWtName}. Programs with multiple Work Terms require at least 30 CR before the first WT.`);
+                    }
+                }
+
+                // Regula 5: Termenul imediat precedent ULTIMULUI WT trebuie să fie Full-Time (≥ 12 credite)
+                // Regula 5: Termenul imediat precedent ULTIMULUI WT trebuie să fie Full-Time (≥ 12 credite)
+                let lastWtIdx = wtIndices[wtIndices.length - 1]; // Găsește ultimul WT din secvență
+                if (lastWtIdx > 1) { 
+                    let prevTerm = currentSequence[lastWtIdx - 1];
+                    
+                    // Excepția 1: Nu cerem 12 credite vara
+                    let isPrevSummer = prevTerm.type.includes('SUM');
+                    // Excepția 2: Nu cerem 12 credite dacă termenul anterior e tot un WT
+                    let prevHasWt = prevTerm.courses.some(cid => coursesData[cid] && coursesData[cid].is_wt);
+                    
+                    if (!isPrevSummer && !prevHasWt) {
+                        let prevCr = 0;
+                        prevTerm.courses.forEach(cid => {
+                            let c = coursesData[cid];
+                            if (c && !c.is_wt) prevCr += c.credit;
+                        });
+                        
+                        if (prevCr < 12) {
+                            let lastWtName = currentSequence[lastWtIdx].courses.find(id => id.includes('WT')) || "last WT";
+                            errors.push(`The term before your ${lastWtName} (${prevTerm.id}) must be Full-Time (≥ 12 credits). Currently it has ${prevCr} CR.`);
+                        }
+                    }
+                }
+            }
+
+            // Reguli de ordine și existență CORE după ultimul WT
             let wt1Pos = -1, wt2Pos = -1, wt3Pos = -1;
             wtIndices.forEach(idx => {
                 let term = currentSequence[idx];
@@ -1522,17 +1847,18 @@
                 if (term.courses.some(c => c.includes('WT3'))) wt3Pos = idx;
             });
             
-            if (wt1Pos > -1 && wt2Pos > -1 && wt2Pos <= wt1Pos) errors.push("Invalid Sequence: WT2 must be after WT1.");
-            if (wt2Pos > -1 && wt3Pos > -1 && wt3Pos <= wt2Pos) errors.push("Invalid Sequence: WT3 must be after WT2.");
+            if (wt1Pos > -1 && wt2Pos > -1 && wt2Pos <= wt1Pos) errors.push("Invalid Sequence: WT2 must be placed AFTER WT1.");
+            if (wt2Pos > -1 && wt3Pos > -1 && wt3Pos <= wt2Pos) errors.push("Invalid Sequence: WT3 must be placed AFTER WT2.");
 
-            if (wt3Pos > -1) {
+            let finalWtPos = Math.max(wt1Pos, wt2Pos, wt3Pos);
+            if (finalWtPos > -1) {
                 let hasCoreAfter = false;
-                for(let i = wt3Pos + 1; i < currentSequence.length; i++) {
-                    if (currentSequence[i].courses.some(id => coursesData[id] && coursesData[id].type.toUpperCase().includes('CORE'))) {
+                for(let i = finalWtPos + 1; i < currentSequence.length; i++) {
+                    if (currentSequence[i].courses.some(id => coursesData[id] && (coursesData[id].type || "").toUpperCase().includes('CORE'))) {
                         hasCoreAfter = true; break;
                     }
                 }
-                if (!hasCoreAfter) errors.push("Must have at least one CORE course after WT3.");
+                if (!hasCoreAfter) errors.push("You must have at least one CORE course placed AFTER your final Work Term.");
             }
         }
 
@@ -1540,7 +1866,11 @@
         list.innerHTML = '';
         errors = [...new Set(errors)];
         if (errors.length === 0) {
-            list.innerHTML = `<li style="color:#27ae60; font-weight:bold;">✅ Sequence looks good! All rules implemented in this tool seem to be satisfied. Students are ultimately responsabile for their sequences. </li>`;
+            // Aici adăugăm ambele mesaje direct în același innerHTML, formatate corect
+            list.innerHTML = `
+                <li style="color:#27ae60; font-weight:bold; margin-bottom: 6px;">✅ Sequence looks good! All rules implemented in this tool seem to be satisfied.</li>
+                <li style="color:#333; font-weight:bold;">⚠️ Students are ultimately responsible for their sequences.</li>
+            `;
         } else {
             errors.forEach(msg => { list.innerHTML += `<li style="color:#c0392b; margin-bottom:5px;">❌ ${msg}</li>`; });
         }
@@ -1566,7 +1896,7 @@
                 justBox.style.background = '#f9fff9';
                 justBox.style.borderLeftColor = '#27ae60';
                 justLabel.style.color = '#27ae60';
-                justLabel.innerHTML = '💬 All rules implemented in this tool seem to be satisfied. Students are ultimately responsabile for their sequences. ';
+                justLabel.innerHTML = '💬 All rules implemented in this tool seem to be satisfied.  <li style="color:#333; font-weight:bold;">⚠️ Students are ultimately responsible for their sequences.</li> ';
                 
                 justText.value = "";
                 justText.style.height = '80px'; 
@@ -1639,9 +1969,16 @@
             });
 
             let currentSid = "";
+            let studentName = "Official Student"; // Nume implicit
             let displayViewingSid = document.getElementById('displayViewingSid');
-            // Corectie mica aici: luam strict ID-ul (inainte de cratima) in caz ca include numele studentului
-            if (displayViewingSid) currentSid = displayViewingSid.innerText.split('-')[0].trim();
+            
+            if (displayViewingSid) {
+                let parts = displayViewingSid.innerText.split('-');
+                currentSid = parts[0].trim();
+                if (parts.length > 1) {
+                    studentName = parts[1].trim(); // Preluăm numele real
+                }
+            }
 
             // --- NOU: Adunăm datele pentru Tabelul (Matricea 4x2) din E-mailul de Submit ---
             let wtSummary = {};
@@ -1712,6 +2049,7 @@
                 name: "Submitted on " + new Date().toISOString().split('T')[0],
                 program: document.getElementById('programSelect').value,
                 student_id: currentSid,
+                student_name: studentName, // <--- ADAUGĂ ACEASTĂ LINIE
                 sequence_data: seqData,
                 term_data: {}, 
                 settings_data: {
@@ -1733,10 +2071,18 @@
             
             const result = await res.json();
             if (result.success) {
-                alert("✅ Sequence successfully submitted to the CO-OP Director! Status: PENDING APPROVAL.");
-                document.getElementById('justificationText').value = ""; // Golim casuta dupa succes
+                // 1. Obținem emailul utilizatorului din Jinja template
+                let rawEmail = "{{ session.get('user_email', '') }}";
+                let maskedEmail = getMaskedEmail(rawEmail);
+                
+                // 2. Afișăm alerta cu mesajul cerut
+                alert(`✅ Sequence successfully submitted to the CO-OP Director!\n\nA confirmation email has been sent to your address: ${maskedEmail}\n\nPlease check your email for confirmation.`);
+                
+                // 3. Forțăm deconectarea imediat după ce dă OK la alertă
+                window.location.href = '/logout';
             } else {
                 alert("❌ Trimiterea a eșuat: " + result.error);
+                document.getElementById('loadingOverlay').style.display = 'none'; // Ascundem overlay-ul doar la eroare
             }
         } catch (error) {
             console.error(error);

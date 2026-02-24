@@ -39,6 +39,18 @@ STANDARD_SEQUENCES = {
         "WT2": "Y3_WIN",
         "MECH490A": "Y4_FALL",
         "MECH490B": "Y4_WIN"
+    },
+
+    # --- ADAUGĂ RAMURILE AERO AICI ---
+    "AERO_A": {
+        "ENGR213": "Y1_FALL", "ENGR201": "Y1_WIN", # (Exemplu: pui cursurile cheie aici când le ai)
+        "WT1": "Y2_FALL", "WT2": "Y3_FALL", "WT3": "Y4_SUM1"
+    },
+    "AERO_B": {
+        # Template pentru Structuri
+    },
+    "AERO_C": {
+        # Template pentru Avionics
     }
 }
 
@@ -1321,8 +1333,14 @@ def generate():
         memo_anc[cid] = count; visited.remove(cid); return count
 
     std_prog = {}
-    if "INDUSTRIAL" in program_name.upper(): std_prog = STANDARD_SEQUENCES.get("INDUSTRIAL", {})
-    elif "MECHANICAL" in program_name.upper(): std_prog = STANDARD_SEQUENCES.get("MECHANICAL", {})
+    prog_upper = program_name.upper()
+    if "INDUSTRIAL" in prog_upper: std_prog = STANDARD_SEQUENCES.get("INDUSTRIAL", {})
+    elif "MECHANICAL" in prog_upper: std_prog = STANDARD_SEQUENCES.get("MECHANICAL", {})
+    # NOU pentru AERO: Caută cuvinte cheie din numele pe care le vei pune în Excel
+    elif "AERO A" in prog_upper or "AERODYNAMICS" in prog_upper: std_prog = STANDARD_SEQUENCES.get("AERO_A", {})
+    elif "AERO B" in prog_upper or "STRUCTURES" in prog_upper: std_prog = STANDARD_SEQUENCES.get("AERO_B", {})
+    elif "AERO C" in prog_upper or "AVIONICS" in prog_upper: std_prog = STANDARD_SEQUENCES.get("AERO_C", {})
+    elif "AERO" in prog_upper: std_prog = STANDARD_SEQUENCES.get("AERO_A", {}) # Fallback generic
 
     def get_std_idx(cid):
         # Cautam indexul standard pe noul sistem de 3 trimestre (0-20)

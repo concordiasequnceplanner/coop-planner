@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Concordia MIAE - Student Login</title>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f4f4f4; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .login-box { background: white; padding: 40px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 100%; max-width: 400px; text-align: center; }
+        h2 { color: #912338; margin-bottom: 5px; }
+        p.subtitle { color: #666; margin-bottom: 25px; font-size: 14px; }
+        /* NOU: Am adaugat input[type="text"] in CSS */
+        input[type="email"], input[type="text"] { width: 100%; padding: 12px; margin: 10px 0 20px 0; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-size: 15px; }
+        button { width: 100%; padding: 12px; background-color: #912338; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: bold; transition: background-color 0.3s;}
+        button:hover { background-color: #7a1d2f; }
+        .error { color: #d9534f; margin-bottom: 15px; font-size: 14px; background-color: #fdf7f7; padding: 10px; border-left: 4px solid #d9534f; }
+    </style>
+</head>
+<body>
+    <div class="login-box">
+        <h2>MIAE Co-op Planner</h2>
+        
+        {% if error %}
+            <div class="error">{{ error }}</div>
+        {% endif %}
+        
+        {% if ask_guest_info %}
+            <p class="subtitle" style="color:#d35400; font-weight:bold;">Email not found in database.</p>
+            <p class="subtitle" style="margin-top:-15px;">You can continue as a Guest. Please provide your details:</p>
+            
+            <div style="background-color: #eaf2f8; color: #2980b9; padding: 12px; border-radius: 5px; font-size: 13px; margin-bottom: 20px; text-align: left; line-height: 1.4;">
+                ℹ️ If you log in next time with the <b>exact same email and student ID</b>, you will be able to retrieve your saved sequences.
+            </div>
+
+            <form method="POST">
+                <input type="hidden" name="action" value="guest_login">
+                <input type="hidden" name="email" value="{{ email }}">
+                
+                <input type="email" value="{{ email }}" disabled style="background-color: #f8f9fa; color: #7f8c8d; cursor: not-allowed;">
+                
+                <input type="text" name="guest_name" placeholder="Full Name" required autocomplete="off">
+                <input type="text" name="guest_sid" placeholder="Student ID (e.g., 40012345)" required autocomplete="off">
+                
+                <button type="submit">Login</button>
+            </form>
+        {% else %}
+            <p class="subtitle">Enter the primary email given to CO-OP Institute: </p>
+            <form method="POST">
+                <input type="hidden" name="action" value="check_email">
+                <input type="email" name="email" placeholder="e.g., student@concordia.ca" required>
+                <button type="submit">Request Access Code</button>
+            </form>
+        {% endif %}
+    </div>
+</body>
+</html>

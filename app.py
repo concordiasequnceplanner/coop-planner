@@ -110,6 +110,7 @@ def parse_coop_term_string(term_str):
     return str(year), season
 
 
+
 def get_student_coop_data(target_sid):
     if not target_sid: return {"found": False}
     target_sid = str(target_sid).strip().replace('.0', '')
@@ -117,17 +118,44 @@ def get_student_coop_data(target_sid):
     try:
         client = get_gspread_client()
         sheet = client.open("Sid_Email_Mirror").worksheet("COOP")
-        all_records = sheet.get_all_records()
-        student_records = [r for r in all_records if str(r.get('Student ID', '')).strip().replace('.0', '') == target_sid]
         
-        if not student_records: return {"found": False}
+        # 1. Citim Headerele
+        headers = [str(h).strip() for h in sheet.row_values(1)]
+        if 'Student ID' not in headers: return {"found": False}
+        idx_sid = headers.index('Student ID')
+        
+        # 2. Descărcăm doar coloana de ID-uri
+        all_sids = sheet.col_values(idx_sid + 1)
+        
+        # 3. Găsim pe ce rânduri se află studentul nostru
+        matching_rows = []
+        for i, sid in enumerate(all_sids):
+            if str(sid).strip().replace('.0', '') == target_sid:
+                matching_rows.append(i + 1)
+                
+        if not matching_rows: return {"found": False}
+        
+        # 4. Cerem DOAR rândurile studentului din Google Sheets
+        ranges = [f"A{r}:Z{r}" for r in matching_rows]
+        raw_results = sheet.batch_get(ranges)
+        
+        # Reconstruim formatul de dicționar așteptat de restul codului tău
+        student_records = []
+        for res in raw_results:
+            if not res or not res[0]: continue
+            row = res[0]
+            row.extend([""] * (len(headers) - len(row)))
+            row_dict = dict(zip(headers, row))
+            student_records.append(row_dict)
 
         admission_info = None
-        cutoff_score = float('inf') # Setam limita initial la infinit
+        cutoff_score = float('inf') 
         parsed_records = []
 
+        # ... De aici în jos lasă codul tău ORIGINAL ...
         for row in student_records:
             raw_term = str(row.get('Term', ''))
+            # ... restul funcției tale care calculează score, ws, views etc.
             year, season = parse_coop_term_string(raw_term)
             
             if not admission_info and str(row.get('Admission Term', '')).lower() != 'nan':
@@ -504,34 +532,26 @@ def load_sequences():
         return jsonify({"error": str(e)}), 500
 
 
+
 @app.route("/get_transcript", methods=["POST"])
 def get_transcript():
     if 'user_email' not in session: return jsonify({"error": "Unauthorized"}), 401
     
     target_id = request.json.get("student_id", "").strip()
     
-    # --- NOU: Blocăm 100% citirea Excelului dacă este un Guest ---
     if session.get('is_guest'):
         guest_name = session.get('guest_name', 'Unknown')
-        return jsonify({
-            "transcript": [], 
-            "student_name": f"GUEST - {guest_name}", 
-            "suggested_program": ""
-        })
+        return jsonify({"transcript": [], "student_name": f"GUEST - {guest_name}", "suggested_program": ""})
 
     if not target_id or target_id == "ADMIN": 
         return jsonify({"transcript": [], "student_name": "", "suggested_program": ""})
-    
-    # ... restul logicii ramane neschimbata
 
     try:
         client = get_gspread_client()
         sheet = client.open("Sid_Email_Mirror").worksheet("Transcripts")
         
-        raw_data = sheet.get_all_values()
-        if not raw_data: return jsonify({"transcript": [], "student_name": "", "suggested_program": ""})
-        
-        headers = [str(h).strip() for h in raw_data[0]]
+        # 1. Citim DOAR primul rând pentru Headere
+        headers = [str(h).strip() for h in sheet.row_values(1)]
         
         try:
             idx_sid = headers.index('Student ID')
@@ -540,46 +560,64 @@ def get_transcript():
             idx_grade = headers.index('GRADE')
             idx_cred = headers.index('CREDVAL') if 'CREDVAL' in headers else -1
             idx_name = headers.index('NAME') if 'NAME' in headers else -1
-            
-            # NOU: Cautam coloanele pentru detectia automata a programului
             idx_prog = headers.index('PROG_LINK') if 'PROG_LINK' in headers else -1
             idx_disc = headers.index('DISCIPLINE1_DESCR') if 'DISCIPLINE1_DESCR' in headers else -1
         except ValueError:
             return jsonify({"transcript": [], "student_name": "", "suggested_program": ""})
+
+        # 2. Descărcăm DOAR coloana cu ID-uri (rapid și nu consumă RAM)
+        all_sids = sheet.col_values(idx_sid + 1)
+        
+        # 3. Găsim rândurile unde apare studentul nostru
+        matching_rows = []
+        for i, sid in enumerate(all_sids):
+            if str(sid).strip() == target_id:
+                matching_rows.append(i + 1) # gspread folosește rânduri începând de la 1
+                
+        if not matching_rows:
+            return jsonify({"transcript": [], "student_name": "", "suggested_program": ""})
+
+        # 4. Cerem de la Google FIX rândurile studentului
+        ranges = [f"A{r}:Z{r}" for r in matching_rows]
+        raw_results = sheet.batch_get(ranges)
 
         my_courses = []
         student_name = ""
         last_prog_link = ""
         last_disc = ""
 
-        for row in raw_data[1:]:
-            if len(row) > max(idx_sid, idx_course, idx_term) and str(row[idx_sid]).strip() == target_id:
-                
-                if not student_name and idx_name != -1 and len(row) > idx_name:
-                    student_name = str(row[idx_name]).strip()
-                
-                # NOU: Actualizam "ultimul program/disciplina" vazut (ignoram celulele goale)
-                if idx_prog != -1 and len(row) > idx_prog:
-                    val_prog = str(row[idx_prog]).strip().upper()
-                    if val_prog: last_prog_link = val_prog
-                    
-                if idx_disc != -1 and len(row) > idx_disc:
-                    val_disc = str(row[idx_disc]).strip().upper()
-                    if val_disc: last_disc = val_disc
-                
-                cred_val = 0.0
-                if idx_cred != -1 and len(row) > idx_cred:
-                    try: cred_val = float(str(row[idx_cred]).strip())
-                    except ValueError: cred_val = 0.0
+        # Iterăm prin rândurile primite direct de la server
+        for res in raw_results:
+            if not res or not res[0]: continue
+            row = res[0]
+            
+            # În caz că rândul e mai scurt pentru că ultimele celule erau goale
+            row.extend([""] * (len(headers) - len(row)))
 
-                my_courses.append({
-                    "course": str(row[idx_course]).strip().replace(" ", "").upper(),
-                    "term": str(row[idx_term]).strip(),
-                    "grade": str(row[idx_grade]).strip() if len(row) > idx_grade else "",
-                    "credit": cred_val
-                })
+            if not student_name and idx_name != -1 and len(row) > idx_name:
+                student_name = str(row[idx_name]).strip()
+            
+            if idx_prog != -1 and len(row) > idx_prog:
+                val_prog = str(row[idx_prog]).strip().upper()
+                if val_prog: last_prog_link = val_prog
                 
-        # NOU: Aplicam logica ta extinsă pentru a deduce programul (UGRD vs GRAD)
+            if idx_disc != -1 and len(row) > idx_disc:
+                val_disc = str(row[idx_disc]).strip().upper()
+                if val_disc: last_disc = val_disc
+            
+            cred_val = 0.0
+            if idx_cred != -1 and len(row) > idx_cred:
+                try: cred_val = float(str(row[idx_cred]).strip())
+                except ValueError: cred_val = 0.0
+
+            my_courses.append({
+                "course": str(row[idx_course]).strip().replace(" ", "").upper(),
+                "term": str(row[idx_term]).strip(),
+                "grade": str(row[idx_grade]).strip() if len(row) > idx_grade else "",
+                "credit": cred_val
+            })
+
+        # Logica de deducere a programului
         suggested_program = ""
         last_prog_link_upper = last_prog_link.upper()
         last_disc_upper = last_disc.upper()
@@ -597,11 +635,12 @@ def get_transcript():
         return jsonify({
             "transcript": my_courses, 
             "student_name": student_name, 
-            "suggested_program": suggested_program # Trimitem sugestia catre frontend
+            "suggested_program": suggested_program
         })
     except Exception as e:
         print("Transcript fetch error:", e)
         return jsonify({"transcript": [], "student_name": "", "suggested_program": ""})
+
     
 @app.route("/get_courses", methods=["POST"])
 def get_courses():

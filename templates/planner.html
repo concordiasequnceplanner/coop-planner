@@ -40,6 +40,18 @@
             <a href="/logout" style="text-decoration: none; background: #e74c3c; color: white; padding: 6px 15px; border-radius: 15px; font-size: 13px; font-weight: bold; transition: background 0.3s;">Logout</a>
         </div>
     </div>
+    <script>
+        let idleTime = 0;
+        function timerIncrement() {
+            idleTime++;
+            if (idleTime >= 10) { // 10 minutes
+                window.location.href = '/logout';
+            }
+        }
+        setInterval(timerIncrement, 60000); // 1 minute
+        document.onmousemove = document.onkeypress = document.onclick = document.ontouchstart = function() { idleTime = 0; };
+    </script>
+
 
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; background-color: #f8f9fa; color: #333; }
@@ -261,7 +273,7 @@
     <div class="tools-content">
         <div class="tool-group">
             <button id="moveEcpBtn" style= "border-left-color: #f1c40f; background: #fffdf0; ">ALL ECP taken prior to Program</button>
-            <button onclick="lockAllPlacedCourses()" style="background:#27ae60; color:white; border-color:#2ecc71; padding: 6px 12px; border-radius: 3px; cursor: pointer; font-size: 12px; font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">✅ Check all courses placed</button>
+            <button onclick="lockAllPlacedCourses()" style="background:#27ae60; color:white; border-color:#2ecc71; padding: 6px 12px; border-radius: 3px; cursor: pointer; font-size: 12px; font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">✅ FIX in sequence all courses already placed</button>
             <button class="btn-danger" onclick="resetAllCourses()">Reset all unchecked to Unallocated</button>
         </div>
         <div class="tool-group"><select id="repeatCourseSelect" style="width: 250px; font-size: 11px;"><option value="" disabled selected>Select course to repeat...</option></select><button onclick="addRepeatCourse()">I need to repeat this course</button></div>
@@ -287,8 +299,31 @@
     </div>
 </div>
 
-<div style="margin: 0 20px 15px 20px; display: flex; align-items: center;">
+<div style="margin: 0 20px 15px 20px; display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
     <button class="btn-primary" id="generateBtn" disabled>Generate Sequence</button>
+    
+    <div style="flex: 1; min-width: 300px;">
+        <label style="font-size:11px; font-weight:bold; color:#27ae60;">💬 Public Comments (Visible to Student):</label>
+        <textarea id="publicComments" 
+            oninput="this.style.height = ''; this.style.height = this.scrollHeight + 'px'" 
+            {% if is_power_user %}
+                onblur="autoSaveComments(this)"
+            {% endif %}
+            style="width: 100%; min-height: 40px; padding: 8px; border: 1px solid #27ae60; border-radius: 4px; font-family: inherit; resize: none; overflow: hidden; background: white; transition: background 0.3s;" 
+            {% if not is_power_user %}readonly{% endif %}></textarea>
+    </div>
+    
+    {% if is_power_user %}
+    <div style="flex: 1; min-width: 300px;">
+        <label style="font-size:11px; font-weight:bold; color:#c0392b;">🔒 PRIVATE Comments (Admin Only):</label>
+        <textarea id="privateComments" 
+            oninput="this.style.height = ''; this.style.height = this.scrollHeight + 'px'" 
+            onblur="autoSaveComments(this)"
+            style="width: 100%; min-height: 40px; padding: 8px; border: 1px solid #e74c3c; border-radius: 4px; font-family: inherit; resize: none; overflow: hidden; background: #fdedec; transition: background 0.3s;"></textarea>
+    </div>
+    
+    <button onclick="processStatusAction('REWORK')" id="btnRework" style="display:none; background:#f39c12; color:white; border:none; padding:10px 20px; border-radius:4px; font-weight:bold; cursor:pointer; box-shadow:0 2px 4px rgba(0,0,0,0.1);">🔄 REWORK</button>
+    {% endif %}
 </div>
 
 <div class="layout-wrapper" id="workspace">
@@ -303,12 +338,20 @@
         </div>
         
         <div class="validation-box" id="liveValidationBox">
-            <h4 style="margin: 0 0 10px 0; color: #333;">Live Sequence Check <span style="font-size:11px; color:#7f8c8d; font-weight:normal; float:right;">Updates automatically</span></h4>
+            <h4 style="margin: 0 0 10px 0; color: #333;">Live Sequence Check 
+                <span style="font-size:11px; color:#7f8c8d; font-weight:normal; float:right;">Updates automatically</span>
+            </h4>
             <ul id="liveValidationList" style="margin: 0; padding-left: 20px; line-height: 1.6; font-size: 13px;">
-                <li style="color:#27ae60; font-weight:bold;">✅ Sequence looks perfect! All rules satisfied.</li>
+                <li style="color:#27ae60; font-weight:bold;">✅ Sequence looks good! All rules seems to be satisfied.</li>
             </ul>
         </div>
+            </h4>
+            <ul id="liveValidationList" style="margin: 0; padding-left: 20px; line-height: 1.6; font-size: 13px;">
+                <li style="color:#27ae60; font-weight:bold;">✅ Sequence looks good! All rules seems to be satisfied.</li>
+            </ul>
+                   
 
+        {% if not is_power_user %}
         <div id="submitPanel" style="margin-top: 40px; padding: 25px; background: #f8f9fa; border: 1px solid #dcdde1; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05);">
             <h3 style="margin-top:0; color: #2c3e50; display: flex; align-items: center; gap: 10px;">
                 🎓 Finalize & Submit Sequence
@@ -333,6 +376,15 @@
                 📤 Submit to CO-OP Director
             </button>
         </div>
+        {% endif %}
+        
+        {% if is_power_user %}
+            <div style="margin-top: 20px; padding: 15px; background: #e8f6f3; border: 1px solid #a3e4d7; border-radius: 8px;">
+                <button onclick="processStatusAction('APPROVED')" id="btnApprove" style="display:none; width:100%; background:#27ae60; color:white; border:none; padding:12px; border-radius:4px; font-weight:bold; font-size:14px; cursor:pointer; box-shadow:0 4px 6px rgba(0,0,0,0.1);">✅ APPROVE SEQUENCE</button>
+            </div>
+        {% endif %}
+
+ 
     </div>
     
     <div class="sidebar">
@@ -351,9 +403,14 @@
 </div>
 
 <script>
+   let windowLoadedSeqTimestamp = null;
+    let windowLoadedSeqTitle = "";
+    let windowLoadedSeqRowIndex = null; // NOU: Memoram randul exact din Excel
+    let currentPendingList = [];        // NOU: Salvam lista in memorie, nu in HTML
+    
     let coursesData = {};
     let repeatedCoursesList = []; 
-    let termAttributes = {}; 
+    let termAttributes = {};
 
     // --- PRELUAM DATELE COOP INSTANT DE LA SERVER ---
     const serverCoopData = {{ coop_data_json | safe }};
@@ -380,16 +437,23 @@
 
         updateCoopYears(); 
         updateAllSelectColors();
+        fetchPendingCountSilently();
     });
 
     function injectCoopHeaders() {
-        if (!serverCoopData.found) return;
+        // AM STERS: if (!serverCoopData.found) return;
+        
+        // 1. Daca studentul n-are CO-OP deloc, ne oprim aici (Folosim variabila studentCoopData in loc de serverCoopData)
+        if (!studentCoopData || Object.keys(studentCoopData).length === 0) return;
+
         const pYear = parseInt(document.getElementById('startYear').value), pTerm = document.getElementById('startTerm').value; 
         const baseYear = pTerm === 'Winter' ? pYear - 1 : pYear;
 
+        // 2. Curatam ce era inainte pe ecran
         document.querySelectorAll('.coop-header-info').forEach(e => e.remove());
         document.querySelectorAll('.institute-wt-bg').forEach(el => el.classList.remove('institute-wt-bg'));
 
+        // ... restul functiei ramane exact la fel ...
         for(let y=1; y<=7; y++) {
             ['SUM', 'FALL', 'WIN'].forEach(t => {
                 const container = document.getElementById(`cont_Y${y}_${t}`);
@@ -430,6 +494,26 @@
             });
         }
     }
+
+
+    async function fetchPendingCountSilently() {
+        let badge = document.getElementById('pendingBadge');
+        if (!badge) return; // Doar adminii au acest badge
+        try {
+            let res = await fetch('/api/pending_approvals');
+            if (res.ok) {
+                let data = await res.json();
+                if (data.length > 0) {
+                    badge.innerText = `(${data.length})`;
+                } else {
+                    badge.innerText = `(0)`;
+                }
+            }
+        } catch (e) {
+            console.log("Silent fetch for badge failed.");
+        }
+    }
+
 
     {% if is_power_user %}
     async function adminSwitchStudent() {
@@ -509,12 +593,31 @@
         
         if(data.sequences && data.sequences.length > 0) {
             let msg = "Available sequences:\n";
-            data.sequences.forEach((s, i) => msg += `${i+1}. ${s.Sequence_Name} [${s.Program}]\n`);
-            let choice = prompt(msg + "\nEnter number to load (without '.', e.g. 3 for 3. Submitted on ....):");
+            data.sequences.forEach((s, i) => {
+                // NOU: Daca are status, il adaugam in paranteze drepte
+                let statusBadge = s.Status && s.Status.trim() !== "" ? ` [${s.Status}]` : "";
+                msg += `${i+1}. ${s.Sequence_Name}${statusBadge}\n`;
+            });
+            let choice = prompt(msg + "\nEnter number to load (without '.', e.g. 3):");
             
             if(choice && data.sequences[choice-1]) {
                 const selected = data.sequences[choice-1];
-                // Trimitem si programul catre functia de incarcare
+                
+                let displaySidEl = document.getElementById('displayViewingSid');
+                if (displaySidEl && selected.Student_ID) {
+                    displaySidEl.innerText = selected.Student_Name ? `${selected.Student_ID} - ${selected.Student_Name}` : selected.Student_ID;
+                }
+                
+                let currentSid = selected.Student_ID || (displaySidEl ? displaySidEl.innerText.split('-')[0].trim() : "");
+                
+                // ---- NOU ----
+                if (currentSid && currentSid !== "ADMIN") {
+                    await fetchAndUpdateCoopData(currentSid); // <--- Tragem datele albastre!
+                    fetchComments(currentSid);
+                } else {
+                    studentCoopData = {};
+                }
+                
                 await loadSequenceData(selected.JSON_Data, selected.Term_Data, selected.Settings_Data, selected.Program);
             }
         } else {
@@ -1483,19 +1586,23 @@
             currentSid = adminInput.value.trim();
         } else {
             let displayViewingSid = document.getElementById('displayViewingSid');
-            if (displayViewingSid) currentSid = displayViewingSid.innerText.trim();
+            if (displayViewingSid) currentSid = displayViewingSid.innerText.split('-')[0].trim();
         }
 
-        // Implicit este Frederick (INDU sau 0-4)
-        let coordName = "Frederick Francis";
-        let coordEmail = "Frederick.francis@concordia.ca";
+        // Implicit: Nathalie (INDU)
+        let coordName = "Nathalie Steverman";
+        let coordEmail = "Nathalie.steverman@concordia.ca";
 
         if (!prog.includes("INDU") && currentSid.length > 0) {
-            // Dacă nu e INDU (ex: MECH), verificăm ultima cifră a ID-ului
             let lastDigit = parseInt(currentSid.slice(-1));
-            if (!isNaN(lastDigit) && lastDigit >= 5 && lastDigit <= 9) {
-                coordName = "Nathalie Steverman";
-                coordEmail = "Nathalie.steverman@concordia.ca";
+            if (!isNaN(lastDigit)) {
+                if (lastDigit >= 0 && lastDigit <= 4) {
+                    coordName = "Frederick Francis";
+                    coordEmail = "Frederick.francis@concordia.ca";
+                } else if (lastDigit >= 5 && lastDigit <= 9) {
+                    coordName = "Nadia"; // Poti pune numele intreg aici mai tarziu
+                    coordEmail = "Nadia.email@concordia.ca"; 
+                }
             }
         }
         
@@ -1513,15 +1620,14 @@
 
         // Validare: Daca sunt erori, studentul trebuie sa scrie ceva DUPA textul auto-generat
         //if (hasErrors) {
-            let parts = justText.split("MY JUSTIFICATION:");
-            //let studentReply = parts.length > 1 ? parts[1].trim() : "";
-            //let studentReply = parts.length > 1 ? parts[1].trim() : "";
-            
-            //if (studentReply === "") {
-            //    alert("⚠️ Your sequence has validation warnings. Please provide your justification below the 'MY JUSTIFICATION:' line before submitting.");
-            //    justTextElement.focus();
-            //    return;
-           // }
+        //    let parts = justText.split("MY JUSTIFICATION:");
+        //    let studentReply = parts.length > 1 ? parts[1].trim() : "";
+        //    
+        //    if (studentReply === "") {
+        //        alert("⚠️ Your sequence has validation warnings. Please provide your justification below the 'MY JUSTIFICATION:' line before submitting.");
+        //        justTextElement.focus();
+        //        return;
+        //    }
         //}
 
         document.getElementById('loadingOverlay').style.display = 'flex';
@@ -1534,7 +1640,73 @@
 
             let currentSid = "";
             let displayViewingSid = document.getElementById('displayViewingSid');
-            if (displayViewingSid) currentSid = displayViewingSid.innerText.trim();
+            // Corectie mica aici: luam strict ID-ul (inainte de cratima) in caz ca include numele studentului
+            if (displayViewingSid) currentSid = displayViewingSid.innerText.split('-')[0].trim();
+
+            // --- NOU: Adunăm datele pentru Tabelul (Matricea 4x2) din E-mailul de Submit ---
+            let wtSummary = {};
+            let termSummary = [];
+            let baseYear = parseInt(document.getElementById('startYear').value);
+            let baseTerm = document.getElementById('startTerm').value;
+            let actualBaseYear = baseTerm === 'Winter' ? baseYear - 1 : baseYear;
+            
+            for(let y=1; y<=7; y++) {
+                let yearStr = `${actualBaseYear+y-1}-${actualBaseYear+y}`;
+                let hasCourses = false;
+                let yearData = { SUM: {cr: 0, courses: [], wt_change: ""}, FALL: {cr: 0, courses: [], wt_change: ""}, WIN: {cr: 0, courses: [], wt_change: ""} };
+
+                ['SUM', 'FALL', 'WIN'].forEach(t => {
+                    let termRealYear = (t === 'WIN') ? (actualBaseYear + y) : (actualBaseYear + y - 1);
+                    let displayTermStr = `${termRealYear} ${t}`;
+                    let zone = document.getElementById(`zone_Y${y}_${t}`);
+                    
+                    if (zone) {
+                        let cr = document.getElementById(`cr_Y${y}_${t}`).innerText;
+                        
+                        if (parseFloat(cr) > 0 || zone.children.length > 0) {
+                            hasCourses = true;
+                            yearData[t].cr = cr;
+                            
+                            Array.from(zone.children).forEach(c => {
+                                let cData = coursesData[c.id];
+                                let isWT = c.id.includes('WT');
+                                let cName = cData ? cData.full_name : c.id;
+                                let cCred = isWT ? 0 : (cData ? cData.credit : 0);
+                                
+                                yearData[t].courses.push({ name: cName, credit: cCred, is_wt: isWT });
+                                
+                                if(isWT) {
+                                    let rawLabel = studentCoopData[`${termRealYear}_${t}`] ? String(studentCoopData[`${termRealYear}_${t}`].label).trim() : "";
+                                    let originalLabel = rawLabel;
+                                    
+                                    // Dacă este gol, "nan", sau nu conține 'S-' / 'W-', îl declarăm OUT COOP
+                                    if (!rawLabel || rawLabel.toLowerCase() === "nan" || (!rawLabel.includes('S-') && !rawLabel.includes('W-'))) {
+                                        originalLabel = "OUT COOP";
+                                    }
+                                    
+                                    let expectedFormat = c.id.replace(/[^A-Z0-9]/g, '').replace('WT', 'W-');
+                                    let changed = !originalLabel.includes(expectedFormat);
+                                    
+                                    if (changed) {
+                                        yearData[t].wt_change = `WAS ${originalLabel}`;
+                                    }
+                                    
+                                    wtSummary[c.id.replace(/[^A-Z0-9]/g, '')] = {
+                                        new_term: displayTermStr,
+                                        original: originalLabel,
+                                        changed: changed
+                                    };
+                                }
+                            });
+                        }
+                    }
+                });
+                
+                if (hasCourses) {
+                    termSummary.push({ year: yearStr, data: yearData });
+                }
+            }
+            // --- FINAL COLECTARE DATE TABEL ---
 
             let payload = {
                 name: "Submitted on " + new Date().toISOString().split('T')[0],
@@ -1547,8 +1719,10 @@
                     coop: document.getElementById('coopRegistered').checked
                 },
                 status: "PENDING APPROVAL",
-                justification: justText, // Trimitem tot textul din casuta (inclusiv erorile + raspunsul)
-                student_comments: ""     // Nu mai folosim a doua casuta
+                justification: justText, 
+                student_comments: "",    
+                wt_summary: wtSummary,       // <-- Le adăugăm în "plicul" trimis către Python
+                term_summary: termSummary    // <--
             };
 
             const res = await fetch('/save_sequence', {
@@ -1556,7 +1730,6 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
-            // ... (restul functiei ramane la fel: await res.json(), alert(success), etc) ...
             
             const result = await res.json();
             if (result.success) {
@@ -1590,20 +1763,19 @@
                 return;
             }
             
-            data.forEach(seq => {
-                let safeData = encodeURIComponent(JSON.stringify(seq));
-                
+            currentPendingList = data; // Salvam in memorie
+            
+            data.forEach((seq, index) => {
                 let li = document.createElement('li');
                 li.style.cssText = "padding: 10px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center;";
                 
-                // MODIFICARE AICI: Am adăugat seq.timestamp pe rândul 2 și am coborât restul pe rândul 3
                 li.innerHTML = `
                     <div>
                         <strong>${seq.student_id}</strong><br>
                         <span style="font-size: 11px; color: #e67e22; font-weight: bold;">🕒 Submitted: ${seq.timestamp || 'Unknown Date'}</span><br>
                         <span style="font-size: 12px; color: #555;">${seq.student_name} - ${seq.program}</span>
                     </div>
-                    <button onclick="loadFromEncodedInbox('${safeData}')" style="background:#27ae60; color:white; border:none; padding:6px 15px; border-radius:4px; cursor:pointer; font-weight:bold; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">Load</button>
+                    <button onclick="loadPendingSequence(${index})" style="background:#27ae60; color:white; border:none; padding:6px 15px; border-radius:4px; cursor:pointer; font-weight:bold; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">Load</button>
                 `;
                 ul.appendChild(li);
             });
@@ -1612,34 +1784,53 @@
         }
     }
 
-    function loadFromEncodedInbox(encodedData) {
-        let fullData = JSON.parse(decodeURIComponent(encodedData));
+    async function loadPendingSequence(index) {
+        let fullData = currentPendingList[index];
         
-        let seqObj = JSON.parse(fullData.sequence_data || '{}');
-        let termObj = JSON.parse(fullData.term_data || '{}');
-        let settObj = JSON.parse(fullData.settings_data || '{}');
+        let seqObj = typeof fullData.sequence_data === 'string' ? JSON.parse(fullData.sequence_data || '{}') : fullData.sequence_data;
+        let termObj = typeof fullData.term_data === 'string' ? JSON.parse(fullData.term_data || '{}') : fullData.term_data;
+        let settObj = typeof fullData.settings_data === 'string' ? JSON.parse(fullData.settings_data || '{}') : fullData.settings_data;
 
-        // Setam ID-ul vizual sus ca sa stim a cui e secventa pe care o privim
+        windowLoadedSeqTimestamp = fullData.timestamp;
+        windowLoadedSeqTitle = fullData.name;
+        windowLoadedSeqRowIndex = fullData.row_index; 
+        
+        let btnApprove = document.getElementById('btnApprove');
+        let btnRework = document.getElementById('btnRework');
+        if (btnApprove) btnApprove.style.display = 'block';
+        if (btnRework) btnRework.style.display = 'block';
+
         let displaySidEl = document.getElementById('displayViewingSid');
         if (displaySidEl) displaySidEl.innerText = `${fullData.student_id} - ${fullData.student_name}`;
         
-        // NOU: Golim casuta de ADMIN VIEW, asa cum ai cerut (nu mai completam nimic)
         let adminInput = document.getElementById('adminSidInput');
         if (adminInput) adminInput.value = '';
         
         let progSelect = document.getElementById('programSelect');
         if (progSelect && fullData.program) progSelect.value = fullData.program;
 
-        loadSequenceData(seqObj, termObj, settObj, fullData.program);
+        let safeSid = fullData.student_id ? fullData.student_id.toString().split('-')[0].trim() : "";
+        
+        // ---- NOU: ADUCEM DATELE DE CO-OP ȘI COMENTARIILE ----
+        if (safeSid && safeSid !== "ADMIN") {
+            await fetchAndUpdateCoopData(safeSid); // <--- Tragem datele albastre!
+            fetchComments(safeSid);
+        } else {
+            studentCoopData = {};
+        }
+
+        // ACUM încărcăm secvența (care va desena casetele albastre perfect)
+        await loadSequenceData(seqObj, termObj, settObj, fullData.program);
         document.getElementById('pendingModal').style.display = 'none';
     }
+
 
     // --- NOU: AUTO-DETECTIE PROGRAM INTELIGENTA ---
     // --- NOU: AUTO-DETECTIE PROGRAM & START YEAR INTELIGENTA ---
     async function autoDetectProgram() {
 
         // Am lasat log-ul pentru tine ca sa vezi cand ruleaza!
-        console.log("🚨 BEEP! Funcția de autodetectare a fost apelată!");
+        //console.log("🚨 BEEP! Funcția de autodetectare a fost apelată!");
         
         let currentSid = "";
         let adminInput = document.getElementById('adminSidInput');
@@ -1655,6 +1846,9 @@
         }
 
         if (!currentSid || currentSid === "ADMIN") return;
+
+        // ADAUGAT AICI: Să extragă comentariile chiar la intrarea pe pagină
+        fetchComments(currentSid);
 
         try {
             document.getElementById('loadingOverlay').style.display = 'flex';
@@ -1757,8 +1951,195 @@
         }
     }
     
+
+    // Funcție nouă care trage dinamic datele albastre CO-OP când schimbăm studentul din Pending
+    async function fetchAndUpdateCoopData(sid) {
+        try {
+            const res = await fetch('/api/get_coop_data', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ student_id: sid })
+            });
+            const data = await res.json();
+            
+            // Suprascriem variabila globală cu datele noului student
+            if (data.found) {
+                studentCoopData = data.terms || {};
+            } else {
+                studentCoopData = {}; // Dacă nu are CO-OP, o golim
+            }
+        } catch (e) {
+            console.error("Failed to fetch COOP data:", e);
+            studentCoopData = {};
+        }
+    }
+
+    async function fetchComments(sid) {
+        try {
+            const res = await fetch('/get_comments', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ student_id: sid })
+            });
+            const data = await res.json();
+            let pub = document.getElementById('publicComments');
+            let priv = document.getElementById('privateComments');
+            if (pub) { pub.value = data.public || ""; pub.dispatchEvent(new Event('input')); }
+            if (priv) { priv.value = data.private || ""; priv.dispatchEvent(new Event('input')); }
+        } catch (e) { console.error("Error fetching comments", e); }
+    }
+
+    // Call fetchComments inside autoDetectProgram right after getting currentSid
+    // (Inside autoDetectProgram: if (currentSid) fetchComments(currentSid); )
+
+    async function processStatusAction(status) {
+        if (!windowLoadedSeqTimestamp) { alert("Please load a sequence from Pending Approvals first."); return; }
+        
+        document.getElementById('loadingOverlay').style.display = 'flex';
+        
+        let currentSid = document.getElementById('displayViewingSid').innerText.split('-')[0].trim();
+        let studentName = document.getElementById('displayViewingSid').innerText.split('-')[1]?.trim() || "Student";
+        let program = document.getElementById('programSelect').value;
+        let pubComment = document.getElementById('publicComments') ? document.getElementById('publicComments').value : "";
+        let privComment = document.getElementById('privateComments') ? document.getElementById('privateComments').value : "";
+        
+        // Build WT Summary & Term Credits summary for the email
+        let wtSummary = {};
+        let termSummary = [];
+        
+        let baseYear = parseInt(document.getElementById('startYear').value);
+        let baseTerm = document.getElementById('startTerm').value;
+        let actualBaseYear = baseTerm === 'Winter' ? baseYear - 1 : baseYear;
+        
+        for(let y=1; y<=7; y++) {
+            let yearStr = `${actualBaseYear+y-1}-${actualBaseYear+y}`;
+            let hasCourses = false;
+            let yearData = { SUM: {cr: 0, courses: [], wt_change: ""}, FALL: {cr: 0, courses: [], wt_change: ""}, WIN: {cr: 0, courses: [], wt_change: ""} };
+
+            ['SUM', 'FALL', 'WIN'].forEach(t => {
+                let termRealYear = (t === 'WIN') ? (actualBaseYear + y) : (actualBaseYear + y - 1);
+                let displayTermStr = `${termRealYear} ${t}`;
+                
+                let zone = document.getElementById(`zone_Y${y}_${t}`);
+                if (zone) {
+                    let cr = document.getElementById(`cr_Y${y}_${t}`).innerText;
+                    
+                    if (parseFloat(cr) > 0 || zone.children.length > 0) {
+                        hasCourses = true;
+                        yearData[t].cr = cr;
+                        
+                        Array.from(zone.children).forEach(c => {
+                            let cData = coursesData[c.id];
+                            let isWT = c.id.includes('WT');
+                            let cName = cData ? cData.full_name : c.id;
+                            let cCred = isWT ? 0 : (cData ? cData.credit : 0);
+                            
+                            yearData[t].courses.push({ name: cName, credit: cCred, is_wt: isWT });
+                            
+                            if(isWT) {
+                                let rawLabel = studentCoopData[`${termRealYear}_${t}`] ? String(studentCoopData[`${termRealYear}_${t}`].label).trim() : "";
+                                let originalLabel = rawLabel;
+                                
+                                // Dacă este gol, "nan", sau nu conține 'S-' / 'W-', îl declarăm OUT COOP
+                                if (!rawLabel || rawLabel.toLowerCase() === "nan" || (!rawLabel.includes('S-') && !rawLabel.includes('W-'))) {
+                                    originalLabel = "OUT COOP";
+                                }
+                                
+                                let expectedFormat = c.id.replace(/[^A-Z0-9]/g, '').replace('WT', 'W-');
+                                let changed = !originalLabel.includes(expectedFormat);
+                                
+                                if (changed) {
+                                    yearData[t].wt_change = `WAS ${originalLabel}`; 
+                                }
+
+                                wtSummary[c.id.replace(/[^A-Z0-9]/g, '')] = {
+                                    new_term: displayTermStr,
+                                    original: originalLabel,
+                                    changed: changed
+                                };
+                            }
+                        });
+                    }
+                }
+            });
+            
+            if (hasCourses) {
+                termSummary.push({ year: yearStr, data: yearData });
+            }
+        }
+
+        try {
+            const res = await fetch('/update_status', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    status: status,
+                    student_id: currentSid,
+                    student_name: studentName,
+                    program: program,
+                    timestamp: windowLoadedSeqTimestamp,
+                    original_title: windowLoadedSeqTitle,
+                    row_index: windowLoadedSeqRowIndex, // <-- Trimitem Randul Exact!
+                    public_comments: pubComment,
+                    private_comments: privComment,
+                    wt_summary: wtSummary,
+                    term_summary: termSummary
+                })
+            });
+            
+            let result = await res.json();
+            if(result.success) {
+                alert(`✅ Sequence status updated to ${status}. Email sent.`);
+                document.getElementById('btnApprove').style.display = 'none';
+                document.getElementById('btnRework').style.display = 'none';
+                windowLoadedSeqTimestamp = null;
+            } else { alert("❌ Error: " + result.error); }
+        } catch(e) { console.error(e); alert("Connection error."); }
+        finally { document.getElementById('loadingOverlay').style.display = 'none'; }
+    }
+
+
+    async function autoSaveComments(element) {
+        // Obținem ID-ul studentului curent
+        let displaySidEl = document.getElementById('displayViewingSid');
+        if (!displaySidEl) return;
+        let currentSid = displaySidEl.innerText.split('-')[0].trim();
+        if (!currentSid || currentSid === "ADMIN") return;
+
+        let pubEl = document.getElementById('publicComments');
+        let privEl = document.getElementById('privateComments');
+        
+        let pubComment = pubEl ? pubEl.value : "";
+        let privComment = privEl ? privEl.value : "";
+
+        // Salvăm culoarea originală de fundal pentru a o restaura
+        let originalBg = element.style.background;
+        
+        try {
+            const res = await fetch('/save_comments', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    student_id: currentSid,
+                    public_comments: pubComment,
+                    private_comments: privComment
+                })
+            });
+            
+            const result = await res.json();
+            if (result.success) {
+                // Confirmare vizuală subtilă: Fundalul se face scurt verde deschis, apoi revine
+                element.style.background = '#e8f8f5'; 
+                setTimeout(() => { element.style.background = originalBg; }, 800);
+            }
+        } catch (e) {
+            console.error("Auto-save comments failed:", e);
+        }
+    }
+
     // Rulam functia IMEDIAT, fara a astepta DOMContentLoaded, pentru ca HTML-ul s-a parsat deja!
     autoDetectProgram();
+
 </script>
 </script>
 

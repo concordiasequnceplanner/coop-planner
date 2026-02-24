@@ -2259,7 +2259,15 @@
                         let val = o.value.toUpperCase();
                         if ((sug.includes("MECH") || sug.includes("MECHANICAL")) && val.includes("MECHANICAL")) return true;
                         if ((sug.includes("INDU") || sug.includes("INDUSTRIAL")) && val.includes("INDUSTRIAL")) return true;
-                        if ((sug.includes("AERO") || sug.includes("AEROSPACE")) && val.includes("AERO")) return true;
+                        
+                        // --- NOU: Detecție fină pentru ramurile Aerospace ---
+                        if (sug.includes("AERODY") && (val.includes("AERO A") || val.includes("AERODYNAMICS"))) return true;
+                        if (sug.includes("STRUCTURES") && (val.includes("AERO B") || val.includes("STRUCTURES"))) return true;
+                        if (sug.includes("AVIONICS") && (val.includes("AERO C") || val.includes("AVIONICS"))) return true;
+                        
+                        // Fallback: Dacă e "AERO" în general dar nu știm litera
+                        if (sug.includes("AERO") && val.includes("AERO")) return true;
+                        
                         return false;
                     });
                 }

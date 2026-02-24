@@ -80,11 +80,14 @@ def send_otp_email(recipient, otp):
             "to": [recipient],
             "bcc": ["concordia.sequence.planner@gmail.com"],
             "subject": "Access Code - COOP Academic Planner",
-            "html": f"<h2>Concordia MIAE</h2><p>Your login access code is: <strong>{otp}</strong></p>",
+            "html": f"<h2>Concordia MIAE</h2><p>Your login access code is: <strong style='font-size: 24px;'>{otp}</strong></p><p>This code is valid for 30 minutes.</p>",
             "reply_to": "coop_miae@concordia.ca"
         })
-        return True
-    except Exception: return False
+        # Dacă trece de linia de mai sus fără eroare, Resend confirmă expedierea!
+        return True, "I confirm the email has been sent"
+    except Exception as e:
+        print(f"Resend Error: {e}")
+        return False, str(e)
 
 def get_email_recipients(program, target_sid, student_email, action_type):
     # Logica de selectare a coordonatorului
@@ -273,9 +276,8 @@ def get_student_coop_data(target_sid):
     except Exception as e:
         print(f"Eroare COOP Fetch Backend: {e}")
         return {"found": False, "error": str(e)}
-    
-    
-pending_otps = {}
+     
+
 
 # --- ROUTES ---
 
@@ -583,6 +585,68 @@ def admin_change_sid():
         return jsonify({"success": True})
     return jsonify({"error": "Invalid ID"}), 400
 
+
+def handle_otp_logic(email, sid, is_guest=False, guest_name=''):
+    client = get_gspread_client()
+    doc = client.open("Sid_Email_Mirror")
+    
+    sheet = None
+    for s in doc.worksheets():
+        if s.title.strip().lower() == "logins":
+            sheet = s
+            break
+            
+    if sheet is None:
+        sheet = doc.add_worksheet(title="logins", rows="1000", cols="4")
+        sheet.append_row(["Email", "Time", "login_code", "used"])
+        
+    records = sheet.get_all_values()
+    now = datetime.datetime.now()
+    fmt = "%Y-%m-%d %H:%M:%S"
+    
+    # 1. Verificăm dacă există deja un cod trimis în ultimele 30 de minute
+    for i in range(len(records)-1, 0, -1):
+        if records[i][0].strip().lower() == email.strip().lower() and str(records[i][3]).strip() == "0":
+            try:
+                req_time = datetime.datetime.strptime(records[i][1], fmt)
+            except ValueError:
+                continue 
+                
+            if (now - req_time).total_seconds() < 1800:
+                time_str = req_time.strftime('%H:%M:%S')
+                # Studentul a cerut un cod prea devreme, NU trimitem altul.
+                session['otp_message'] = f"⚠️ A code was already sent to you at {time_str}. Please use that same code (check your spam folder). It remains valid for 30 minutes."
+                session['pre_auth_email'] = email
+                session['temp_sid'] = sid
+                session['temp_is_guest'] = is_guest
+                session['temp_guest_name'] = guest_name
+                return
+            else:
+                # Codul este mai vechi de 30 de minute, îl marcăm ca expirat (used=1)
+                sheet.update_cell(i + 1, 4, 1)
+
+    # 2. Generăm cod NOU
+    otp = str(random.randint(100000, 999999))
+    
+    # 3. Trimitem pe email și capturăm răspunsul de la serverul Resend
+    is_sent, resend_msg = send_otp_email(email, otp)
+    
+    # 4. Salvăm în Google Sheets
+    sheet.append_row([email, now.strftime(fmt), otp, 0])
+    valid_until = (now + datetime.timedelta(minutes=30)).strftime('%H:%M:%S')
+    
+    if is_sent:
+        # Mesajul verde de confirmare dorit
+        session['otp_message'] = f"✅ {resend_msg} to {email}! Please enter the access code below. The code is valid until {valid_until}."
+    else:
+        # Mesajul roșu în caz că Resend e picat sau API key-ul e greșit
+        session['otp_message'] = f"❌ Error sending email via Resend API: {resend_msg}"
+    
+    session['pre_auth_email'] = email
+    session['temp_sid'] = sid
+    session['temp_is_guest'] = is_guest
+    session['temp_guest_name'] = guest_name
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
@@ -592,47 +656,77 @@ def login():
         if action == "check_email":
             is_valid, sid = verify_email_in_sheets(email)
             if is_valid:
-                otp = str(random.randint(100000, 999999))
-                pending_otps[email] = otp
-                send_otp_email(email, otp)
-                session['pre_auth_email'] = email
-                session['temp_sid'] = sid
-                session['temp_is_guest'] = False
+                handle_otp_logic(email, sid, is_guest=False)
                 return redirect(url_for('verify'))
             else:
-                # Dacă nu găsim emailul, încărcăm formularul de Guest
                 return render_template("login.html", ask_guest_info=True, email=email)
         
         elif action == "guest_login":
             guest_name = request.form.get("guest_name", "Unknown").strip()
             guest_sid = request.form.get("guest_sid", "00000000").strip()
             
-            otp = str(random.randint(100000, 999999))
-            pending_otps[email] = otp
-            send_otp_email(email, otp)
+            # --- NOU: LOGAM DIRECT GUEST-UL FARA NICIUN COD ---
+            session['user_email'] = email
+            session['student_id'] = guest_sid
+            session['is_guest'] = True
+            session['guest_name'] = guest_name
             
-            session['pre_auth_email'] = email
-            session['temp_sid'] = guest_sid
-            session['temp_is_guest'] = True
-            session['temp_guest_name'] = guest_name
-            return redirect(url_for('verify'))
+            # Îl trimitem direct pe pagina principală (Sare peste verify)
+            return redirect(url_for('index'))
 
     return render_template("login.html")
+
+
 
 @app.route("/verify", methods=["GET", "POST"])
 def verify():
     email = session.get('pre_auth_email')
     if not email: return redirect(url_for('login'))
+    
+    # Preluăm mesajul dinamic generat anterior
+    msg = session.get('otp_message', "Please enter your access code.")
+
     if request.method == "POST":
-        if pending_otps.get(email) == request.form.get("otp").strip():
-            session['user_email'] = email
-            session['student_id'] = session.get('temp_sid', '')
-            session['is_guest'] = session.get('temp_is_guest', False)
-            session['guest_name'] = session.get('temp_guest_name', '')
-            pending_otps.pop(email, None)
-            return redirect(url_for('index'))
-        return render_template("verify.html", error="Incorrect code!")
-    return render_template("verify.html")
+        user_otp = request.form.get("otp").strip()
+        
+        client = get_gspread_client()
+        sheet = client.open("Sid_Email_Mirror").worksheet("logins")
+        records = sheet.get_all_values()
+        
+        now = datetime.datetime.now()
+        fmt = "%Y-%m-%d %H:%M:%S"
+        
+        # Căutăm codul activ în sheet
+        for i in range(len(records)-1, 0, -1):
+            if records[i][0].strip().lower() == email and str(records[i][3]).strip() == "0":
+                stored_otp = str(records[i][2]).strip()
+                try:
+                    req_time = datetime.datetime.strptime(records[i][1], fmt)
+                except ValueError:
+                    continue
+                
+                # Verificăm dacă a expirat între timp (verificare de siguranță)
+                if (now - req_time).total_seconds() > 1800:
+                    sheet.update_cell(i + 1, 4, 1) # Îl marcăm ca expirat
+                    return render_template("verify.html", error="Code expired! Please request a new one.", message=msg)
+                
+                # Verificăm dacă a introdus codul corect
+                if user_otp == stored_otp:
+                    # AM ELIMINAT LINIA AICI: Nu mai marcăm cu 1 la succes! 
+                    # Codul rămâne '0' pe coloana D, putând fi folosit iar în cele 30 min.
+                    
+                    session['user_email'] = email
+                    session['student_id'] = session.get('temp_sid', '')
+                    session['is_guest'] = session.get('temp_is_guest', False)
+                    session['guest_name'] = session.get('temp_guest_name', '')
+                    session.pop('otp_message', None) # Curățăm mesajul
+                    return redirect(url_for('index'))
+                else:
+                    return render_template("verify.html", error="Incorrect code!", message=msg)
+                    
+        return render_template("verify.html", error="No valid code found or code expired. Please request a new one.", message=msg)
+
+    return render_template("verify.html", message=msg)
 
 @app.route("/logout")
 def logout():
@@ -644,6 +738,10 @@ def logout():
 def api_get_coop_data():
     if 'user_email' not in session: return jsonify({"error": "Unauthorized"}), 401
     
+    # --- NOU: Securitate Strictă! Guest-ul primește mereu obiect GOL ---
+    if session.get('is_guest'): 
+        return jsonify({"found": False})
+        
     # Primim ID-ul studentului de la interfață și cerem excel-ul
     target_sid = str(request.json.get("student_id", "")).strip()
     coop_data = get_student_coop_data(target_sid)

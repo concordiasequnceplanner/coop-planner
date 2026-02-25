@@ -238,6 +238,24 @@
         #tableBody tr:last-child td {
             border-bottom: 4px solid #2c3e50 !important;
         }
+        /* --- NOU: Fundal galben discret pentru termenul curent --- */
+        .current-term-highlight {
+            background-color: #fffde7 !important; 
+            border: 2px solid #fbc02d !important;
+        }
+        .current-term-highlight .term-header {
+            background-color: #fff9c4 !important;
+        }
+
+        /* --- NOU: Text roșu pentru cursurile cu erori --- */
+        .course-box.error-text {
+            border-color: #e74c3c !important;
+            background-color: #fcf3f2 !important;
+            border-left-color: #c0392b !important;
+        }
+        .course-box.error-text div {
+            color: #c0392b !important;
+        }
     </style>
 </head>
 
@@ -973,10 +991,36 @@
                 }
             });
         }
-        updateCredits();
+       updateCredits();
         injectCoopHeaders();
+        highlightCurrentTerm(); // <-- ADAUGĂ ASTA AICI
     }
 
+    // --- NOU: Funcția care colorează termenul prezent ---
+    function highlightCurrentTerm() {
+        const now = new Date();
+        const currYear = now.getFullYear();
+        const currMonth = now.getMonth(); // 0-11
+        let currSeason = 'WIN';
+        if (currMonth >= 4 && currMonth <= 7) currSeason = 'SUM';
+        else if (currMonth >= 8 && currMonth <= 11) currSeason = 'FALL';
+        
+        const pTerm = document.getElementById('startTerm').value;
+        const pYear = parseInt(document.getElementById('startYear').value);
+        const baseYear = pTerm === 'Winter' ? pYear - 1 : pYear;
+        
+        document.querySelectorAll('.current-term-highlight').forEach(el => el.classList.remove('current-term-highlight'));
+        
+        for(let y=1; y<=7; y++) {
+            ['SUM', 'FALL', 'WIN'].forEach(t => {
+                let termYear = (t === 'WIN') ? (baseYear + y) : (baseYear + y - 1);
+                if (termYear === currYear && t === currSeason) {
+                    let cont = document.getElementById(`cont_Y${y}_${t}`);
+                    if (cont) cont.classList.add('current-term-highlight');
+                }
+            });
+        }
+    }
     const buildGrid = () => {
         const tbody = document.getElementById('tableBody');
         const y0 = tbody.rows[0]; tbody.innerHTML = ''; tbody.appendChild(y0);
@@ -1184,6 +1228,52 @@
         }
     }
 
+    // --- NOU: Parser inteligent pentru termenele Concordia (Peoplesoft) ---
+    function parseConcordiaTerm(termStr) {
+        let s = termStr.toString().trim().toUpperCase();
+        let year = new Date().getFullYear();
+        let season = 'FALL';
+        
+        // 1. Căutăm coduri tip Peoplesoft (ex: 2254 -> Win 26, 2242 -> Fall 24)
+        let psMatch = s.match(/^(2\d{3})$/);
+        if (psMatch) {
+            let yy = parseInt(psMatch[1].substring(1, 3)); 
+            let termDigit = psMatch[1].charAt(3);          
+            let acaYear = 2000 + yy;
+            
+            if (termDigit === '1') { season = 'SUM'; year = acaYear; }
+            else if (termDigit === '2') { season = 'FALL'; year = acaYear; }
+            else if (termDigit === '3' || termDigit === '4') { season = 'WIN'; year = acaYear + 1; }
+            return { year, season };
+        }
+        
+        // 2. Text normal din transcript (ex: "2023-2024 Fall" sau "Winter 2025")
+        if (s.includes('WIN')) season = 'WIN';
+        else if (s.includes('SUM') || s.includes('SU ')) season = 'SUM';
+        else if (s.includes('FALL') || s.includes('FA ')) season = 'FALL';
+        
+        let yearMatch = s.match(/\d{4}/g);
+        if (yearMatch) {
+            if (yearMatch.length > 1) {
+                // Dacă avem formatul "2023-2024 Fall"
+                let baseAcaYear = parseInt(yearMatch[0]); // Preluăm 2023
+                if (season === 'WIN') {
+                    year = baseAcaYear + 1; // Winter sare în 2024
+                } else {
+                    year = baseAcaYear;     // Fall și Summer rămân în 2023
+                }
+            } else {
+                // Dacă avem formatul simplu "Fall 2023"
+                year = parseInt(yearMatch[0]);
+            }
+        } else {
+            let shortYearMatch = s.match(/\d{2}/);
+            if (shortYearMatch) year = 2000 + parseInt(shortYearMatch[0]);
+        }
+        
+        return { year, season };
+    }
+
     async function loadTranscriptAndMapInstitute() {
         const prog = document.getElementById('programSelect').value;
         const sYear = parseInt(document.getElementById('startYear').value);
@@ -1225,6 +1315,66 @@
             
             const currentYr = new Date().getFullYear();
             let transcriptIds = new Set();
+
+            // === NOU: DETECȚIE INTELIGENTĂ A ANULUI 1 (Ideea ta!) ===
+            let firstCoreYear = 9999;
+            let firstCoreTerm = "Fall";
+            let minScore = 99999;
+            
+            data.transcript.forEach(t => {
+                let rawCid = t.course.toUpperCase();
+                if (rawCid.includes('WT')) return; // ignorăm work terms
+                
+                let cleanId = rawCid.replace(/\s+/g, '');
+                let matchedKey = Object.keys(coursesData).find(k => k.replace(/\s+/g, '').toUpperCase() === cleanId);
+                
+                // Filtrăm cursurile reale ale programului (fără ECP-uri)
+                if (matchedKey && !coursesData[matchedKey].is_ecp) {
+                    let parsed = parseConcordiaTerm(t.term);
+                    let y = parsed.year;
+                    let s = parsed.season;
+                    
+                    let score = y * 10 + (s === 'WIN' ? 1 : (s === 'SUM' ? 2 : 3));
+                    if (score < minScore) {
+                        minScore = score;
+                        firstCoreYear = y;
+                        firstCoreTerm = s === 'WIN' ? 'Winter' : 'Fall'; // UI-ul știe doar de Fall sau Winter start
+                    }
+                }
+            });
+            
+            if (firstCoreYear !== 9999) {
+                let startYearEl = document.getElementById('startYear');
+                let startTermEl = document.getElementById('startTerm');
+                
+                // Ne asigurăm că anul există în dropdown
+                let options = Array.from(startYearEl.options).map(o => parseInt(o.value));
+                if (!options.includes(firstCoreYear)) {
+                    startYearEl.add(new Option(firstCoreYear, firstCoreYear));
+                    let opts = Array.from(startYearEl.options);
+                    opts.sort((a,b) => parseInt(b.value) - parseInt(a.value));
+                    startYearEl.innerHTML = '';
+                    opts.forEach(o => startYearEl.add(o));
+                }
+                
+                // Dacă detectăm că studentul a început programul într-un alt an/termen față de ce arată UI-ul, corectăm:
+                if (startYearEl.value != firstCoreYear || startTermEl.value != firstCoreTerm) {
+                    startYearEl.value = firstCoreYear;
+                    startTermEl.value = firstCoreTerm;
+                    
+                    if (document.getElementById('coopRegistered').checked) {
+                        updateCoopYears();
+                        document.getElementById('coopStartYear').value = firstCoreYear;
+                        document.getElementById('coopStartTerm').value = "FALL";
+                    }
+                    updateAllSelectColors();
+                    
+                    // RE-DESENĂM GRILA CA SĂ FIE PREGĂTITĂ PENTRU NOUL AN DE START (înainte să așezăm cursurile)
+                    buildGrid(); 
+                }
+            }
+            // === SFÂRȘIT DETECȚIE INTELIGENTĂ ===
+
 
             data.transcript.forEach(t => {
                 let coursesToProcess = [t];
@@ -1296,31 +1446,45 @@
                     }
 
                     // --- PLASARE IN ANI (Logica ta originală, neschimbată) ---
+                    // --- NOU: Logica de plasare aliniată arhitectural cu Grila și CO-OP ---
+                    // --- NOU: Logica infailibilă cu Index Absolut ---
+                    // --- NOU: Logica infailibilă cu Index Absolut + Parser Concordia ---
                     let el = document.getElementById(finalCid);
                     if(el) {
                         let currentYr = new Date().getFullYear();
-                        let startYearInput = document.getElementById('startYear').value;
-                        let sYear = parseInt(startYearInput) || currentYr;
                         
-                        let tYearMatch = item.term.match(/\d{4}/);
-                        let tYear = tYearMatch ? parseInt(tYearMatch[0]) : currentYr;
+                        let sYearInput = document.getElementById('startYear').value;
+                        let sYear = parseInt(sYearInput) || currentYr;
+                        let sTerm = document.getElementById('startTerm').value; 
+                        let baseYear = sTerm === 'Winter' ? sYear - 1 : sYear;
                         
-                        let tSeason;
-                        if (item.forceSeason) {
-                            tSeason = item.forceSeason;
-                        } else {
-                            tSeason = item.term.toLowerCase().includes('win') ? 'WIN' : (item.term.toLowerCase().includes('fall') ? 'FALL' : 'SUM');
-                        }
+                        // Folosim noul parser pentru a afla sezonul și anul real calendaristic!
+                        let parsed = parseConcordiaTerm(item.term);
+                        let tYear = parsed.year;
+                        let tSeason = parsed.season;
+                        if (item.forceSeason) tSeason = item.forceSeason;
                         
                         let targetZoneId = 'zone_Y0_ANY';
                         
-                        // Plasare in ani
-                        if (tYear < sYear) {
-                            targetZoneId = 'zone_Y0_ANY'; 
+                        // Calculăm Indexul Absolut pe axa timpului (Winter=0, Sum=1, Fall=2 în calendar year)
+                        let getAbsIdx = (y, s) => y * 3 + (s === 'WIN' ? 0 : (s === 'SUM' ? 1 : 2));
+                        
+                        let courseIdx = getAbsIdx(tYear, tSeason);
+                        let programIdx = getAbsIdx(sYear, sTerm === 'Fall' ? 'FALL' : 'WIN');
+                        let gridStartIdx = getAbsIdx(baseYear, 'SUM'); // Grila începe mereu cu Summer
+                        
+                        if (courseIdx < programIdx) {
+                            targetZoneId = 'zone_Y0_ANY'; // Curs luat înainte de admitere
                         } else {
-                            let relativeYear = tYear - sYear + 1;
-                            if (relativeYear >= 1 && relativeYear <= 7) {
-                                targetZoneId = `zone_Y${relativeYear}_${tSeason}`;
+                            let offset = courseIdx - gridStartIdx;
+                            if (offset >= 0) {
+                                let relY = Math.floor(offset / 3) + 1;
+                                let relS = offset % 3;
+                                let termName = relS === 0 ? 'SUM' : (relS === 1 ? 'FALL' : 'WIN');
+                                
+                                if (relY >= 1 && relY <= 7) {
+                                    targetZoneId = `zone_Y${relY}_${termName}`;
+                                }
                             }
                         }
 
@@ -1328,8 +1492,8 @@
                         if(!tz) tz = document.getElementById('zone_Y0_ANY');
                         
                         coursesData[finalCid].locked = true; 
-                        coursesData[finalCid].from_transcript = true; // Ne asigurăm că are acest flag
-                        coursesData[finalCid].original_zone = tz.id;  // <--- NOU: Memorăm locația istorică din transcript!
+                        coursesData[finalCid].from_transcript = true;
+                        coursesData[finalCid].original_zone = tz.id;  
                         
                         if (finalCid.includes('WT')) coursesData[finalCid].credit = 0; 
                         
@@ -1653,6 +1817,7 @@
 
     function runLiveCheck() {
         let errors = [];
+        let errorCids = new Set();
         let isCoop = document.getElementById('coopRegistered').checked;
         let takenSet = new Set();
         let currentSequence = [];
@@ -1665,12 +1830,14 @@
                     if (c.from_transcript && c.original_zone) {
                         let readableZone = c.original_zone.replace('zone_', '').replace('_', ' ');
                         errors.push(`<b>${c.id}</b> is on your transcript (taken in ${readableZone}) and cannot be unallocated.`);
+                        errorCids.add(c.id);
                     } 
                     // Logica normală pentru cursuri neplasate
                     else if (isCoop || !c.is_wt) {
                         let t = (c.type || "").toUpperCase();
                         if (t.includes('CORE') || t === 'GEN' || t === 'ECP') {
                             errors.push(`Course <b>${c.id}</b> (${t}) must be placed.`);
+                            errorCids.add(c.id);
                         }
                     }
                 }
@@ -1710,6 +1877,7 @@
                         let readableOrig = c.original_zone.replace('zone_', '').replace('_', ' ');
                         let readableCurr = term.id.replace('_', ' ');
                         errors.push(`Transcript mismatch: <b>${c.id}</b> was taken in <b>${readableOrig}</b> but moved to <b>${readableCurr}</b>.`);
+                        errorCids.add(c.id);
                     }
                 }
 
@@ -1732,6 +1900,7 @@
                         // Ignorăm eroarea dacă cursul are setat termenul 'ANY'
                         if (termsUp !== 'ANY' && !termsUp.includes(targetUp)) {
                             errors.push(`<b>${cid}</b> is not offered in <b>${targetUp}</b>.`);
+                            errorCids.add(c.id);
                         }
 
                         if (c.prereqs && c.prereqs !== 'None' && c.prereqs !== 'N/A') {
@@ -1740,6 +1909,7 @@
                                 if (opts.length > 0) {
                                     let satisfied = opts.some(opt => { return takenSet.has(opt) && !term.courses.includes(opt); });
                                     if (!satisfied) errors.push(`<b>${cid}</b> in ${term.id} missing pre-req group: [${opts.join(' or ')}].`);
+                                    errorCids.add(c.id);
                                 }
                             });
                         }
@@ -1749,6 +1919,7 @@
                                 let opts = parseCourseIDs(grp).filter(o => coursesData[o]);
                                 if (opts.length > 0 && !opts.some(opt => takenSet.has(opt))) {
                                     errors.push(`<b>${cid}</b> in ${term.id} missing co-req group: [${opts.join(' or ')}].`);
+                                    errorCids.add(c.id);
                                 }
                             });
                         }
@@ -1761,11 +1932,14 @@
                     wtIndices.push(index);
                     if (isSummer) {
                         if (realCoursesCount > 1) errors.push(`Year ${term.year} Summer: Max 1 course allowed alongside WT.`);
+                            
                     } else {
-                        if (realCoursesCount > 1) errors.push(`Term ${term.id}: Max 1 course allowed alongside WT.`);
+                        if (realCoursesCount > 1)  errors.push(`Term ${term.id}: Max 1 course allowed alongside WT.`);
+                           
                     }
                     if (term.courses.some(id => id.includes('490A') || id.includes('490B'))) {
                         errors.push(`Term ${term.id}: Capstone and WT in same term is not allowed.`);
+                        
                     }
                 } 
                 // AM STERS regula gresita cu WT3 de aici, o mutam la final ca sa o facem inteligenta!
@@ -1780,6 +1954,7 @@
                 if (term.type.includes('SUM')) summerSeasonsWithWT.add(term.year);
             });
             if (summerSeasonsWithWT.size > 2) errors.push(`Limit exceeded: WT placed in ${summerSeasonsWithWT.size} summers (Max: 2 allowed).`);
+                
 
             // Regula 2: Fără 3 termene consecutive de WT
             if (wtIndices.length >= 3) {
@@ -1805,7 +1980,7 @@
                 // Regula 3: Cel puțin 2 termene de studiu înainte de primul WT
                 if (studyTermsBefore < 2) {
                     errors.push("Invalid Sequence: There must be at least 2 study terms before your first Work Term.");
-                }
+                    }
 
                 // Regula 4: 30 CR de CORE/TE înainte de primul WT (DOAR dacă sunt MAI MULTE WT-uri în program)
                 if (wtIndices.length > 1) {
@@ -1824,6 +1999,7 @@
                     if (coreCrBefore < 30) {
                         let firstWtName = currentSequence[firstWtIdx].courses.find(id => id.includes('WT')) || "WT";
                         errors.push(`Requirement not met: Only ${coreCrBefore} credits of CORE/TE before ${firstWtName}. Programs with multiple Work Terms require at least 30 CR before the first WT.`);
+                        
                     }
                 }
 
@@ -1848,6 +2024,7 @@
                         if (prevCr < 12) {
                             let lastWtName = currentSequence[lastWtIdx].courses.find(id => id.includes('WT')) || "last WT";
                             errors.push(`The term before your ${lastWtName} (${prevTerm.id}) must be Full-Time (≥ 12 credits). Currently it has ${prevCr} CR.`);
+                            
                         }
                     }
                 }
@@ -1915,6 +2092,11 @@
                 
                 justText.value = "";
                 justText.style.height = '80px'; 
+                document.querySelectorAll('.course-box.error-text').forEach(b => b.classList.remove('error-text'));
+                    errorCids.forEach(cid => {
+                        let el = document.getElementById(cid);
+                        if (el) el.classList.add('error-text');
+                    });
             }
         }
     } // <--- AICI SE ÎNCHIDE CORECT FUNCȚIA runLiveCheck() !!!

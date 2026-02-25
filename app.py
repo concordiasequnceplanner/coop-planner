@@ -131,7 +131,7 @@ def send_otp_email(recipient, otp):
             "reply_to": "coop_miae@concordia.ca"
         })
         # Dacă trece de linia de mai sus fără eroare, Resend confirmă expedierea!
-        return True, "I confirm the email has been sent"
+        return True, "I (the tool) confirm the email has been sent"
     except Exception as e:
         print(f"Resend Error: {e}")
         return False, str(e)
@@ -248,7 +248,26 @@ def parse_coop_term_string(term_str):
     if season == 'WIN' and '-' in s: year += 1
     return str(year), season
 
-
+def get_program_ft_credits():
+    try:
+        client = get_gspread_client()
+        sheet = client.open("Sid_Email_Mirror").worksheet("Program_names")
+        records = sheet.get_all_values()
+        ft_dict = {}
+        for row in records[1:]:  # Sărim peste header
+            if len(row) >= 2:
+                prog = str(row[0]).strip().upper()
+                prog = " ".join(prog.split()) # normalizăm spațiile
+                try:
+                    cr = float(row[1])
+                    if cr == 0: cr = 99
+                except:
+                    cr = 99
+                ft_dict[prog] = cr
+        return ft_dict
+    except Exception as e:
+        print("Error fetching Program_names:", e)
+        return {}
 
 def get_student_coop_data(target_sid):
     if not target_sid: return {"found": False}
@@ -664,6 +683,12 @@ def index():
                     })
         except Exception as e:
             print(f"Pending List Error: {e}")
+    ft_credits_dict = get_program_ft_credits()
+
+    return render_template("planner.html", programe=programs, coop_data_json=json.dumps(coop_data),
+                           is_power_user=is_power_user, viewing_sid=viewing_sid, pending_list=pending_list,
+                           program_ft_credits_json=json.dumps(ft_credits_dict))
+
     return render_template("planner.html", programe=programs, coop_data_json=json.dumps(coop_data),
                            is_power_user=is_power_user, viewing_sid=viewing_sid, pending_list=pending_list)
 
@@ -1689,8 +1714,14 @@ def generate():
     # =========================================================
     warning_msgs = []
     
+    # Extragem limita de credite pentru programul curent
+    ft_dict = get_program_ft_credits()
+    prog_upper = " ".join(program_name.upper().split())
+    ft_limit = ft_dict.get(prog_upper, 99)
+    if ft_limit == 0: ft_limit = 99
+
     if all_wts_in_prog:
-        # REGULA: 30 CR (CORE/PROG/TE) înainte de primul WT
+        # REGULA 4: 30 CR (CORE/PROG/TE) înainte de primul WT
         first_wt = all_wts_in_prog[0]
         if first_wt in placements:
             first_wt_idx = placements[first_wt][2]
@@ -1705,26 +1736,21 @@ def generate():
                                 core_credits += float(c.get('CREDIT', 0) or 0)
             if core_credits < 30.0:
                 warning_msgs.append(f"Only {core_credits} credits of CORE/TE before {first_wt}. You need at least 30 CR.")
-                
-        # REGULA: Full-Time (>= 12 CR) înainte de ULTIMUL WT
-        last_wt = all_wts_in_prog[-1]
-        if last_wt in placements:
-            last_wt_idx = placements[last_wt][2]
-            prev_idx = last_wt_idx - 1
-            if prev_idx >= 0:
-                p_y = (prev_idx // 3) + 1
-                p_t = ["SUM", "FALL", "WIN"][prev_idx % 3]
-                
-                # Excepția 1: Fără limită de 12CR dacă termenul precedent este Summer
-                if p_t != "SUM":
-                    # Excepția 2: Fără limită dacă termenul precedent este tot un WT
-                    prev_has_wt = any('WT' in str(c.get('COURSE', '')).upper() for c in sequence_dict[str(p_y)][p_t]["cursuri"])
-                    
-                    if not prev_has_wt:
-                        # Calculăm totalul de credite valide în acel termen anterior
-                        prev_cr = sum(float(c.get('CREDIT', 0) or 0) for c in sequence_dict[str(p_y)][p_t]["cursuri"] if 'WT' not in str(c.get('COURSE', '')).upper())
-                        if prev_cr < 12.0:
-                            warning_msgs.append(f"Term before {last_wt} must be Full-Time (≥ 12 credits). Currently has {prev_cr} CR.")
+
+        # REGULA 5 NOUĂ: Toate termenele Fall/Winter dinaintea ultimului WT trebuie să fie Full-Time
+        if ft_limit != 99:
+            last_wt = all_wts_in_prog[-1]
+            if last_wt in placements:
+                last_wt_idx = placements[last_wt][2]
+                for c_idx in range(1, last_wt_idx): # Sărim peste Y0
+                    p_y = (c_idx // 3) + 1
+                    p_t = ["SUM", "FALL", "WIN"][c_idx % 3]
+
+                    if p_t != "SUM":
+                        # Backend-ul doar avertizează dacă găsește un termen de studiu (nu gol) sub limită
+                        term_cr = sum(float(c.get('CREDIT', 0) or 0) for c in sequence_dict[str(p_y)][p_t]["cursuri"] if 'WT' not in str(c.get('COURSE', '')).upper())
+                        if 0 < term_cr < ft_limit:
+                            warning_msgs.append(f"Study term {p_y} {p_t} (before {last_wt}) must be Full-Time (≥ {ft_limit} credits). Currently has {term_cr} CR.")
 
     # --- Construim raspunsul final de trimis catre Javascript ---
 

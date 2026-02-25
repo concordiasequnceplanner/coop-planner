@@ -44,11 +44,19 @@
         let idleTime = 0;
         function timerIncrement() {
             idleTime++;
-            if (idleTime >= 10) { // 10 minutes
-                handleLogout(null, true); // <--- AICI am modificat
+            
+            // --- NOU: 6 ore (360 min) pt Admini, 30 min pt Studenți ---
+            {% if is_power_user %}
+            let maxIdle = 360; 
+            {% else %}
+            let maxIdle = 30;  
+            {% endif %}
+
+            if (idleTime >= maxIdle) { 
+                handleLogout(null, true); 
             }
         }
-        setInterval(timerIncrement, 60000); // 1 minute
+        setInterval(timerIncrement, 60000); // 1 minut
         document.onmousemove = document.onkeypress = document.onclick = document.ontouchstart = function() { idleTime = 0; };
     </script>
 
@@ -442,7 +450,9 @@
 </div>
 
 <script>
+    const programFtCredits = {{ program_ft_credits_json | safe }};
     let windowLoadedSeqTimestamp = null;
+
     let windowLoadedSeqTitle = "";
     let windowLoadedSeqRowIndex = null; // NOU: Memoram randul exact din Excel
     let currentPendingList = [];        // NOU: Salvam lista in memorie, nu in HTML
@@ -501,6 +511,8 @@
     async function handleLogout(e, isIdle = false) {
         if (e) e.preventDefault();
         
+        // --- NOU: Doar studenții fac auto-save la ieșire ---
+        {% if not is_power_user %}
         let loadingOverlay = document.getElementById('loadingOverlay');
         if (loadingOverlay) {
             loadingOverlay.style.display = 'flex';
@@ -549,7 +561,6 @@
                 student_comments: ""
             };
 
-            // Trimitem salvarea silențios către server
             await fetch('/save_sequence', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -557,10 +568,12 @@
             });
         } catch (err) {
             console.error("Auto-save on logout failed:", err);
-        } finally {
-            // Indiferent dacă salvarea reușește sau nu, delogăm utilizatorul
-            window.location.href = '/logout';
         }
+        {% endif %}
+        // --- FINAL CONDITIE JINJA ---
+
+        // Toată lumea ajunge aici și e delogată din sesiune
+        window.location.href = '/logout';
     }
     function injectCoopHeaders() {
         // AM STERS: if (!serverCoopData.found) return;
@@ -693,13 +706,23 @@
             sequence_data.unallocated.push(el.id);
         });
 
+        // --- NOU: Extragem ID-ul studentului vizualizat în acest moment ---
+        let currentSid = "";
+        let displayViewingSid = document.getElementById('displayViewingSid');
+        if (displayViewingSid) {
+            currentSid = displayViewingSid.innerText.split('-')[0].trim();
+        }
+
         try {
             const res = await fetch('/save_sequence', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
-                    name: name, program: document.getElementById('programSelect').value,
-                    sequence_data: sequence_data, term_data: termAttributes 
+                    name: name, 
+                    program: document.getElementById('programSelect').value,
+                    student_id: currentSid, // <--- REZOLVAREA ESTE AICI
+                    sequence_data: sequence_data, 
+                    term_data: termAttributes 
                 })
             });
             if(res.ok) alert("Sequence saved to Google Drive!");
@@ -707,6 +730,8 @@
         } catch(e) { console.error(e); alert("Save failed."); }
     }
 
+
+    
     async function openLoadModal() {
         const res = await fetch('/load_sequences');
 
@@ -2005,26 +2030,46 @@
 
                 // Regula 5: Termenul imediat precedent ULTIMULUI WT trebuie să fie Full-Time (≥ 12 credite)
                 // Regula 5: Termenul imediat precedent ULTIMULUI WT trebuie să fie Full-Time (≥ 12 credite)
-                let lastWtIdx = wtIndices[wtIndices.length - 1]; // Găsește ultimul WT din secvență
-                if (lastWtIdx > 1) { 
-                    let prevTerm = currentSequence[lastWtIdx - 1];
+                // Regula 5 NOUĂ: Toate termenele de studiu (Fall/Win) marcate cu COOP (albastre) înainte de ultimul WT
+            // Regula 5 NOUĂ: Toate termenele de studiu (Fall/Win) marcate cu COOP (albastre) înainte de ultimul WT
+                let lastWtIdx = wtIndices[wtIndices.length - 1]; 
+                
+                let pYear = parseInt(document.getElementById('startYear').value);
+                let pTerm = document.getElementById('startTerm').value;
+                let baseYear = pTerm === 'Winter' ? pYear - 1 : pYear;
+
+                let progName = document.getElementById('programSelect').value.toUpperCase().replace(/\s+/g, ' ').trim();
+                let credits_Ft = programFtCredits[progName] || 99;
+                if (credits_Ft === 0) credits_Ft = 99;
+
+                for (let i = 1; i < lastWtIdx; i++) { // Verificăm absolut toate termenele de până la ultimul WT
+                    let term = currentSequence[i];
+                    let isSummer = term.type.includes('SUM');
                     
-                    // Excepția 1: Nu cerem 12 credite vara
-                    let isPrevSummer = prevTerm.type.includes('SUM');
-                    // Excepția 2: Nu cerem 12 credite dacă termenul anterior e tot un WT
-                    let prevHasWt = prevTerm.courses.some(cid => coursesData[cid] && coursesData[cid].is_wt);
-                    
-                    if (!isPrevSummer && !prevHasWt) {
-                        let prevCr = 0;
-                        prevTerm.courses.forEach(cid => {
-                            let c = coursesData[cid];
-                            if (c && !c.is_wt) prevCr += c.credit;
-                        });
+                    if (!isSummer) {
+                        let termRealYear = term.type === 'WIN' ? baseYear + term.year : baseYear + term.year - 1;
+                        let coopKey = `${termRealYear}_${term.type}`;
                         
-                        if (prevCr < 12) {
-                            let lastWtName = currentSequence[lastWtIdx].courses.find(id => id.includes('WT')) || "last WT";
-                            errors.push(`The term before your ${lastWtName} (${prevTerm.id}) must be Full-Time (≥ 12 credits). Currently it has ${prevCr} CR.`);
+                        // Verificăm dacă termenul are casetă albastră COOP
+                        let isCoopRegistered = studentCoopData && studentCoopData[coopKey] !== undefined;
+                        
+                        // NOU: Verificăm dacă termenul conține deja un WT plasat!
+                        let termHasWt = term.courses.some(cid => coursesData[cid] && coursesData[cid].is_wt);
+
+                        // Dacă e semestru COOP, DAR NU are WT în el, atunci îi cerem 12 credite
+                        if (isCoopRegistered && !termHasWt) {
+                            let prevCr = 0;
+                            term.courses.forEach(cid => {
+                                let c = coursesData[cid];
+                                if (c && !c.is_wt && c.type !== 'REPEAT') prevCr += c.credit;
+                            });
                             
+                            // Dacă nu atinge limita din Google Sheets, dă eroare
+                            if (prevCr < credits_Ft && credits_Ft !== 99) {
+                                let lastWtName = currentSequence[lastWtIdx].courses.find(id => id.includes('WT')) || "last WT";
+                                errors.push(`The study term ${term.id} (before your ${lastWtName}) must be Full-Time (≥ ${credits_Ft} credits). Currently it has ${prevCr} CR.`);
+                                term.courses.forEach(cid => errorCids.add(cid)); // Le face roșii
+                            }
                         }
                     }
                 }

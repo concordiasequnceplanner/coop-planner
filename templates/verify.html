@@ -30,13 +30,47 @@
         {% endif %}
         
         <form method="POST">
-            <input type="text" name="otp" placeholder="Enter 6-digit code" required autocomplete="off" maxlength="6">
-            <button type="submit">Verify & Login</button>
+            <input type="text" name="otp" id="otp_input" list="past_otps" required autocomplete="off" placeholder="Enter 6-digit code">
+        
+            <datalist id="past_otps"></datalist>
+
+            <button type="submit" class="btn">Verify & Login</button>
+  
         </form>
         
         <div style="margin-top: 20px;">
             <a href="/login" style="color: #666; font-size: 13px; text-decoration: none;">← Cancel and go back</a>
         </div>
     </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const datalist = document.getElementById('past_otps');
+            const inputField = document.getElementById('otp_input');
+            const form = inputField.closest('form');
+            
+            // Citim codurile salvate anterior (dacă există)
+            let savedOtps = JSON.parse(localStorage.getItem('saved_otps') || '[]');
+            
+            // Le adăugăm ca opțiuni de auto-complete
+            savedOtps.forEach(code => {
+                let option = document.createElement('option');
+                option.value = code;
+                datalist.appendChild(option);
+            });
+
+            // Când se trimite formularul, salvăm codul nou
+            if (form) {
+                form.addEventListener('submit', function() {
+                    let val = inputField.value.trim();
+                    if (val && !savedOtps.includes(val)) {
+                        savedOtps.unshift(val); // Îl punem primul în listă
+                        if (savedOtps.length > 5) savedOtps.pop(); // Păstrăm doar ultimele 5 ca să nu se facă spam
+                        localStorage.setItem('saved_otps', JSON.stringify(savedOtps));
+                    }
+                });
+            }
+        });
+    </script>
 </body>
 </html>

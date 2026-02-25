@@ -1326,7 +1326,7 @@
                             targetZoneId = 'zone_Y0_ANY'; 
                         } else {
                             // 3. Calculăm rândul din grilă folosind anul academic (baseYear), NU anul calendaristic
-                            let relativeYear = tYear - baseYear + (tSeason === 'FALL' ? 1 : 0);
+                            let relativeYear = tYear - baseYear + (tSeason === 'WIN' ? 0 : 1);
                             
                             if (relativeYear >= 1 && relativeYear <= 7) {
                                 targetZoneId = `zone_Y${relativeYear}_${tSeason}`;

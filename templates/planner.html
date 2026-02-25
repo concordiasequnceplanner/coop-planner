@@ -1830,14 +1830,14 @@
                     if (c.from_transcript && c.original_zone) {
                         let readableZone = c.original_zone.replace('zone_', '').replace('_', ' ');
                         errors.push(`<b>${c.id}</b> is on your transcript (taken in ${readableZone}) and cannot be unallocated.`);
-                        errorCids.add(c.id);
+                        ////errorCids.add(c.id);
                     } 
                     // Logica normală pentru cursuri neplasate
                     else if (isCoop || !c.is_wt) {
                         let t = (c.type || "").toUpperCase();
                         if (t.includes('CORE') || t === 'GEN' || t === 'ECP') {
                             errors.push(`Course <b>${c.id}</b> (${t}) must be placed.`);
-                            errorCids.add(c.id);
+                            //errorCids.add(c.id);
                         }
                     }
                 }
@@ -1877,7 +1877,7 @@
                         let readableOrig = c.original_zone.replace('zone_', '').replace('_', ' ');
                         let readableCurr = term.id.replace('_', ' ');
                         errors.push(`Transcript mismatch: <b>${c.id}</b> was taken in <b>${readableOrig}</b> but moved to <b>${readableCurr}</b>.`);
-                        errorCids.add(c.id);
+                        //errorCids.add(c.id);
                     }
                 }
 
@@ -1900,7 +1900,7 @@
                         // Ignorăm eroarea dacă cursul are setat termenul 'ANY'
                         if (termsUp !== 'ANY' && !termsUp.includes(targetUp)) {
                             errors.push(`<b>${cid}</b> is not offered in <b>${targetUp}</b>.`);
-                            errorCids.add(c.id);
+                            //errorCids.add(c.id);
                         }
 
                         if (c.prereqs && c.prereqs !== 'None' && c.prereqs !== 'N/A') {
@@ -1909,7 +1909,7 @@
                                 if (opts.length > 0) {
                                     let satisfied = opts.some(opt => { return takenSet.has(opt) && !term.courses.includes(opt); });
                                     if (!satisfied) errors.push(`<b>${cid}</b> in ${term.id} missing pre-req group: [${opts.join(' or ')}].`);
-                                    errorCids.add(c.id);
+                                    //errorCids.add(c.id);
                                 }
                             });
                         }
@@ -1919,7 +1919,7 @@
                                 let opts = parseCourseIDs(grp).filter(o => coursesData[o]);
                                 if (opts.length > 0 && !opts.some(opt => takenSet.has(opt))) {
                                     errors.push(`<b>${cid}</b> in ${term.id} missing co-req group: [${opts.join(' or ')}].`);
-                                    errorCids.add(c.id);
+                                    //errorCids.add(c.id);
                                 }
                             });
                         }
@@ -2181,7 +2181,7 @@
             justText = justText.trim();
         }
 
-        
+
         document.getElementById('loadingOverlay').style.display = 'flex';
         
         try {

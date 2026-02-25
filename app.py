@@ -14,6 +14,10 @@ app = Flask(__name__)
 app.secret_key = "SVsecretKEY"
 resend.api_key = os.environ.get("RESEND_API_KEY")
 
+#debug_no_emails = "DEBUG" # debug
+debug_no_emails =  "SITE_ACTIVE" # then it works
+debug_email="sorin.voiculescu@concordia.ca"
+
 STANDARD_SEQUENCES = {
     "INDUSTRIAL": {
         "ACCO220": "Y1_FALL", "ENGR213": "Y1_FALL", "INDU211": "Y1_FALL", "MIAE211": "Y1_FALL", "ENGR245": "Y1_FALL",
@@ -137,24 +141,43 @@ def get_email_recipients(program, target_sid, student_email, action_type):
     # Adrese fixe
     coop_ad_email = "coop_miae@concordia.ca"
     submit_notification = "sorin.voiculescu@concordia.ca"
-    miae_program_assistant = "sabrina.poirier@concordia.ca"
-    email_coop_approval = "coopresequence@concordia.ca"
+
+    if debug_no_emails == "SITE_ACTIVE" : 
+        miae_program_assistant = "sabrina.poirier@concordia.ca"
+        email_coop_approval = "coopresequence@concordia.ca"
+    else:
+        miae_program_assistant = debug_email
+        email_coop_approval = debug_email
+
+
+    
 
     # Logica de selectare a coordonatorului (default Frederick pentru cazurile neacoperite)
     coord_email = "frederick.francis@concordia.ca" 
     
     if program and "INDU" in str(program).upper():
         # Nathalie pentru INDU
-        coord_email = "nathalie.steverman@concordia.ca"
+        if debug_no_emails == "SITE_ACTIVE" : 
+            coord_email = "nathalie.steverman@concordia.ca"
+        else:
+            coord_email = debug_email
     elif target_sid:
         try:
             last_digit = int(str(target_sid)[-1])
             if 0 <= last_digit <= 4:
                 # Frederick
-                coord_email = "frederick.francis@concordia.ca"
+                if debug_no_emails == "SITE_ACTIVE" : 
+                    coord_email = "frederick.francis@concordia.ca"
+                else:
+                    coord_email = debug_email
+                
             elif 5 <= last_digit <= 9:
                 # Nadia (momentan setat tot pe Frederick, cf. codului tau)
-                coord_email = "nadia.mazzaferro@concordia.ca"
+               
+                if debug_no_emails == "SITE_ACTIVE" : 
+                    coord_email = "nadia.mazzaferro@concordia.ca"
+                else:
+                    coord_email = debug_email
         except ValueError:
             pass
             
@@ -684,8 +707,19 @@ def handle_otp_logic(email, sid, is_guest=False, guest_name=''):
                 
             if (now - req_time).total_seconds() < 1800:
                 time_str = req_time.strftime('%H:%M:%S')
+                
+                # Calculăm câte minute mai sunt din cele 30 (1800 secunde)
+                remaining_seconds = 1800 - (now - req_time).total_seconds()
+                remaining_minutes = int(remaining_seconds // 60)
+                
+                # Dacă e sub un minut, afișăm secunde, altfel minute
+                if remaining_minutes > 0:
+                    time_left_text = f"{remaining_minutes} minute(s)"
+                else:
+                    time_left_text = f"{int(remaining_seconds)} second(s)"
+                
                 # Studentul a cerut un cod prea devreme, NU trimitem altul.
-                session['otp_message'] = f"⚠️ A code was already sent to you at {time_str}. Please use that same code (check your spam folder). It remains valid for 30 minutes."
+                session['otp_message'] = f"⚠️ A code was already sent at {time_str} (server's time). Please check your spam folder. That code is still valid for {time_left_text}."
                 session['pre_auth_email'] = email
                 session['temp_sid'] = sid
                 session['temp_is_guest'] = is_guest
@@ -708,7 +742,7 @@ def handle_otp_logic(email, sid, is_guest=False, guest_name=''):
     
     if is_sent:
         # Mesajul verde de confirmare dorit
-        session['otp_message'] = f"✅ {resend_msg} to {email}! Please enter the access code below. The code is valid until {valid_until}  - now server's time is {nowtime}."
+        session['otp_message'] = f"✅ {resend_msg} to {email}! Please enter the access code below. The code is valid until {valid_until}  FYI, server's time is now {nowtime}."
     else:
         # Mesajul roșu în caz că Resend e picat sau API key-ul e greșit
         session['otp_message'] = f"❌ Error sending email via Resend API: {resend_msg}"
@@ -902,7 +936,38 @@ def save_sequence():
         sheet.append_row([email_to_save, name, program, seq_json, timestamp, term_json, settings_json, status, justification, student_comments, target_id, current_name])
         
         # 2. Trimitem E-mailul daca este Submit Oficial
+        # 2. Trimitem E-mailul daca este Submit Oficial
         if status == "PENDING APPROVAL":
+            
+            # --- NOU: Adăugarea automată a justificării în S_id_comments ---
+            if justification:
+                try:
+                    comments_sheet = client.open("Sid_Email_Mirror").worksheet("S_id_comments")
+                    records = comments_sheet.get_all_values()
+                    found_row = -1
+                    existing_pub = ""
+                    existing_priv = ""
+                    
+                    for i, row in enumerate(records[1:], start=2):
+                        if len(row) > 0 and str(row[0]).strip() == target_id:
+                            found_row = i
+                            existing_pub = str(row[1]).strip() if len(row) > 1 else ""
+                            existing_priv = str(row[2]).strip() if len(row) > 2 else ""
+                            break
+                    
+                    timestamp_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
+                    new_addition = f"[{timestamp_str}] Student_answer: {justification}"
+                    
+                    # Păstrăm comentariile vechi și le adăugăm pe cele noi cu un spațiu între ele
+                    new_pub = (existing_pub + "\n\n" + new_addition).strip() if existing_pub else new_addition
+                    
+                    if found_row != -1:
+                        comments_sheet.update(values=[[new_pub, existing_priv]], range_name=f"B{found_row}:C{found_row}")
+                    else:
+                        comments_sheet.append_row([target_id, new_pub, ""])
+                except Exception as e:
+                    print(f"Error saving justification to S_id_comments: {e}")
+            # --- FINAL NOU ---
             try:
                 recipients = get_email_recipients(program, target_id, email_to_save, "SUBMIT")
                 

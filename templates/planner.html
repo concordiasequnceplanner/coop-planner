@@ -223,6 +223,21 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+
+        /* --- NOU: Delimitare orizontală clară între anii academici --- */
+        #tableBody tr td {
+            border-bottom: 4px dashed #aab7b8 !important; /* Linie întreruptă între ani */
+        }
+        
+        /* Păstrăm prima linie de sub Header solidă ca să arate elegant */
+        #tableBody tr:first-child td {
+            border-top: 4px solid #2c3e50 !important;
+        }
+        
+        /* Păstrăm ultima linie a tabelului solidă */
+        #tableBody tr:last-child td {
+            border-bottom: 4px solid #2c3e50 !important;
+        }
     </style>
 </head>
 

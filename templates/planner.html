@@ -1295,12 +1295,16 @@
                         coursesData[finalCid].from_transcript = true; 
                     }
 
-                    // --- PLASARE IN ANI (Logica ta originală, neschimbată) ---
+                    // --- PLASARE IN ANI (Logica CORECTATĂ pentru studenții din Iarnă) ---
                     let el = document.getElementById(finalCid);
                     if(el) {
                         let currentYr = new Date().getFullYear();
                         let startYearInput = document.getElementById('startYear').value;
+                        let pTerm = document.getElementById('startTerm').value;
                         let sYear = parseInt(startYearInput) || currentYr;
+                        
+                        // 1. Calculăm Anul Academic (Fall-ul de dinainte dacă a început iarna)
+                        let baseYear = pTerm === 'Winter' ? sYear - 1 : sYear;
                         
                         let tYearMatch = item.term.match(/\d{4}/);
                         let tYear = tYearMatch ? parseInt(tYearMatch[0]) : currentYr;
@@ -1314,11 +1318,16 @@
                         
                         let targetZoneId = 'zone_Y0_ANY';
                         
-                        // Plasare in ani
-                        if (tYear < sYear) {
+                        // 2. Folosim scorul cronologic ca să vedem exact dacă acel curs a fost luat ÎNAINTE de începerea programului
+                        let startScore = getTermScore(sYear, pTerm === 'Fall' ? 'FALL' : 'WIN');
+                        let tScore = getTermScore(tYear, tSeason);
+                        
+                        if (tScore < startScore) {
                             targetZoneId = 'zone_Y0_ANY'; 
                         } else {
-                            let relativeYear = tYear - sYear + 1;
+                            // 3. Calculăm rândul din grilă folosind anul academic (baseYear), NU anul calendaristic
+                            let relativeYear = tYear - baseYear + (tSeason === 'FALL' ? 1 : 0);
+                            
                             if (relativeYear >= 1 && relativeYear <= 7) {
                                 targetZoneId = `zone_Y${relativeYear}_${tSeason}`;
                             }
@@ -1328,8 +1337,8 @@
                         if(!tz) tz = document.getElementById('zone_Y0_ANY');
                         
                         coursesData[finalCid].locked = true; 
-                        coursesData[finalCid].from_transcript = true; // Ne asigurăm că are acest flag
-                        coursesData[finalCid].original_zone = tz.id;  // <--- NOU: Memorăm locația istorică din transcript!
+                        coursesData[finalCid].from_transcript = true; 
+                        coursesData[finalCid].original_zone = tz.id;  
                         
                         if (finalCid.includes('WT')) coursesData[finalCid].credit = 0; 
                         

@@ -16,44 +16,75 @@ resend.api_key = os.environ.get("RESEND_API_KEY")
 
 STANDARD_SEQUENCES = {
     "INDUSTRIAL": {
-        "ENGR213": "Y1_FALL", "INDU211": "Y1_FALL", "MIAE211": "Y1_FALL", "MIAE215": "Y1_FALL", "MIAE221": "Y1_FALL",
-        "ACCO220": "Y1_WIN", "ENCS282": "Y1_WIN", "ENGR201": "Y1_WIN", "ENGR245": "Y1_WIN", "MIAE313": "Y1_WIN",
-        "ENGR202": "Y2_SUM1", "ENGR233": "Y2_SUM1", "ENGR251": "Y2_SUM1", "ENGR371": "Y2_SUM1", "MIAE311": "Y2_SUM1", "MIAE312": "Y2_SUM1",
-        "WT1": "Y2_FALL",
-        "INDU323": "Y2_WIN", "INDU371": "Y2_WIN", "INDU372": "Y2_WIN", "MIAE380": "Y2_WIN",
-        "INDU311": "Y3_SUM1", "INDU320": "Y3_SUM1", "INDU324": "Y3_SUM1", "INDU330": "Y3_SUM1", "INDU423": "Y3_SUM1",
+        "ACCO220": "Y1_FALL", "ENGR213": "Y1_FALL", "INDU211": "Y1_FALL", "MIAE211": "Y1_FALL", "ENGR245": "Y1_FALL",
+        "ENCS282": "Y1_WIN", "ENGR201": "Y1_WIN", "MIAE215": "Y1_WIN", "MIAE221": "Y1_WIN", "MIAE313": "Y1_WIN",
+        "ENGR202": "Y2_SUM1", "INDU323": "Y2_SUM1", "ENGR233": "Y2_SUM1", "ENGR251": "Y2_SUM1", "ENGR371": "Y2_SUM1",
+        "INDU371": "Y2_FALL", "INDU372": "Y2_FALL", "MIAE380": "Y2_FALL", "MIAE311": "Y2_FALL", "MIAE312": "Y2_FALL", "ENGR301": "Y2_FALL",
+        "WT1": "Y2_WIN",
+        "INDU311": "Y3_SUM1", "ENGR311": "Y3_SUM1", "INDU320": "Y3_SUM1", "ENGR391": "Y3_SUM1", "ENGR392": "Y3_SUM1",
         "WT2": "Y3_FALL",
-        "ENGR311": "Y3_WIN", "INDU411": "Y3_WIN", "INDU421": "Y3_WIN",
+        "INDU324": "Y3_WIN", "INDU330": "Y3_WIN", "INDU412": "Y3_WIN", "INDU321": "Y3_WIN", "INDU421": "Y3_WIN",
         "WT3": "Y4_SUM1",
-        "INDU490A": "Y4_FALL", "INDU412": "Y4_FALL", 
+        "INDU342": "Y4_FALL", "INDU423": "Y4_FALL", "INDU490A": "Y4_FALL",
         "INDU490B": "Y4_WIN"
     },
+    
     "MECHANICAL": {
-        "CHEM205": "Y1_FALL", "ENGR213": "Y1_FALL", "MIAE211": "Y1_FALL", "MIAE215": "Y1_FALL", "PHYS204": "Y1_FALL",
-        "ENGR201": "Y1_WIN", "ENGR233": "Y1_WIN", "ENGR245": "Y1_WIN", "MIAE221": "Y1_WIN", "PHYS205": "Y1_WIN",
-        "ENCS282": "Y2_SUM1", "ENGR202": "Y2_SUM1", "ENGR251": "Y2_SUM1", "MIAE313": "Y2_SUM1",
-        "ENGR311": "Y2_FALL", "MECH343": "Y2_FALL", "MECH361": "Y2_FALL", "MIAE311": "Y2_FALL", "MIAE312": "Y2_FALL",
+        "ENCS282": "Y1_FALL", "ENGR213": "Y1_FALL", "ENGR242": "Y1_FALL", "MIAE211": "Y1_FALL", "MIAE215": "Y1_FALL",
+        "ENGR233": "Y1_WIN", "ENGR243": "Y1_WIN", "ENGR244": "Y1_WIN", "MIAE313": "Y1_WIN", "MIAE221": "Y1_WIN",
+        "ENGR201": "Y2_SUM1", "ENGR202": "Y2_SUM1", "ENGR251": "Y2_SUM1", "ENGR311": "Y2_SUM1", "MIAE311": "Y2_SUM1", "MIAE312": "Y2_SUM1",
+        "MECH321": "Y2_FALL", "MECH343": "Y2_FALL", "MECH351": "Y2_FALL", "MIAE380": "Y2_FALL", "ENGR361": "Y2_FALL",
         "WT1": "Y2_WIN",
-        "MECH351": "Y3_SUM1", "MECH352": "Y3_SUM1", "MECH368": "Y3_SUM1", "MIAE380": "Y3_SUM1",
-        "ENGR361": "Y3_FALL", "MECH370": "Y3_FALL", "MECH371": "Y3_FALL", "MECH390": "Y3_FALL",
-        "WT2": "Y3_WIN",
-        "MECH490A": "Y4_FALL",
+        "ENGR371": "Y3_SUM1", "MECH352": "Y3_SUM1", "MECH361": "Y3_SUM1", "ENGR391": "Y3_SUM1", "MECH390": "Y3_SUM1",
+        "WT2": "Y3_FALL",
+        "MECH371": "Y3_WIN", "MIAE383": "Y3_WIN", "MECH373": "Y3_WIN", "MECH375": "Y3_WIN", "ENGR392": "Y3_WIN",
+        "WT3": "Y4_SUM1",
+        "MECH368": "Y4_FALL", "ENGR301": "Y4_FALL", "MECH344": "Y4_FALL", "MECH490A": "Y4_FALL",
         "MECH490B": "Y4_WIN"
     },
 
-    # --- ADAUGĂ RAMURILE AERO AICI ---
     "AERO_A": {
-        "ENGR213": "Y1_FALL", "ENGR201": "Y1_WIN", # (Exemplu: pui cursurile cheie aici când le ai)
-        "WT1": "Y2_FALL", "WT2": "Y3_FALL", "WT3": "Y4_SUM1"
+        "ENCS282": "Y1_FALL", "ENGR213": "Y1_FALL", "ENGR242": "Y1_FALL", "MIAE215": "Y1_FALL", "AERO201": "Y1_FALL",
+        "ENGR233": "Y1_WIN", "ENGR201": "Y1_WIN", "ENGR243": "Y1_WIN", "ENGR244": "Y1_WIN", "ENGR251": "Y1_WIN", "ENGR202": "Y1_WIN",
+        "AERO290": "Y2_SUM1", "ENGR311": "Y2_SUM1", "ENGR361": "Y2_SUM1", "ENGR371": "Y2_SUM1", "MIAE211": "Y2_SUM1",
+        "AERO371": "Y2_FALL", "MECH343": "Y2_FALL", "MECH352": "Y2_FALL", "MIAE221": "Y2_FALL",
+        "WT1": "Y2_WIN",
+        "ENGR301": "Y3_SUM1", "AERO390": "Y3_SUM1", "ENGR391": "Y3_SUM1", "AERO417": "Y3_SUM1", "ENGR392": "Y3_SUM1",
+        "WT2": "Y3_FALL",
+        "AERO481": "Y3_WIN", "MECH361": "Y3_WIN", "MECH351": "Y3_WIN", "MIAE383": "Y3_WIN",
+        "WT3": "Y4_SUM1",
+        "AERO462": "Y4_FALL", "AERO464": "Y4_FALL", "MECH461": "Y4_FALL", "AERO455": "Y4_FALL", "AERO490A": "Y4_FALL",
+        "AERO465": "Y4_WIN", "AERO490B": "Y4_WIN"
     },
+    
     "AERO_B": {
-        # Template pentru Structuri
+        "AERO201": "Y1_FALL", "ENCS282": "Y1_FALL", "ENGR213": "Y1_FALL", "ENGR242": "Y1_FALL", "MIAE215": "Y1_FALL",
+        "AERO253": "Y1_WIN", "ENGR201": "Y1_WIN", "ENGR233": "Y1_WIN", "ENGR243": "Y1_WIN", "ENGR244": "Y1_WIN", "ENGR202": "Y1_WIN",
+        "AERO290": "Y2_SUM1", "ENGR311": "Y2_SUM1", "ENGR361": "Y2_SUM1", "ENGR371": "Y2_SUM1", "MIAE211": "Y2_SUM1",
+        "AERO371": "Y2_FALL", "MECH343": "Y2_FALL", "MIAE221": "Y2_FALL", "MIAE313": "Y2_FALL",
+        "WT1": "Y2_WIN",
+        "ENGR301": "Y3_SUM1", "AERO390": "Y3_SUM1", "ENGR391": "Y3_SUM1", "ENGR392": "Y3_SUM1", "MECH375": "Y3_SUM1",
+        "WT2": "Y3_FALL",
+        "AERO481": "Y3_WIN", "MECH373": "Y3_WIN", "MIAE311": "Y3_WIN", "MIAE312": "Y3_WIN", "MIAE383": "Y3_WIN",
+        "WT3": "Y4_SUM1",
+        "AERO431": "Y4_FALL", "AERO417": "Y4_FALL", "AERO486": "Y4_FALL", "MECH460": "Y4_FALL", "MECH412": "Y4_FALL", "AERO490A": "Y4_FALL",
+        "AERO487": "Y4_WIN", "AERO490B": "Y4_WIN"
     },
+    
     "AERO_C": {
-        # Template pentru Avionics
+        "AERO201": "Y1_FALL", "ENCS282": "Y1_FALL", "ENGR213": "Y1_FALL", "ENGR242": "Y1_FALL", "COEN243": "Y1_FALL",
+        "ELEC273": "Y1_WIN", "ENGR233": "Y1_WIN", "ENGR243": "Y1_WIN", "ENGR244": "Y1_WIN", "ENGR201": "Y1_WIN",
+        "COEN212": "Y2_SUM1", "COEN231": "Y2_SUM1", "ELEC242": "Y2_SUM1", "ENGR202": "Y2_SUM1", "ENGR361": "Y2_SUM1",
+        "AERO290": "Y2_FALL", "AERO371": "Y2_FALL", "COEN244": "Y2_FALL", "ELEC342": "Y2_FALL", "AERO253": "Y2_FALL", "ENGR371": "Y2_FALL",
+        "WT1": "Y2_WIN",
+        "ENGR301": "Y3_SUM1", "AERO390": "Y3_SUM1", "ENGR391": "Y3_SUM1", "ENGR392": "Y3_SUM1", "COEN311": "Y3_SUM1",
+        "WT2": "Y3_FALL",
+        "COEN352": "Y3_WIN", "ELEC481": "Y3_WIN", "MIAE383": "Y3_WIN", "AERO482": "Y3_WIN",
+        "WT3": "Y4_SUM1",
+        "AERO417": "Y4_FALL", "ELEC483": "Y4_FALL", "SOEN341": "Y4_FALL", "AERO483": "Y4_FALL", "AERO490A": "Y4_FALL",
+        "AERO490B": "Y4_WIN"
     }
 }
-
 def get_gspread_client():
     base_path = os.path.dirname(os.path.abspath(__file__))
     json_path = os.path.join(base_path, "cheie_google.json")

@@ -2082,6 +2082,7 @@
                 let newContent = "WARNINGS TO JUSTIFY:\n" + plainTextErrors + "\n\nMY JUSTIFICATION:\n";
                 
                 justText.value = newContent;
+                justText.dataset.originalText = newContent;
                 justText.style.height = ''; 
                 justText.style.height = justText.scrollHeight + 'px';
             } else {
@@ -2142,7 +2143,7 @@
 
     async function submitSequence() {
         const justTextElement = document.getElementById('justificationText');
-        const justText = justTextElement.value.trim();
+        let justText = justTextElement.value;
         const hasErrors = document.getElementById('justificationLabel').innerHTML.includes('⚠️');
 
         // Validare: Daca sunt erori, studentul trebuie sa scrie ceva DUPA textul auto-generat
@@ -2156,7 +2157,31 @@
         //        return;
         //    }
         //}
+        // --- NOU: Validare și Extragere Inteligentă a Justificării ---
+        if (hasErrors) {
+            let originalText = justTextElement.dataset.originalText || "";
+            
+            // 1. Calculăm diferența de caractere absolută (plus sau minus)
+            let diff = Math.abs(justText.length - originalText.length);
+            
+            // 2. Verificăm dacă a scris prea puțin
+            if (diff < 4 || justText.trim().length < 3) {
+                alert("⚠️ Please provide more details. Each warning must be addressed and justified before submitting.");
+                justTextElement.focus();
+                return;
+            }
+            
+            // 3. Extragerea textului (Dacă prima parte a rămas exact la fel, o tăiem. Altfel, o lăsăm toată)
+            if (justText.startsWith(originalText)) {
+                justText = justText.substring(originalText.length).trim();
+            } else {
+                justText = justText.trim();
+            }
+        } else {
+            justText = justText.trim();
+        }
 
+        
         document.getElementById('loadingOverlay').style.display = 'flex';
         
         try {

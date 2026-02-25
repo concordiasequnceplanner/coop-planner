@@ -158,7 +158,7 @@ def get_email_recipients(program, target_sid, student_email, action_type):
     if program and "INDU" in str(program).upper():
         # Nathalie pentru INDU
         if debug_no_emails == "SITE_ACTIVE" : 
-            coord_email = "nathalie.steverman@concordia.ca"
+            coord_email = "nadia.mazzaferro@concordia.ca"
         else:
             coord_email = debug_email
     elif target_sid:
@@ -175,7 +175,7 @@ def get_email_recipients(program, target_sid, student_email, action_type):
                 # Nadia (momentan setat tot pe Frederick, cf. codului tau)
                
                 if debug_no_emails == "SITE_ACTIVE" : 
-                    coord_email = "nadia.mazzaferro@concordia.ca"
+                    coord_email = "nathalie.steverman@concordia.ca" 
                 else:
                     coord_email = debug_email
         except ValueError:

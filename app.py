@@ -132,41 +132,59 @@ def send_otp_email(recipient, otp):
         print(f"Resend Error: {e}")
         return False, str(e)
 
+
 def get_email_recipients(program, target_sid, student_email, action_type):
-    # Logica de selectare a coordonatorului
-    # Poti inlocui "sorin.voiculescu@concordia.ca" cu adresele lor reale cand esti gata
-    coord_email = "sorin.voiculescu@concordia.ca" # coop_miae@concordia.ca
+    # Adrese fixe
+    coop_ad_email = "coop_miae@concordia.ca"
+    submit_notification = "sorin.voiculescu@concordia.ca"
+    miae_program_assistant = "sabrina.poirier@concordia.ca"
+    email_coop_approval = "coopresequence@concordia.ca"
+
+    # Logica de selectare a coordonatorului (default Frederick pentru cazurile neacoperite)
+    coord_email = "frederick.francis@concordia.ca" 
     
-    if "INDU" in str(program).upper():
-        # Nathalie
-        coord_email = "sorin.voiculescu@concordia.ca" # nathalie.steverman@concordia.ca
+    if program and "INDU" in str(program).upper():
+        # Nathalie pentru INDU
+        coord_email = "nathalie.steverman@concordia.ca"
     elif target_sid:
         try:
             last_digit = int(str(target_sid)[-1])
             if 0 <= last_digit <= 4:
                 # Frederick
-                coord_email = "sorin.voiculescu@concordia.ca" # frederick.francis@concordia.ca
+                coord_email = "frederick.francis@concordia.ca"
             elif 5 <= last_digit <= 9:
-                # Nadia
-                coord_email = "sorin.voiculescu@concordia.ca" # nadia.mazzaferro@concordia.ca
+                # Nadia (momentan setat tot pe Frederick, cf. codului tau)
+                coord_email = "nadia.mazzaferro@concordia.ca"
         except ValueError:
             pass
             
-    # Lista de bază (Folosită la SUBMIT și REWORK)
-    recipients = [
-        student_email, 
-        "sorin.voiculescu@concordia.ca", 
-        #"sabrina.poirier@concordia.ca", 
-        coord_email
-    ]
-    
-    # Dacă acțiunea este APPROVE, adăugăm adresa specială
-    if action_type == "APPROVED":
-        email_coop_approval = "sorin.voiculescu@concordia.ca" # coopresequence@concordia.ca
-        recipients.append(email_coop_approval)
+    # Pregătim dicționarul de returnare
+    recipients = {
+        "to": [],
+        "cc": [],
+        "bcc": []
+    }
+
+    # Aplicăm logica în funcție de acțiune
+    if action_type == "SUBMIT":
+        recipients["to"].append(coop_ad_email)
+        recipients["cc"].extend([miae_program_assistant, coord_email, student_email])
+        recipients["bcc"].append(submit_notification)
         
-    # Eliminam duplicatele (daca ai pus adresa ta peste tot acum, va trimite un singur mail)
-    return list(set(recipients))
+    elif action_type == "REWORK":
+        recipients["to"].append(student_email)
+        recipients["cc"].extend([coop_ad_email, miae_program_assistant, coord_email])
+        
+    elif action_type == "APPROVED":
+        recipients["to"].append(email_coop_approval)
+        recipients["cc"].extend([coop_ad_email, miae_program_assistant, coord_email, student_email])
+
+    # Curățăm listele de posibile valori nule/goale și eliminăm duplicatele, păstrând formatul de listă
+    recipients["to"] = list(set(filter(None, recipients["to"])))
+    recipients["cc"] = list(set(filter(None, recipients["cc"])))
+    recipients["bcc"] = list(set(filter(None, recipients["bcc"])))
+
+    return recipients
 
 
 
@@ -538,15 +556,24 @@ def update_status():
                 <p>Best Regards,<br><b>{power_user_name}</b></p>
             </div>
             """
+                    
+                # Așa preiei destinatarii acum:
+        # Așa preiei destinatarii acum (am adăugat parametrul 'status'):
+        email_data = get_email_recipients(program, target_sid, student_email, status)
+
+        try:
+            resend.Emails.send({
+                "from": "MIAE Planner <auth@concordiasequenceplanner.ca>",
+                "to": email_data["to"],
+                "cc": email_data["cc"],
+                "bcc": email_data["bcc"], 
+                "reply_to": "coop_miae@concordia.ca",
+                "subject": subject,       # <-- Folosim variabila reală creată mai sus
+                "html": html_body         # <-- Folosim corpul de email real creat mai sus
+            })
+        except Exception as e:
+            print(f"Eroare la trimitere email: {e}")
             
-        resend.Emails.send({
-            "from": "MIAE Planner <auth@concordiasequenceplanner.ca>", 
-            "to": recipients,
-            "subject": subject,
-            "html": html_body,
-            "reply_to": session.get('user_email')
-        })
-        
         return jsonify({"success": True})
     except Exception as e:
         print(f"Status Update Error: {e}")
@@ -953,7 +980,9 @@ def save_sequence():
                 
                 resend.Emails.send({
                     "from": "MIAE Planner <auth@concordiasequenceplanner.ca>", 
-                    "to": recipients,
+                    "to": recipients.get("to", []),
+                    "cc": recipients.get("cc", []),
+                    "bcc": recipients.get("bcc", []),
                     "subject": f"Sequence Approval Requested for {target_id} ({program})",
                     "html": html_body,
                     "reply_to": email_to_save 

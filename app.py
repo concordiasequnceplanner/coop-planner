@@ -546,7 +546,7 @@ def update_status():
             """
             
         else: # REWORK
-            subject = f"REWORK for sequence submitted on {original_timestamp_title}"
+            subject = f"REWORK for {student_name} ({target_sid}) - sequence submitted on {original_timestamp_title}"
             html_body = f"""
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
                 <p>Hello {student_name},</p>
@@ -704,10 +704,11 @@ def handle_otp_logic(email, sid, is_guest=False, guest_name=''):
     # 4. Salvăm în Google Sheets
     sheet.append_row([email, now.strftime(fmt), otp, 0])
     valid_until = (now + datetime.timedelta(minutes=30)).strftime('%H:%M:%S')
+    nowtime = (now).strftime('%H:%M:%S')
     
     if is_sent:
         # Mesajul verde de confirmare dorit
-        session['otp_message'] = f"✅ {resend_msg} to {email}! Please enter the access code below. The code is valid until {valid_until}."
+        session['otp_message'] = f"✅ {resend_msg} to {email}! Please enter the access code below. The code is valid until {valid_until}  - now server's time is {nowtime}."
     else:
         # Mesajul roșu în caz că Resend e picat sau API key-ul e greșit
         session['otp_message'] = f"❌ Error sending email via Resend API: {resend_msg}"

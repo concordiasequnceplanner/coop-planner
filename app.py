@@ -131,7 +131,7 @@ def send_otp_email(recipient, otp):
             "reply_to": "coop_miae@concordia.ca"
         })
         # Dacă trece de linia de mai sus fără eroare, Resend confirmă expedierea!
-        return True, "I (the tool) confirm the email has been sent"
+        return True, "The email has been sent"
     except Exception as e:
         print(f"Resend Error: {e}")
         return False, str(e)
@@ -527,44 +527,84 @@ def update_status():
             for wt in ["WT1", "WT2", "WT3"]:
                 if wt in wt_summary:
                     info = wt_summary[wt]
-                    change_text = f"<span style='color:red; font-weight:bold;'>changed from ({info['original']})</span>" if info['changed'] else "<span style='font-weight:bold;'>NO CHANGE</span>"
-                    wt_html += f"<p style='margin: 4px 0;'><b>{wt}:</b> {info['new_term']} - {change_text}</p>"
-                    
-            # --- CONSTRUIRE TABEL 4 COLOANE / 2 RANDURI ---
+                    change_text = f"<span style='color:#e74c3c; font-weight:bold;'>- {info.get('change_text')}</span>" if info.get('change_text') else "<span style='font-weight:bold; color:#27ae60;'>- NO CHANGE</span>"
+                    wt_html += f"<p style='margin: 4px 0; font-size: 14px;'><b>{wt}:</b> {info.get('new_term')} {change_text}</p>"
+            
             terms_html = ""
             if term_summary:
                 terms_html += "<table style='width: 100%; border-collapse: collapse; margin-top: 15px; font-family: Arial, sans-serif; font-size: 13px;'>"
-                terms_html += "<thead><tr style='background-color: #34495e; color: white;'><th style='padding: 10px; border: 1px solid #ddd; text-align: center; width: 16%;'>Year</th><th style='padding: 10px; border: 1px solid #ddd; text-align: center; width: 28%;'>Summer</th><th style='padding: 10px; border: 1px solid #ddd; text-align: center; width: 28%;'>Fall</th><th style='padding: 10px; border: 1px solid #ddd; text-align: center; width: 28%;'>Winter</th></tr></thead>"
-                terms_html += "<tbody>"
+                terms_html += "<thead><tr style='color: white;'>"
+                terms_html += "<th style='background-color: #34495e; padding: 10px; border: 1px solid #ddd; text-align: center; width: 16%;'>Year</th>"
+                terms_html += "<th style='background-color: #27ae60; padding: 10px; border: 1px solid #ddd; text-align: center; width: 28%;'>Summer</th>"
+                terms_html += "<th style='background-color: #f39c12; padding: 10px; border: 1px solid #ddd; text-align: center; width: 28%;'>Fall</th>"
+                terms_html += "<th style='background-color: #3498db; padding: 10px; border: 1px solid #ddd; text-align: center; width: 28%;'>Winter</th>"
+                terms_html += "</tr></thead><tbody>"
                 
                 for ts in term_summary:
                     year_str = ts.get('year', '')
                     data_term = ts.get('data', {})
                     
-                    # Randul 1: Credite si Nota "WAS W-x"
                     terms_html += "<tr>"
-                    terms_html += f"<td rowspan='2' style='padding: 10px; border: 1px solid #ddd; vertical-align: middle; background-color: #f8f9fa; text-align: center; font-weight: bold;'>{year_str}</td>"
+                    terms_html += f"<td rowspan='2' style='padding: 10px; border: 1px solid #ddd; vertical-align: middle; background-color: #f8f9fa; text-align: center; font-weight: bold; color: #333;'>{year_str}</td>"
                     
+                    # RÂNDUL 1: Credite și Avertizări WT
                     for t in ["SUM", "FALL", "WIN"]:
                         t_data = data_term.get(t, {})
                         cr = t_data.get('cr', 0)
                         wt_change = t_data.get('wt_change', '')
-                        wt_note_html = f"<br><span style='color: #c0392b; font-size: 11px;'>{wt_change}</span>" if wt_change else ""
-                        terms_html += f"<td style='padding: 5px; border: 1px solid #ddd; text-align: center; font-weight: bold; background-color: #fcfcfc;'>{cr} CR{wt_note_html}</td>"
-                    terms_html += "</tr>"
+                        wt_note_html = f"<br><span style='color: #c0392b; font-size: 10px; font-weight: bold;'>{wt_change}</span>" if wt_change else ""
+                        
+                        is_curr = t_data.get('is_current_term')
+                        is_inst = t_data.get('is_institute_wt')
+                        is_coop = t_data.get('is_coop')
+                        
+                        bg_col = "#fcfcfc"
+                        text_col = "#333333"
+                        border_col = "#ddd"
+                        
+                        if is_curr:
+                            bg_col = "#fff9c4"
+                            border_col = "#fbc02d"
+                        elif is_inst:
+                            bg_col = "#5DADE2" # Albastru Celest (mult mai deschis)
+                            text_col = "#ffffff"
+                        elif is_coop:
+                            bg_col = "#b3e5fc"
+                            
+                        terms_html += f"<td style='padding: 5px; border: 1px solid {border_col}; text-align: center; font-weight: bold; background-color: {bg_col}; color: {text_col};'>{cr} CR{wt_note_html}</td>"
+                    terms_html += "</tr><tr>"
                     
-                    # Randul 2: Cursurile
-                    terms_html += "<tr>"
+                    # RÂNDUL 2: Materiile plasate
                     for t in ["SUM", "FALL", "WIN"]:
                         t_data = data_term.get(t, {})
                         courses = t_data.get('courses', [])
+                        
+                        is_curr = t_data.get('is_current_term')
+                        is_inst = t_data.get('is_institute_wt')
+                        is_coop = t_data.get('is_coop')
+                        
+                        bg_col = "#ffffff"
+                        border_col = "#ddd"
+                        
+                        if is_curr:
+                            bg_col = "#fffde7"
+                            border_col = "#fbc02d"
+                        elif is_inst:
+                            bg_col = "#AED6F1" # Albastru deschis (distinct de coop normal)
+                        elif is_coop:
+                            bg_col = "#e1f5fe"
+                            
                         courses_html = ""
                         for c in courses:
                             if c.get('is_wt'):
                                 courses_html += f"<div style='background-color: #d5f5e3; font-weight: bold; padding: 4px; border-radius: 4px; color: #27ae60; border: 1px solid #abebc6; margin-bottom: 3px; text-align: center;'>{c.get('name')}</div>"
                             else:
-                                courses_html += f"<div style='margin-bottom: 2px; text-align: center;'>{c.get('name')} <span style='font-size: 11px; color: #7f8c8d;'>({c.get('credit')} cr)</span></div>"
-                        terms_html += f"<td style='padding: 10px; border: 1px solid #ddd; vertical-align: top;'>{courses_html}</td>"
+                                # Adaptăm culoarea textului în funcție de fundalul celest
+                                c_text_col = "#154360" if is_inst else "#333333"
+                                c_sub_col = "#2980B9" if is_inst else "#7f8c8d"
+                                courses_html += f"<div style='margin-bottom: 2px; text-align: center; color: {c_text_col};'>{c.get('name')} <span style='font-size: 11px; color: {c_sub_col};'>({c.get('credit')} cr)</span></div>"
+                                
+                        terms_html += f"<td style='padding: 10px; border: 1px solid {border_col}; vertical-align: top; background-color: {bg_col};'>{courses_html}</td>"
                     terms_html += "</tr>"
                     
                 terms_html += "</tbody></table>"
@@ -1004,40 +1044,84 @@ def save_sequence():
                 for wt in ["WT1", "WT2", "WT3"]:
                     if wt in wt_summary:
                         info = wt_summary[wt]
-                        change_text = f"<span style='color:red; font-weight:bold;'>changed from ({info['original']})</span>" if info['changed'] else "<span style='font-weight:bold;'>NO CHANGE</span>"
-                        wt_html += f"<p style='margin: 4px 0;'><b>{wt}:</b> {info['new_term']} - {change_text}</p>"
+                        change_text = f"<span style='color:#e74c3c; font-weight:bold;'>- {info.get('change_text')}</span>" if info.get('change_text') else "<span style='font-weight:bold; color:#27ae60;'>- NO CHANGE</span>"
+                        wt_html += f"<p style='margin: 4px 0; font-size: 14px;'><b>{wt}:</b> {info.get('new_term')} {change_text}</p>"
                 
                 terms_html = ""
                 if term_summary:
                     terms_html += "<table style='width: 100%; border-collapse: collapse; margin-top: 15px; font-family: Arial, sans-serif; font-size: 13px;'>"
-                    terms_html += "<thead><tr style='background-color: #34495e; color: white;'><th style='padding: 10px; border: 1px solid #ddd; text-align: center; width: 16%;'>Year</th><th style='padding: 10px; border: 1px solid #ddd; text-align: center; width: 28%;'>Summer</th><th style='padding: 10px; border: 1px solid #ddd; text-align: center; width: 28%;'>Fall</th><th style='padding: 10px; border: 1px solid #ddd; text-align: center; width: 28%;'>Winter</th></tr></thead>"
-                    terms_html += "<tbody>"
+                    terms_html += "<thead><tr style='color: white;'>"
+                    terms_html += "<th style='background-color: #34495e; padding: 10px; border: 1px solid #ddd; text-align: center; width: 16%;'>Year</th>"
+                    terms_html += "<th style='background-color: #27ae60; padding: 10px; border: 1px solid #ddd; text-align: center; width: 28%;'>Summer</th>"
+                    terms_html += "<th style='background-color: #f39c12; padding: 10px; border: 1px solid #ddd; text-align: center; width: 28%;'>Fall</th>"
+                    terms_html += "<th style='background-color: #3498db; padding: 10px; border: 1px solid #ddd; text-align: center; width: 28%;'>Winter</th>"
+                    terms_html += "</tr></thead><tbody>"
                     
                     for ts in term_summary:
                         year_str = ts.get('year', '')
                         data_term = ts.get('data', {})
                         
                         terms_html += "<tr>"
-                        terms_html += f"<td rowspan='2' style='padding: 10px; border: 1px solid #ddd; vertical-align: middle; background-color: #f8f9fa; text-align: center; font-weight: bold;'>{year_str}</td>"
+                        terms_html += f"<td rowspan='2' style='padding: 10px; border: 1px solid #ddd; vertical-align: middle; background-color: #f8f9fa; text-align: center; font-weight: bold; color: #333;'>{year_str}</td>"
                         
+                        # RÂNDUL 1: Credite și Avertizări WT
                         for t in ["SUM", "FALL", "WIN"]:
                             t_data = data_term.get(t, {})
                             cr = t_data.get('cr', 0)
                             wt_change = t_data.get('wt_change', '')
-                            wt_note_html = f"<br><span style='color: #c0392b; font-size: 11px;'>{wt_change}</span>" if wt_change else ""
-                            terms_html += f"<td style='padding: 5px; border: 1px solid #ddd; text-align: center; font-weight: bold; background-color: #fcfcfc;'>{cr} CR{wt_note_html}</td>"
+                            wt_note_html = f"<br><span style='color: #c0392b; font-size: 10px; font-weight: bold;'>{wt_change}</span>" if wt_change else ""
+                            
+                            is_curr = t_data.get('is_current_term')
+                            is_inst = t_data.get('is_institute_wt')
+                            is_coop = t_data.get('is_coop')
+                            
+                            bg_col = "#fcfcfc"
+                            text_col = "#333333"
+                            border_col = "#ddd"
+                            
+                            if is_curr:
+                                bg_col = "#fff9c4"
+                                border_col = "#fbc02d"
+                            elif is_inst:
+                                bg_col = "#5DADE2" # Albastru Celest (mult mai deschis)
+                                text_col = "#ffffff"
+                            elif is_coop:
+                                bg_col = "#b3e5fc"
+                                
+                            terms_html += f"<td style='padding: 5px; border: 1px solid {border_col}; text-align: center; font-weight: bold; background-color: {bg_col}; color: {text_col};'>{cr} CR{wt_note_html}</td>"
                         terms_html += "</tr><tr>"
                         
+                        # RÂNDUL 2: Materiile plasate
                         for t in ["SUM", "FALL", "WIN"]:
                             t_data = data_term.get(t, {})
                             courses = t_data.get('courses', [])
+                            
+                            is_curr = t_data.get('is_current_term')
+                            is_inst = t_data.get('is_institute_wt')
+                            is_coop = t_data.get('is_coop')
+                            
+                            bg_col = "#ffffff"
+                            border_col = "#ddd"
+                            
+                            if is_curr:
+                                bg_col = "#fffde7"
+                                border_col = "#fbc02d"
+                            elif is_inst:
+                                bg_col = "#AED6F1" # Albastru deschis (distinct de coop normal)
+                            elif is_coop:
+                                bg_col = "#e1f5fe"
+                                
                             courses_html = ""
                             for c in courses:
                                 if c.get('is_wt'):
                                     courses_html += f"<div style='background-color: #d5f5e3; font-weight: bold; padding: 4px; border-radius: 4px; color: #27ae60; border: 1px solid #abebc6; margin-bottom: 3px; text-align: center;'>{c.get('name')}</div>"
                                 else:
-                                    courses_html += f"<div style='margin-bottom: 2px; text-align: center;'>{c.get('name')} <span style='font-size: 11px; color: #7f8c8d;'>({c.get('credit')} cr)</span></div>"
-                            terms_html += f"<td style='padding: 10px; border: 1px solid #ddd; vertical-align: top;'>{courses_html}</td>"
+                                    # Adaptăm culoarea textului în funcție de fundalul celest
+                                    c_text_col = "#154360" if is_inst else "#333333"
+                                    c_sub_col = "#2980B9" if is_inst else "#7f8c8d"
+                                    courses_html += f"<div style='margin-bottom: 2px; text-align: center; color: {c_text_col};'>{c.get('name')} <span style='font-size: 11px; color: {c_sub_col};'>({c.get('credit')} cr)</span></div>"
+                                    
+                            terms_html += f"<td style='padding: 10px; border: 1px solid {border_col}; vertical-align: top; background-color: {bg_col};'>{courses_html}</td>"
                         terms_html += "</tr>"
                         
                     terms_html += "</tbody></table>"
@@ -1074,7 +1158,7 @@ def save_sequence():
                     "to": recipients.get("to", []),
                     "cc": recipients.get("cc", []),
                     "bcc": recipients.get("bcc", []),
-                    "subject": f"Sequence Approval Requested for {target_id} ({program})",
+                    "subject": f"Change of Sequence Approval Requested for {target_id} ({program})",
                     "html": html_body,
                     "reply_to": email_to_save 
                 })

@@ -2190,7 +2190,7 @@
     async function submitSequence() {
         const justTextElement = document.getElementById('justificationText');
         let justText = justTextElement.value;
-        const hasErrors = document.getElementById('justificationLabel').innerHTML.includes('⚠️');
+        const hasErrors = document.getElementById('justificationLabel').innerHTML.includes('error');
 
         // Validare: Daca sunt erori, studentul trebuie sa scrie ceva DUPA textul auto-generat
         //if (hasErrors) {
@@ -2834,6 +2834,7 @@
                     timestamp: windowLoadedSeqTimestamp,
                     original_title: windowLoadedSeqTitle,
                     row_index: windowLoadedSeqRowIndex, // <-- Trimitem Randul Exact!
+                    submitter_email: windowLoadedSeqEmail, // <--- ADAUGĂ ACEASTĂ LINIE
                     public_comments: pubComment,
                     private_comments: privComment,
                     wt_summary: wtSummary,

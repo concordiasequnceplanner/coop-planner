@@ -14,8 +14,8 @@ app = Flask(__name__)
 app.secret_key = "SVsecretKEY"
 resend.api_key = os.environ.get("RESEND_API_KEY")
 
-#debug_no_emails = "DEBUG" # debug
-debug_no_emails =  "SITE_ACTIVE" # then it works
+debug_no_emails = "DEBUG" # debug
+#debug_no_emails =  "SITE_ACTIVE" # then it works
 debug_email="sorin.voiculescu@concordia.ca"
 
 STANDARD_SEQUENCES = {
@@ -107,6 +107,7 @@ def verify_email_in_sheets(email):
     except Exception: return False, ""
 
 
+
 def get_student_email(target_sid, fallback_email="student@concordia.ca"):
     try:
         client = get_gspread_client()
@@ -119,6 +120,20 @@ def get_student_email(target_sid, fallback_email="student@concordia.ca"):
     except Exception as e:
         print("Error finding email:", e)
     return fallback_email
+
+def get_priority1_email(target_sid):
+    try:
+        client = get_gspread_client()
+        sheet = client.open("Sid_Email_Mirror").worksheet("Sid_Email_Admission")
+        for row in sheet.get_all_records():
+            if str(row.get('Student ID', '')).strip() == str(target_sid).strip():
+                # Check for priority 1
+                if str(row.get('email_priority', '')).strip() == '1':
+                    em = str(row.get('Primary Email', '')).strip()
+                    if em: return em
+    except Exception as e:
+        print("Error finding priority1 email:", e)
+    return ""
 
 def send_otp_email(recipient, otp):
     try:
@@ -137,7 +152,7 @@ def send_otp_email(recipient, otp):
         return False, str(e)
 
 
-def get_email_recipients(program, target_sid, student_email, action_type):
+def get_email_recipients(program, target_sid, submitter_email, priority1_email, action_type):
     # Adrese fixe
     coop_ad_email = "coop_miae@concordia.ca"
     submit_notification = "sorin.voiculescu@concordia.ca"
@@ -149,60 +164,47 @@ def get_email_recipients(program, target_sid, student_email, action_type):
         miae_program_assistant = debug_email
         email_coop_approval = debug_email
 
-
-    
-
-    # Logica de selectare a coordonatorului (default Frederick pentru cazurile neacoperite)
+    # Logica de selectare a coordonatorului
     coord_email = "frederick.francis@concordia.ca" 
-    
     if program and "INDU" in str(program).upper():
-        # Nathalie pentru INDU
-        if debug_no_emails == "SITE_ACTIVE" : 
-            coord_email = "nadia.mazzaferro@concordia.ca"
-        else:
-            coord_email = debug_email
+        if debug_no_emails == "SITE_ACTIVE" : coord_email = "nadia.mazzaferro@concordia.ca"
+        else: coord_email = debug_email
     elif target_sid:
         try:
             last_digit = int(str(target_sid)[-1])
             if 0 <= last_digit <= 4:
-                # Frederick
-                if debug_no_emails == "SITE_ACTIVE" : 
-                    coord_email = "frederick.francis@concordia.ca"
-                else:
-                    coord_email = debug_email
-                
+                if debug_no_emails == "SITE_ACTIVE" : coord_email = "frederick.francis@concordia.ca"
+                else: coord_email = debug_email
             elif 5 <= last_digit <= 9:
-                # Nadia (momentan setat tot pe Frederick, cf. codului tau)
-               
-                if debug_no_emails == "SITE_ACTIVE" : 
-                    coord_email = "nathalie.steverman@concordia.ca" 
-                else:
-                    coord_email = debug_email
-        except ValueError:
-            pass
+                if debug_no_emails == "SITE_ACTIVE" : coord_email = "nathalie.steverman@concordia.ca" 
+                else: coord_email = debug_email
+        except ValueError: pass
             
-    # Pregătim dicționarul de returnare
-    recipients = {
-        "to": [],
-        "cc": [],
-        "bcc": []
-    }
+    recipients = {"to": [], "cc": [], "bcc": []}
 
     # Aplicăm logica în funcție de acțiune
     if action_type == "SUBMIT":
         recipients["to"].append(coop_ad_email)
-        recipients["cc"].extend([miae_program_assistant, coord_email, student_email])
+        recipients["cc"].extend([miae_program_assistant, coord_email, submitter_email])
         recipients["bcc"].append(submit_notification)
+        # Adăugăm priority 1 în bcc dacă e diferit de cel care dă submit
+        if priority1_email and priority1_email.strip().lower() != submitter_email.strip().lower():
+            recipients["bcc"].append(priority1_email)
         
     elif action_type == "REWORK":
-        recipients["to"].append(student_email)
+        recipients["to"].append(submitter_email)
         recipients["cc"].extend([coop_ad_email, miae_program_assistant, coord_email])
+        # Adăugăm priority 1 în bcc dacă e diferit de cel care a dat submit
+        if priority1_email and priority1_email.strip().lower() != submitter_email.strip().lower():
+            recipients["bcc"].append(priority1_email)
         
     elif action_type == "APPROVED":
         recipients["to"].append(email_coop_approval)
-        recipients["cc"].extend([coop_ad_email, miae_program_assistant, coord_email, student_email])
+        recipients["cc"].extend([coop_ad_email, miae_program_assistant, coord_email, submitter_email])
+        # AICI E LOGICA PRINCIPALĂ CERUTĂ:
+        if priority1_email and priority1_email.strip().lower() != submitter_email.strip().lower():
+            recipients["bcc"].append(priority1_email)
 
-    # Curățăm listele de posibile valori nule/goale și eliminăm duplicatele, păstrând formatul de listă
     recipients["to"] = list(set(filter(None, recipients["to"])))
     recipients["cc"] = list(set(filter(None, recipients["cc"])))
     recipients["bcc"] = list(set(filter(None, recipients["bcc"])))
@@ -443,8 +445,11 @@ def get_comments():
     return jsonify({"public": "", "private": ""})
 
 
+
 @app.route("/update_status", methods=["POST"])
 def update_status():
+
+    
     if not str(session.get('student_id', '')).startswith('9'): 
         return jsonify({"error": "Unauthorized"}), 403
         
@@ -516,9 +521,15 @@ def update_status():
                         break
                 
         # 3. Trimitem Emailul
-        student_email = get_student_email(target_sid)
+        # (Inside @app.route("/update_status") around line 337)
+        # 3. Trimitem Emailul
+        submitter_email = data.get("submitter_email", "") 
+        if not submitter_email: # Fallback în caz că vine gol din frontend
+            submitter_email = get_student_email(target_sid)
+            
+        priority1_email = get_priority1_email(target_sid)
         power_user_name = session.get('guest_name', 'Coordinator') if session.get('is_guest') else session.get('user_email').split('@')[0]
-        recipients = get_email_recipients(program, target_sid, student_email, status)
+
 
         if status == "APPROVED":
             subject = f"Approved sequence for {student_name} {target_sid} {program}"
@@ -641,7 +652,7 @@ def update_status():
                     
                 # Așa preiei destinatarii acum:
         # Așa preiei destinatarii acum (am adăugat parametrul 'status'):
-        email_data = get_email_recipients(program, target_sid, student_email, status)
+        email_data = get_email_recipients(program, target_sid, submitter_email, priority1_email, status)
 
         try:
             resend.Emails.send({
@@ -817,6 +828,7 @@ def handle_otp_logic(email, sid, is_guest=False, guest_name=''):
     session['temp_is_guest'] = is_guest
     session['temp_guest_name'] = guest_name
 
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
@@ -835,17 +847,83 @@ def login():
             guest_name = request.form.get("guest_name", "Unknown").strip()
             guest_sid = request.form.get("guest_sid", "00000000").strip()
             
-            # --- NOU: LOGAM DIRECT GUEST-UL FARA NICIUN COD ---
+            # --- BLOCĂM GUEST-UL DACĂ FOLOSEȘTE UN ID OFICIAL DEJA EXISTENT ---
+            if guest_sid and guest_sid != "00000000":
+                try:
+                    client = get_gspread_client()
+                    sheet = client.open("Sid_Email_Mirror").worksheet("Sid_Email_Admission")
+                    priority1_email = ""
+                    
+                    # Căutăm ID-ul în baza de date
+                    for row in sheet.get_all_records():
+                        if str(row.get('Student ID', '')).strip() == guest_sid:
+                            current_email = str(row.get('Primary Email', '')).strip()
+                            priority = str(row.get('email_priority', '')).strip()
+                            
+                            # Căutăm prioritatea 1
+                            if priority == '1':
+                                priority1_email = current_email
+                                break
+                            elif current_email and not priority1_email:
+                                priority1_email = current_email # Fallback dacă nu e trecut 1
+
+                    if priority1_email:
+                        # --- NOU: TRIMITEM ALERTA DE SECURITATE CĂTRE STUDENTUL REAL ---
+                        try:
+                            www = "https://concordia-sequence-planner.onrender.com/"
+                            resend.Emails.send({
+                                "from": "MIAE Planner <auth@concordiasequenceplanner.ca>",
+                                "to": [priority1_email],
+                                "subject": "Security Alert: Unauthorized Login Attempt",
+                                "html": f"""
+                                <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px;">
+                                    <h2 style="color: #c0392b; border-bottom: 2px solid #c0392b; padding-bottom: 10px;">Security Alert</h2>
+                                    <p>Hello,</p>
+                                    <p>There was a login attempt to the Concordia MIAE Academic Planner using your Student ID (<strong>{guest_sid}</strong>).</p>
+                                    <p>The email address used for this attempt was: <strong>{email}</strong></p>
+                                    <div style="background-color: #f9f9f9; border-left: 4px solid #f39c12; padding: 10px; margin: 15px 0;">
+                                        <strong>If this was you:</strong> Please return to <a href="{www}" style="color: #3498db; text-decoration: none; font-weight: bold;">the Planner</a> and log in using this official email address ({priority1_email}) instead of choosing the Guest option.
+                                    </div>
+                                    <p>If you did not make this request, no further action is required. The login request was denied.</p>
+                                </div>
+                                """,
+                                "reply_to": "coop_miae@concordia.ca"
+                            })
+                        except Exception as mail_err:
+                            print(f"Failed to send security alert email: {mail_err}")
+
+                        # Mascăm emailul pentru a proteja identitatea (ex: a******@g***.com)
+                        parts = priority1_email.split('@')
+                        if len(parts) == 2:
+                            name_part = parts[0]
+                            domain_parts = parts[1].split('.')
+                            tld = domain_parts.pop()
+                            host_part = ".".join(domain_parts)
+                            
+                            masked_name = name_part[0] + "******" if len(name_part) > 0 else "******"
+                            masked_host = host_part[0] + "***" if len(host_part) > 0 else "***"
+                            masked_email = f"{masked_name}@{masked_host}.{tld}"
+                        else:
+                            masked_email = priority1_email
+
+                        error_msg = f"⛔ For this student ID please use the email registered with the CO-OP Institue / Concordia University {masked_email}. For help, contact coop_miae@concordia.ca ."
+
+                        
+                        # Returnăm userul pe pagină cu mesajul de eroare și îl oprim
+                        return render_template("login.html", ask_guest_info=True, email=email, error=error_msg)
+
+                except Exception as e:
+                    print("Error checking guest SID:", e)
+
+            # --- Dacă a trecut de verificare (ID nou sau 00000000), îl logăm ca guest ---
             session['user_email'] = email
             session['student_id'] = guest_sid
             session['is_guest'] = True
             session['guest_name'] = guest_name
             
-            # Îl trimitem direct pe pagina principală (Sare peste verify)
             return redirect(url_for('index'))
 
     return render_template("login.html")
-
 
 
 @app.route("/verify", methods=["GET", "POST"])
@@ -1034,7 +1112,8 @@ def save_sequence():
                     print(f"Error saving justification to S_id_comments: {e}")
             # --- FINAL NOU ---
             try:
-                recipients = get_email_recipients(program, target_id, email_to_save, "SUBMIT")
+                priority1_email = get_priority1_email(target_id)
+                recipients = get_email_recipients(program, target_id, email_to_save, priority1_email, "SUBMIT")
                 
                 # --- NOU: Preluăm sumarul trimis de pe frontend ---
                 wt_summary = data.get('wt_summary', {})

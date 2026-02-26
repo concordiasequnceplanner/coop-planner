@@ -456,6 +456,7 @@
     let windowLoadedSeqTitle = "";
     let windowLoadedSeqRowIndex = null; // NOU: Memoram randul exact din Excel
     let currentPendingList = [];        // NOU: Salvam lista in memorie, nu in HTML
+    let windowLoadedSeqEmail = ""; // NOU: Memorăm e-mailul exact al secvenței
     
     let coursesData = {};
     let repeatedCoursesList = []; 
@@ -2173,8 +2174,8 @@
                     coordName = "Frederick Francis";
                     coordEmail = "Frederick.francis@concordia.ca";
                 } else if (lastDigit >= 5 && lastDigit <= 9) {
-                    coordName = "Nadia"; // Poti pune numele intreg aici mai tarziu
-                    coordEmail = "Nadia.email@concordia.ca"; 
+                    coordName = "Nadia Mazzaferro"; // Poti pune numele intreg aici mai tarziu
+                    coordEmail = "nadia.mazzaferro@concordia.ca";
                 }
             }
         }
@@ -2202,6 +2203,37 @@
         //        return;
         //    }
         //}
+
+        // --- NOU: Blocăm secvențele goale SAU fără WT-uri (dacă studentul e la CO-OP) ---
+        let totalCoursesOnGrid = 0;
+        let totalWTsOnGrid = 0;
+        
+        document.querySelectorAll('td .drop-zone:not(#zone_Y0_ANY)').forEach(z => {
+            totalCoursesOnGrid += z.children.length;
+            
+            // Numărăm separat câte din ele sunt Work Terms
+            Array.from(z.children).forEach(el => {
+                if (el.classList.contains('wt') || el.id.includes('WT')) {
+                    totalWTsOnGrid++;
+                }
+            });
+        });
+        
+        // 1. Oprim dacă grila e complet goală
+        if (totalCoursesOnGrid === 0) {
+            alert("❌ Cannot submit an empty sequence! Please generate or place your courses on the grid first.");
+            return;
+        }
+        
+        // 2. Oprim dacă e student CO-OP dar nu a pus NICIUN Work Term pe grilă
+        let isCoop = document.getElementById('coopRegistered').checked;
+        if (isCoop && totalWTsOnGrid === 0) {
+            alert("❌ Cannot submit a CO-OP sequence without any Work Terms placed! Please place your WT courses on the grid before submitting.");
+            return;
+        }
+        // --- FINAL NOU ---
+
+
         // --- NOU: Validare și Extragere Inteligentă a Justificării ---
         if (hasErrors) {
             let originalText = justTextElement.dataset.originalText || "";
@@ -2248,11 +2280,20 @@
             }
 
             // --- NOU: Adunăm datele pentru Tabelul (Matricea 4x2) din E-mailul de Submit ---
+            // --- NOU: Colectare avansată date tabel (Culori + Istoric WT) ---
             let wtSummary = {};
             let termSummary = [];
             let baseYear = parseInt(document.getElementById('startYear').value);
             let baseTerm = document.getElementById('startTerm').value;
             let actualBaseYear = baseTerm === 'Winter' ? baseYear - 1 : baseYear;
+            
+            // Pentru identificarea trimestrului curent (galben)
+            const now = new Date();
+            const currYear = now.getFullYear();
+            const currMonth = now.getMonth();
+            let currSeason = 'WIN';
+            if (currMonth >= 4 && currMonth <= 7) currSeason = 'SUM';
+            else if (currMonth >= 8 && currMonth <= 11) currSeason = 'FALL';
             
             for(let y=1; y<=7; y++) {
                 let yearStr = `${actualBaseYear+y-1}-${actualBaseYear+y}`;
@@ -2261,15 +2302,34 @@
 
                 ['SUM', 'FALL', 'WIN'].forEach(t => {
                     let termRealYear = (t === 'WIN') ? (actualBaseYear + y) : (actualBaseYear + y - 1);
-                    let displayTermStr = `${termRealYear} ${t}`;
+                    let displayTermStr = `${yearStr} ${t}`; // Ex: 2025-2026 FALL
                     let zone = document.getElementById(`zone_Y${y}_${t}`);
+                    
+                    // Verificăm atributele de culori/stare pentru acest termen
+                    let is_current_term = (termRealYear === currYear && t === currSeason);
+                    let is_coop = false;
+                    let is_institute_wt = false;
+                    
+                    let coopInfo = studentCoopData[`${termRealYear}_${t}`];
+                    if (coopInfo) {
+                        is_coop = true;
+                        let safeWs = String(coopInfo.ws || '').trim().toUpperCase();
+                        let safeLabel = String(coopInfo.label || '').trim().toUpperCase();
+                        if (safeWs.includes('WT') || safeLabel.includes('W-')) {
+                            is_institute_wt = true;
+                        }
+                    }
                     
                     if (zone) {
                         let cr = document.getElementById(`cr_Y${y}_${t}`).innerText;
                         
-                        if (parseFloat(cr) > 0 || zone.children.length > 0) {
+                        // Salvăm rândul dacă are credite, cursuri puse, SAU dacă e un W- box nativ de la institut
+                        if (parseFloat(cr) > 0 || zone.children.length > 0 || is_institute_wt) {
                             hasCourses = true;
                             yearData[t].cr = cr;
+                            yearData[t].is_coop = is_coop;
+                            yearData[t].is_institute_wt = is_institute_wt;
+                            yearData[t].is_current_term = is_current_term;
                             
                             Array.from(zone.children).forEach(c => {
                                 let cData = coursesData[c.id];
@@ -2280,25 +2340,47 @@
                                 yearData[t].courses.push({ name: cName, credit: cCred, is_wt: isWT });
                                 
                                 if(isWT) {
-                                    let rawLabel = studentCoopData[`${termRealYear}_${t}`] ? String(studentCoopData[`${termRealYear}_${t}`].label).trim() : "";
+                                    let rawLabel = coopInfo ? String(coopInfo.label).trim() : "";
                                     let originalLabel = rawLabel;
                                     
-                                    // Dacă este gol, "nan", sau nu conține 'S-' / 'W-', îl declarăm OUT COOP
                                     if (!rawLabel || rawLabel.toLowerCase() === "nan" || (!rawLabel.includes('S-') && !rawLabel.includes('W-'))) {
                                         originalLabel = "OUT COOP";
                                     }
                                     
                                     let expectedFormat = c.id.replace(/[^A-Z0-9]/g, '').replace('WT', 'W-');
                                     let changed = !originalLabel.includes(expectedFormat);
+                                    let changeText = "";
                                     
                                     if (changed) {
-                                        yearData[t].wt_change = `WAS ${originalLabel}`;
+                                        // Găsim cronologic CÂND ar fi trebuit să aibă loc W-1/2/3
+                                        let origTermKey = Object.keys(studentCoopData).find(k => studentCoopData[k].label && studentCoopData[k].label.includes(expectedFormat));
+                                        
+                                        if (origTermKey) {
+                                            let [oYearStr, oTerm] = origTermKey.split('_'); 
+                                            let oYearInt = parseInt(oYearStr);
+                                            let oAcaYearStr = (oTerm === 'WIN') ? `${oYearInt-1}-${oYearInt}` : `${oYearInt}-${oYearInt+1}`;
+                                            let origDisplay = `${oAcaYearStr} ${oTerm}`;
+                                            
+                                            let getScore = (yy, season) => parseInt(yy) * 10 + (season==='WIN'?1:(season==='SUM'?2:3));
+                                            let currentScore = getScore(termRealYear, t);
+                                            let origScore = getScore(oYearInt, oTerm);
+                                            
+                                            if (currentScore < origScore) {
+                                                changeText = `advanced from ${origDisplay}`;
+                                            } else if (currentScore > origScore) {
+                                                changeText = `pushed later from ${origDisplay}`;
+                                            } else {
+                                                changeText = `changed from ${originalLabel}`;
+                                            }
+                                        } else {
+                                            changeText = `placed outside original schedule`;
+                                        }
+                                        yearData[t].wt_change = changeText; 
                                     }
-                                    
+
                                     wtSummary[c.id.replace(/[^A-Z0-9]/g, '')] = {
                                         new_term: displayTermStr,
-                                        original: originalLabel,
-                                        changed: changed
+                                        change_text: changeText
                                     };
                                 }
                             });
@@ -2407,6 +2489,8 @@
         windowLoadedSeqTimestamp = fullData.timestamp;
         windowLoadedSeqTitle = fullData.name;
         windowLoadedSeqRowIndex = fullData.row_index; 
+        windowLoadedSeqEmail = fullData.email; // <--- ADAUGĂ ACEASTĂ LINIE
+        
         
         let btnApprove = document.getElementById('btnApprove');
         let btnRework = document.getElementById('btnRework');
@@ -2625,69 +2709,118 @@
         let privComment = document.getElementById('privateComments') ? document.getElementById('privateComments').value : "";
         
         // Build WT Summary & Term Credits summary for the email
-        let wtSummary = {};
-        let termSummary = [];
-        
-        let baseYear = parseInt(document.getElementById('startYear').value);
-        let baseTerm = document.getElementById('startTerm').value;
-        let actualBaseYear = baseTerm === 'Winter' ? baseYear - 1 : baseYear;
-        
-        for(let y=1; y<=7; y++) {
-            let yearStr = `${actualBaseYear+y-1}-${actualBaseYear+y}`;
-            let hasCourses = false;
-            let yearData = { SUM: {cr: 0, courses: [], wt_change: ""}, FALL: {cr: 0, courses: [], wt_change: ""}, WIN: {cr: 0, courses: [], wt_change: ""} };
-
-            ['SUM', 'FALL', 'WIN'].forEach(t => {
-                let termRealYear = (t === 'WIN') ? (actualBaseYear + y) : (actualBaseYear + y - 1);
-                let displayTermStr = `${termRealYear} ${t}`;
-                
-                let zone = document.getElementById(`zone_Y${y}_${t}`);
-                if (zone) {
-                    let cr = document.getElementById(`cr_Y${y}_${t}`).innerText;
-                    
-                    if (parseFloat(cr) > 0 || zone.children.length > 0) {
-                        hasCourses = true;
-                        yearData[t].cr = cr;
-                        
-                        Array.from(zone.children).forEach(c => {
-                            let cData = coursesData[c.id];
-                            let isWT = c.id.includes('WT');
-                            let cName = cData ? cData.full_name : c.id;
-                            let cCred = isWT ? 0 : (cData ? cData.credit : 0);
-                            
-                            yearData[t].courses.push({ name: cName, credit: cCred, is_wt: isWT });
-                            
-                            if(isWT) {
-                                let rawLabel = studentCoopData[`${termRealYear}_${t}`] ? String(studentCoopData[`${termRealYear}_${t}`].label).trim() : "";
-                                let originalLabel = rawLabel;
-                                
-                                // Dacă este gol, "nan", sau nu conține 'S-' / 'W-', îl declarăm OUT COOP
-                                if (!rawLabel || rawLabel.toLowerCase() === "nan" || (!rawLabel.includes('S-') && !rawLabel.includes('W-'))) {
-                                    originalLabel = "OUT COOP";
-                                }
-                                
-                                let expectedFormat = c.id.replace(/[^A-Z0-9]/g, '').replace('WT', 'W-');
-                                let changed = !originalLabel.includes(expectedFormat);
-                                
-                                if (changed) {
-                                    yearData[t].wt_change = `WAS ${originalLabel}`; 
-                                }
-
-                                wtSummary[c.id.replace(/[^A-Z0-9]/g, '')] = {
-                                    new_term: displayTermStr,
-                                    original: originalLabel,
-                                    changed: changed
-                                };
-                            }
-                        });
-                    }
-                }
-            });
+        // --- NOU: Colectare avansată date tabel (Culori + Istoric WT) ---
+            let wtSummary = {};
+            let termSummary = [];
+            let baseYear = parseInt(document.getElementById('startYear').value);
+            let baseTerm = document.getElementById('startTerm').value;
+            let actualBaseYear = baseTerm === 'Winter' ? baseYear - 1 : baseYear;
             
-            if (hasCourses) {
-                termSummary.push({ year: yearStr, data: yearData });
+            // Pentru identificarea trimestrului curent (galben)
+            const now = new Date();
+            const currYear = now.getFullYear();
+            const currMonth = now.getMonth();
+            let currSeason = 'WIN';
+            if (currMonth >= 4 && currMonth <= 7) currSeason = 'SUM';
+            else if (currMonth >= 8 && currMonth <= 11) currSeason = 'FALL';
+            
+            for(let y=1; y<=7; y++) {
+                let yearStr = `${actualBaseYear+y-1}-${actualBaseYear+y}`;
+                let hasCourses = false;
+                let yearData = { SUM: {cr: 0, courses: [], wt_change: ""}, FALL: {cr: 0, courses: [], wt_change: ""}, WIN: {cr: 0, courses: [], wt_change: ""} };
+
+                ['SUM', 'FALL', 'WIN'].forEach(t => {
+                    let termRealYear = (t === 'WIN') ? (actualBaseYear + y) : (actualBaseYear + y - 1);
+                    let displayTermStr = `${yearStr} ${t}`; // Ex: 2025-2026 FALL
+                    let zone = document.getElementById(`zone_Y${y}_${t}`);
+                    
+                    // Verificăm atributele de culori/stare pentru acest termen
+                    let is_current_term = (termRealYear === currYear && t === currSeason);
+                    let is_coop = false;
+                    let is_institute_wt = false;
+                    
+                    let coopInfo = studentCoopData[`${termRealYear}_${t}`];
+                    if (coopInfo) {
+                        is_coop = true;
+                        let safeWs = String(coopInfo.ws || '').trim().toUpperCase();
+                        let safeLabel = String(coopInfo.label || '').trim().toUpperCase();
+                        if (safeWs.includes('WT') || safeLabel.includes('W-')) {
+                            is_institute_wt = true;
+                        }
+                    }
+                    
+                    if (zone) {
+                        let cr = document.getElementById(`cr_Y${y}_${t}`).innerText;
+                        
+                        // Salvăm rândul dacă are credite, cursuri puse, SAU dacă e un W- box nativ de la institut
+                        if (parseFloat(cr) > 0 || zone.children.length > 0 || is_institute_wt) {
+                            hasCourses = true;
+                            yearData[t].cr = cr;
+                            yearData[t].is_coop = is_coop;
+                            yearData[t].is_institute_wt = is_institute_wt;
+                            yearData[t].is_current_term = is_current_term;
+                            
+                            Array.from(zone.children).forEach(c => {
+                                let cData = coursesData[c.id];
+                                let isWT = c.id.includes('WT');
+                                let cName = cData ? cData.full_name : c.id;
+                                let cCred = isWT ? 0 : (cData ? cData.credit : 0);
+                                
+                                yearData[t].courses.push({ name: cName, credit: cCred, is_wt: isWT });
+                                
+                                if(isWT) {
+                                    let rawLabel = coopInfo ? String(coopInfo.label).trim() : "";
+                                    let originalLabel = rawLabel;
+                                    
+                                    if (!rawLabel || rawLabel.toLowerCase() === "nan" || (!rawLabel.includes('S-') && !rawLabel.includes('W-'))) {
+                                        originalLabel = "OUT COOP";
+                                    }
+                                    
+                                    let expectedFormat = c.id.replace(/[^A-Z0-9]/g, '').replace('WT', 'W-');
+                                    let changed = !originalLabel.includes(expectedFormat);
+                                    let changeText = "";
+                                    
+                                    if (changed) {
+                                        // Găsim cronologic CÂND ar fi trebuit să aibă loc W-1/2/3
+                                        let origTermKey = Object.keys(studentCoopData).find(k => studentCoopData[k].label && studentCoopData[k].label.includes(expectedFormat));
+                                        
+                                        if (origTermKey) {
+                                            let [oYearStr, oTerm] = origTermKey.split('_'); 
+                                            let oYearInt = parseInt(oYearStr);
+                                            let oAcaYearStr = (oTerm === 'WIN') ? `${oYearInt-1}-${oYearInt}` : `${oYearInt}-${oYearInt+1}`;
+                                            let origDisplay = `${oAcaYearStr} ${oTerm}`;
+                                            
+                                            let getScore = (yy, season) => parseInt(yy) * 10 + (season==='WIN'?1:(season==='SUM'?2:3));
+                                            let currentScore = getScore(termRealYear, t);
+                                            let origScore = getScore(oYearInt, oTerm);
+                                            
+                                            if (currentScore < origScore) {
+                                                changeText = `advanced from ${origDisplay}`;
+                                            } else if (currentScore > origScore) {
+                                                changeText = `pushed later from ${origDisplay}`;
+                                            } else {
+                                                changeText = `changed from ${originalLabel}`;
+                                            }
+                                        } else {
+                                            changeText = `placed outside original schedule`;
+                                        }
+                                        yearData[t].wt_change = changeText; 
+                                    }
+
+                                    wtSummary[c.id.replace(/[^A-Z0-9]/g, '')] = {
+                                        new_term: displayTermStr,
+                                        change_text: changeText
+                                    };
+                                }
+                            });
+                        }
+                    }
+                });
+                
+                if (hasCourses) {
+                    termSummary.push({ year: yearStr, data: yearData });
+                }
             }
-        }
 
         try {
             const res = await fetch('/update_status', {

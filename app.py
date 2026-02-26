@@ -14,8 +14,8 @@ app = Flask(__name__)
 app.secret_key = "SVsecretKEY"
 resend.api_key = os.environ.get("RESEND_API_KEY")
 
-debug_no_emails = "DEBUG" # debug
-#debug_no_emails =  "SITE_ACTIVE" # then it works
+#debug_no_emails = "DEBUG" # debug
+debug_no_emails =  "SITE_ACTIVE" # then it works
 debug_email="sorin.voiculescu@concordia.ca"
 
 STANDARD_SEQUENCES = {

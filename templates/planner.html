@@ -462,6 +462,11 @@
     let repeatedCoursesList = []; 
     let termAttributes = {};
 
+    
+    const programGpaThresholds = {{ program_gpa_thresholds_json | safe }}; // NOU
+    let studentCGPAData = {}; 
+    let studentTermDisciplines = {}; // <--- NOU
+
     // --- PRELUAM DATELE COOP INSTANT DE LA SERVER ---
     const serverCoopData = {{ coop_data_json | safe }};
     let studentCoopData = serverCoopData.found ? serverCoopData.terms : {}; 
@@ -759,11 +764,14 @@
                 let currentSid = selected.Student_ID || (displaySidEl ? displaySidEl.innerText.split('-')[0].trim() : "");
                 
                 // ---- NOU ----
+                // ---- NOU ----
                 if (currentSid && currentSid !== "ADMIN") {
-                    await fetchAndUpdateCoopData(currentSid); // <--- Tragem datele albastre!
+                    await fetchAndUpdateCoopData(currentSid); 
+                    await fetchCGPAData(currentSid); // <--- CORECTAT din safeSid în currentSid
                     fetchComments(currentSid);
                 } else {
                     studentCoopData = {};
+                    studentCGPAData = {}; // <--- Curățăm și GPA-ul
                 }
                 
                 await loadSequenceData(selected.JSON_Data, selected.Term_Data, selected.Settings_Data, selected.Program);
@@ -1017,9 +1025,90 @@
                 }
             });
         }
-       updateCredits();
+        updateCredits();
         injectCoopHeaders();
         highlightCurrentTerm(); // <-- ADAUGĂ ASTA AICI
+        // --- NOU: AFIȘARE GPA ȘI DISCIPLINE ---
+        document.querySelectorAll('.cgpa-info-box').forEach(e => e.remove()); // Curățăm rândurile vechi
+        document.querySelectorAll('.discipline-info-box').forEach(e => e.remove()); // Curățăm rândurile vechi de discipline <-- NOU
+        
+        let progName = document.getElementById('programSelect').value.toUpperCase().replace(/\s+/g, ' ').trim();
+        let gpaThreshold = programGpaThresholds[progName];
+        if (gpaThreshold === undefined) gpaThreshold = 2.0;
+
+        for(let y=1; y<=7; y++) {
+            ['SUM', 'FALL', 'WIN'].forEach(t => {
+                let termYear = (t === 'WIN') ? (baseYear + y) : (baseYear + y - 1);
+                
+                // 1. DESENARE GPA
+                let cgpaKey = `${termYear}_${t}`;
+                let cgpaInfo = studentCGPAData[cgpaKey];
+                if (cgpaInfo) {
+                    let container = document.getElementById(`cont_Y${y}_${t}`);
+                    if (container) {
+                        let gpaDiv = document.createElement('div');
+                        gpaDiv.className = 'cgpa-info-box';
+                        gpaDiv.style.fontSize = '10px';
+                        gpaDiv.style.padding = '4px 6px';
+                        gpaDiv.style.fontWeight = 'bold';
+                        gpaDiv.style.textAlign = 'center';
+                        
+                        let gpaVal = cgpaInfo.gpa_val;
+                        let displayVal = gpaVal === -1 ? "N/A" : gpaVal;
+                        
+                        if (gpaVal === -1) {
+                            gpaDiv.style.backgroundColor = 'transparent';
+                            gpaDiv.style.color = 'inherit';
+                            gpaDiv.style.borderTop = '1px solid rgba(0,0,0,0.06)';
+                        } else if (gpaVal <= gpaThreshold) {
+                            gpaDiv.style.backgroundColor = '#c0392b'; gpaDiv.style.color = '#ffffff';
+                        } else if (gpaVal <= gpaThreshold + 0.2) {
+                            gpaDiv.style.backgroundColor = '#e67e22'; gpaDiv.style.color = '#ffffff';
+                        } else {
+                            gpaDiv.style.backgroundColor = 'transparent';
+                            gpaDiv.style.color = 'inherit';
+                            gpaDiv.style.borderTop = '1px solid rgba(0,0,0,0.06)';
+                        }
+                        
+                        gpaDiv.innerText = `GPA past 2 full terms: ${displayVal} computed on ${cgpaInfo.credits_val} credits`;
+                        
+                        let termHeader = container.querySelector('.term-header');
+                        if (termHeader) {
+                            termHeader.parentNode.insertBefore(gpaDiv, termHeader.nextSibling);
+                        }
+                    }
+                }
+                
+                // 2. DESENARE DISCIPLINE (Ex: 2025-2026 Fall: Mechanical Eng...) <-- COD NOU
+                let discKey = `${termYear}_${t}`;
+                let discText = studentTermDisciplines[discKey];
+                if (discText) {
+                    let container = document.getElementById(`cont_Y${y}_${t}`);
+                    if (container) {
+                        let dDiv = document.createElement('div');
+                        dDiv.className = 'discipline-info-box';
+                        dDiv.style.fontSize = '9px';
+                        dDiv.style.padding = '3px 6px';
+                        dDiv.style.backgroundColor = '#f1f5f8';
+                        dDiv.style.color = '#34495e';
+                        dDiv.style.borderBottom = '1px solid #e2e6ea';
+                        dDiv.style.textAlign = 'center';
+                        dDiv.style.fontWeight = 'bold';
+                        
+                        let acaYearStr = (t === 'WIN') ? `${termYear-1}-${termYear}` : `${termYear}-${termYear+1}`;
+                        let displaySeason = t === 'SUM' ? 'Summer' : (t === 'WIN' ? 'Winter' : 'Fall');
+                        
+                        dDiv.innerText = `${acaYearStr} ${displaySeason}: ${discText}`;
+                        
+                        let termHeader = container.querySelector('.term-header');
+                        // Inserăm deasupra rândului de GPA (pentru că GPA a fost deja inserat ca "nextSibling", a doua inserție îl va împinge în jos)
+                        if (termHeader) {
+                            termHeader.parentNode.insertBefore(dDiv, termHeader.nextSibling);
+                        }
+                    }
+                }
+            });
+        }
     }
 
     // --- NOU: Funcția care colorează termenul prezent ---
@@ -1328,6 +1417,19 @@
                 method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({student_id: currentSid})
             });
             const data = await res.json();
+            
+            // --- NOU: Salvăm disciplinele mapate pe YYYY_SEASON ---
+            studentTermDisciplines = {};
+            if (data.term_disciplines) {
+                Object.keys(data.term_disciplines).forEach(rawTerm => {
+                    let parsed = parseConcordiaTerm(rawTerm);
+                    let key = `${parsed.year}_${parsed.season}`;
+                    studentTermDisciplines[key] = data.term_disciplines[rawTerm];
+                });
+            }
+            // -------------------------------------------------------
+
+            // --- Afisam numele studentului sus in bara ---
             
             // --- NOU: Afisam numele studentului sus in bara ---
             if (data.student_name) {
@@ -2101,6 +2203,35 @@
         }
 
         let list = document.getElementById('liveValidationList');
+
+        // --- NOU: LIVE CHECK GPA ---
+        let lastGpaScore = -1;
+        let lastGpaVal = null;
+        let progNameGpa = document.getElementById('programSelect').value.toUpperCase().replace(/\s+/g, ' ').trim();
+        let gpaThreshold = programGpaThresholds[progNameGpa];
+        if (gpaThreshold === undefined) gpaThreshold = 2.0;
+
+        Object.keys(studentCGPAData).forEach(key => {
+            let parts = key.split('_');
+            let y = parseInt(parts[0]);
+            let season = parts[1];
+            let score = y * 10 + (season==='WIN'?1:(season==='SUM'?2:3)); // Scor cronologic
+            
+            if (studentCGPAData[key].gpa_val !== -1 && score > lastGpaScore) {
+                lastGpaScore = score;
+                lastGpaVal = studentCGPAData[key].gpa_val;
+            }
+        });
+
+        if (lastGpaVal !== null) {
+            if (lastGpaVal <= gpaThreshold) {
+                errors.push(`LOW GPA (below threshold). Your most recent GPA is ${lastGpaVal}.`);
+            } else if (lastGpaVal <= gpaThreshold + 0.2) {
+                errors.push(`LOW GPA - no WT for the next 2 WTs. Your most recent GPA is ${lastGpaVal}.`);
+            }
+        }
+
+        
         list.innerHTML = '';
         errors = [...new Set(errors)];
         if (errors.length === 0) {
@@ -2190,74 +2321,64 @@
     async function submitSequence() {
         const justTextElement = document.getElementById('justificationText');
         let justText = justTextElement.value;
-        const hasErrors = document.getElementById('justificationLabel').innerHTML.includes('error');
+        
+        // --- CORECTIE: Căutăm cuvântul 'Warning' pentru că așa e generat textul de Live Check ---
+        const hasErrors = document.getElementById('justificationLabel').innerHTML.includes('Warning');
 
-        // Validare: Daca sunt erori, studentul trebuie sa scrie ceva DUPA textul auto-generat
-        //if (hasErrors) {
-        //    let parts = justText.split("MY JUSTIFICATION:");
-        //    let studentReply = parts.length > 1 ? parts[1].trim() : "";
-        //    
-        //    if (studentReply === "") {
-        //        alert("⚠️ Your sequence has validation warnings. Please provide your justification below the 'MY JUSTIFICATION:' line before submitting.");
-        //        justTextElement.focus();
-        //        return;
-        //    }
-        //}
-
-        // --- NOU: Blocăm secvențele goale SAU fără WT-uri (dacă studentul e la CO-OP) ---
+        // --- BLOCĂM SECVENȚELE GOALE SAU FĂRĂ WT-URI ---
         let totalCoursesOnGrid = 0;
         let totalWTsOnGrid = 0;
         
         document.querySelectorAll('td .drop-zone:not(#zone_Y0_ANY)').forEach(z => {
             totalCoursesOnGrid += z.children.length;
-            
-            // Numărăm separat câte din ele sunt Work Terms
             Array.from(z.children).forEach(el => {
-                if (el.classList.contains('wt') || el.id.includes('WT')) {
-                    totalWTsOnGrid++;
-                }
+                if (el.classList.contains('wt') || el.id.includes('WT')) totalWTsOnGrid++;
             });
         });
         
-        // 1. Oprim dacă grila e complet goală
         if (totalCoursesOnGrid === 0) {
             alert("❌ Cannot submit an empty sequence! Please generate or place your courses on the grid first.");
             return;
         }
         
-        // 2. Oprim dacă e student CO-OP dar nu a pus NICIUN Work Term pe grilă
         let isCoop = document.getElementById('coopRegistered').checked;
         if (isCoop && totalWTsOnGrid === 0) {
             alert("❌ Cannot submit a CO-OP sequence without any Work Terms placed! Please place your WT courses on the grid before submitting.");
             return;
         }
-        // --- FINAL NOU ---
 
-
-        // --- NOU: Validare și Extragere Inteligentă a Justificării ---
+        // --- NOU: VALIDAREA ROBUSTĂ A JUSTIFICĂRII ---
         if (hasErrors) {
             let originalText = justTextElement.dataset.originalText || "";
             
-            // 1. Calculăm diferența de caractere absolută (plus sau minus)
-            let diff = Math.abs(justText.length - originalText.length);
-            
-            // 2. Verificăm dacă a scris prea puțin
-            if (diff < 4 || justText.trim().length < 3) {
-                alert("⚠️ Please provide more details. Each warning must be addressed and justified before submitting.");
+            // 1. A lăsat fix textul generat de sistem, fără să adauge nimic?
+            if (justText.trim() === originalText.trim()) {
+                alert("⚠️ Your sequence has validation warnings. Please provide your justification below the 'MY JUSTIFICATION:' line before submitting.");
+                justTextElement.focus();
+                return;
+            }
+
+            // 2. Extragem strict ce a scris studentul
+            let studentReply = justText;
+            if (justText.includes("MY JUSTIFICATION:")) {
+                studentReply = justText.split("MY JUSTIFICATION:")[1].trim();
+            } else {
+                // Dacă a șters template-ul cu totul și a scris el ceva direct
+                studentReply = justText.trim();
+            }
+
+            // 3. A scris un răspuns prea scurt? (ex: doar "ok" sau "yes")
+            if (studentReply.length < 5) {
+                alert("⚠️ Please provide a more detailed justification for the warnings before submitting.");
                 justTextElement.focus();
                 return;
             }
             
-            // 3. Extragerea textului (Dacă prima parte a rămas exact la fel, o tăiem. Altfel, o lăsăm toată)
-            if (justText.startsWith(originalText)) {
-                justText = justText.substring(originalText.length).trim();
-            } else {
-                justText = justText.trim();
-            }
+            // Dacă totul e OK, trimitem către baza de date TOT textul (și warning-urile, și justificarea lui)
+            justText = justText.trim();
         } else {
             justText = justText.trim();
         }
-
 
         document.getElementById('loadingOverlay').style.display = 'flex';
         
@@ -2322,7 +2443,16 @@
                     
                     if (zone) {
                         let cr = document.getElementById(`cr_Y${y}_${t}`).innerText;
-                        
+                        // --- NOU: Încărcăm GPA-ul pentru email ---
+                    let cgpaInfoEmail = studentCGPAData[`${termRealYear}_${t}`];
+                    if (cgpaInfoEmail ) {
+                        yearData[t].gpa_info = {
+                            val: cgpaInfoEmail.gpa_val,
+                            credits: cgpaInfoEmail.credits_val,
+                            threshold: programGpaThresholds[document.getElementById('programSelect').value.toUpperCase().replace(/\s+/g, ' ').trim()] || 2.0
+                        };
+                        hasCourses = true; // Fortam afisarea randului de an macar pentru a vedea GPA-ul
+                    }
                         // Salvăm rândul dacă are credite, cursuri puse, SAU dacă e un W- box nativ de la institut
                         if (parseFloat(cr) > 0 || zone.children.length > 0 || is_institute_wt) {
                             hasCourses = true;
@@ -2393,6 +2523,8 @@
                 }
             }
             // --- FINAL COLECTARE DATE TABEL ---
+            // ADAUGĂ ACEASTĂ LINIE CARE LIPSEA:
+            let valErrorHTMLs = Array.from(document.querySelectorAll('#liveValidationList li')).map(li => li.innerHTML);
 
             let payload = {
                 name: "Submitted on " + new Date().toISOString().split('T')[0],
@@ -2409,7 +2541,8 @@
                 justification: justText, 
                 student_comments: "",    
                 wt_summary: wtSummary,       // <-- Le adăugăm în "plicul" trimis către Python
-                term_summary: termSummary    // <--
+                term_summary: termSummary ,   // <--
+                validation_errors: valErrorHTMLs // <--- ADAUGĂ ACEASTĂ LINIE
             };
 
             const res = await fetch('/save_sequence', {
@@ -2430,12 +2563,12 @@
                 // 3. Forțăm deconectarea imediat după ce dă OK la alertă
                 window.location.href = '/logout';
             } else {
-                alert("❌ Trimiterea a eșuat: " + result.error);
+                alert("❌ Failed sumbission " + result.error);
                 document.getElementById('loadingOverlay').style.display = 'none'; // Ascundem overlay-ul doar la eroare
             }
         } catch (error) {
             console.error(error);
-            alert("A aparut o eroare de conexiune.");
+            alert("Connection error !");
         } finally {
             document.getElementById('loadingOverlay').style.display = 'none';
         }
@@ -2508,12 +2641,14 @@
 
         let safeSid = fullData.student_id ? fullData.student_id.toString().split('-')[0].trim() : "";
         
-        // ---- NOU: ADUCEM DATELE DE CO-OP ȘI COMENTARIILE ----
+        // ---- NOU: ADUCEM DATELE DE CO-OP, GPA ȘI COMENTARIILE ----
         if (safeSid && safeSid !== "ADMIN") {
-            await fetchAndUpdateCoopData(safeSid); // <--- Tragem datele albastre!
+            await fetchAndUpdateCoopData(safeSid); 
+            await fetchCGPAData(safeSid); // <--- ADAUGAT PUNCT SI VIRGULA
             fetchComments(safeSid);
         } else {
             studentCoopData = {};
+            studentCGPAData = {}; // <--- Curățăm și GPA-ul
         }
 
         // ACUM încărcăm secvența (care va desena casetele albastre perfect)
@@ -2544,8 +2679,10 @@
 
         if (!currentSid || currentSid === "ADMIN") return;
 
-        // ADAUGAT AICI: Să extragă comentariile chiar la intrarea pe pagină
+        // ADAUGAT AICI: Extragem Comentariile, CO-OP-ul și Istoricul GPA încă de la încărcarea paginii
         fetchComments(currentSid);
+        await fetchAndUpdateCoopData(currentSid); // Sincronizează barele albastre
+        await fetchCGPAData(currentSid);          // Sincronizează notele (GPA)
 
         try {
             document.getElementById('loadingOverlay').style.display = 'flex';
@@ -2679,6 +2816,40 @@
         }
     }
 
+    async function fetchCGPAData(sid) {
+        try {
+            const res = await fetch('/api/get_cgpa_timeline', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ student_id: sid })
+            });
+            const data = await res.json();
+            
+            studentCGPAData = {};
+            Object.keys(data).forEach(rawTerm => {
+                let yearMatch = rawTerm.match(/(\d{4})-(\d{4})/);
+                if (yearMatch) {
+                    let startYear = parseInt(yearMatch[1]);
+                    let endYear = parseInt(yearMatch[2]);
+                    let season = "";
+                    let rawUp = rawTerm.toUpperCase();
+                    
+                    if (rawUp.includes('FALL')) season = 'FALL';
+                    else if (rawUp.includes('WIN')) season = 'WIN';
+                    else if (rawUp.includes('SUM')) season = 'SUM';
+                    
+                    if (season) {
+                        let realYear = (season === 'WIN') ? endYear : startYear;
+                        studentCGPAData[`${realYear}_${season}`] = data[rawTerm];
+                    }
+                }
+            });
+        } catch (e) {
+            console.error("Failed to fetch CGPA data:", e);
+            studentCGPAData = {};
+        }
+    }
+
     async function fetchComments(sid) {
         try {
             const res = await fetch('/get_comments', {
@@ -2751,7 +2922,16 @@
                     
                     if (zone) {
                         let cr = document.getElementById(`cr_Y${y}_${t}`).innerText;
-                        
+                        // --- NOU: Încărcăm GPA-ul pentru email ---
+                        let cgpaInfoEmail = studentCGPAData[`${termRealYear}_${t}`];
+                        if (cgpaInfoEmail ) {
+                            yearData[t].gpa_info = {
+                                val: cgpaInfoEmail.gpa_val,
+                                credits: cgpaInfoEmail.credits_val,
+                                threshold: programGpaThresholds[document.getElementById('programSelect').value.toUpperCase().replace(/\s+/g, ' ').trim()] || 2.0
+                            };
+                            hasCourses = true; // Fortam afisarea randului de an macar pentru a vedea GPA-ul
+                        }
                         // Salvăm rândul dacă are credite, cursuri puse, SAU dacă e un W- box nativ de la institut
                         if (parseFloat(cr) > 0 || zone.children.length > 0 || is_institute_wt) {
                             hasCourses = true;
@@ -2822,6 +3002,9 @@
                 }
             }
 
+        // ADAUGĂ ACEASTĂ LINIE CARE LIPSEA:
+        let valErrorHTMLs = Array.from(document.querySelectorAll('#liveValidationList li')).map(li => li.innerHTML);
+
         try {
             const res = await fetch('/update_status', {
                 method: 'POST',
@@ -2838,7 +3021,8 @@
                     public_comments: pubComment,
                     private_comments: privComment,
                     wt_summary: wtSummary,
-                    term_summary: termSummary
+                    term_summary: termSummary ,
+                    validation_errors: valErrorHTMLs // <--- ADAUGĂ ACEASTĂ LINIE
                 })
             });
             

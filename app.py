@@ -15,8 +15,8 @@ app = Flask(__name__)
 app.secret_key = "SVsecretKEY"
 resend.api_key = os.environ.get("RESEND_API_KEY")
 
-#debug_no_emails = "DEBUG" # debug
-debug_no_emails =  "SITE_ACTIVE" # then it works
+debug_no_emails = "DEBUG" # debug
+#debug_no_emails =  "SITE_ACTIVE" # then it works
 debug_email="sorin.voiculescu@concordia.ca"
 
 STANDARD_SEQUENCES = {
@@ -483,7 +483,7 @@ def update_status():
         return jsonify({"error": "Unauthorized"}), 403
         
     data = request.json
-    status = data.get("status") 
+    status = data.get("status") # 'APPROVED' or 'REWORK'
     target_sid = str(data.get("student_id", ""))
     timestamp = data.get("timestamp", "")
     pub_comment = data.get("public_comments", "")
@@ -497,6 +497,7 @@ def update_status():
     try:
         client = get_gspread_client()
         
+        # 1. Update S_id_comments
         comments_sheet = client.open("Sid_Email_Mirror").worksheet("S_id_comments")
         records = comments_sheet.get_all_values()
         found_row = -1
@@ -512,13 +513,13 @@ def update_status():
             
         row_idx = data.get("row_index") 
         
+        # 2. Update Saved_Sequences Status
         seq_sheet = client.open("Sid_Email_Mirror").worksheet("Saved_Sequences")
         seq_records = seq_sheet.get_all_values()
         justification = "" 
         
         if status == "APPROVED":
             status_to_save = f"APPROVED on {datetime.datetime.now().strftime('%Y-%m-%d')}"
-            
             for i, row in enumerate(seq_records[1:], start=2):
                 row_sid = str(row[10]).strip() if len(row) > 10 else ""
                 row_time = str(row[4]).strip() if len(row) > 4 else ""
@@ -527,10 +528,8 @@ def update_status():
                 if (row_idx is not None and i == row_idx) or (row_idx is None and row_sid == target_sid and row_time == str(timestamp).strip()):
                     seq_sheet.update_cell(i, 8, status_to_save)
                     justification = str(row[8]).strip() if len(row) > 8 else "" 
-                    
                 elif row_sid == target_sid and row_status == "PENDING APPROVAL":
                     seq_sheet.update_cell(i, 8, "IGNORED")
-                    
         else:
             status_to_save = status
             if row_idx is not None:
@@ -545,6 +544,7 @@ def update_status():
                         justification = str(row[8]).strip() if len(row) > 8 else ""
                         break
                 
+        # --- AICI ERA EROAREA: Aceste linii fuseseră șterse ---
         submitter_email = data.get("submitter_email", "") 
         if not submitter_email: 
             submitter_email = get_student_email(target_sid)
@@ -594,21 +594,6 @@ def update_status():
                         cr = t_data.get('cr', 0)
                         wt_change = t_data.get('wt_change', '')
                         wt_note_html = f"<br><span style='color: #c0392b; font-size: 10px; font-weight: bold;'>{wt_change}</span>" if wt_change else ""
-                        is_curr = t_data.get('is_current_term'); is_inst = t_data.get('is_institute_wt'); is_coop = t_data.get('is_coop')
-                        
-                        bg_col = "#fcfcfc"; text_col = "#333333"; border_col = "#ddd"
-                        if is_curr: bg_col = "#fff9c4"; border_col = "#fbc02d"
-                        elif is_inst: bg_col = "#5DADE2"; text_col = "#ffffff"
-                        elif is_coop: bg_col = "#b3e5fc"
-                            
-                        terms_html += f"<td style='padding: 5px; border: 1px solid {border_col}; text-align: center; font-weight: bold; background-color: {bg_col}; color: {text_col};'>{cr} CR{wt_note_html}</td>"
-                    terms_html += "</tr><tr>"
-                    
-                    for t in ["SUM", "FALL", "WIN"]:
-                        t_data = data_term.get(t, {})
-                        cr = t_data.get('cr', 0)
-                        wt_change = t_data.get('wt_change', '')
-                        wt_note_html = f"<br><span style='color: #c0392b; font-size: 10px; font-weight: bold;'>{wt_change}</span>" if wt_change else ""
                         
                         is_curr = t_data.get('is_current_term')
                         is_inst = t_data.get('is_institute_wt')
@@ -636,14 +621,13 @@ def update_status():
                             tot_cr = gpa_info.get('tot_cr', 0)
                             gpa_threshold = gpa_info.get('threshold', 2.0)
                             
-                            # Curățăm zecimalele de tip .0 pentru credite
                             gpa_cr_str = str(gpa_cr).replace('.0', '') if str(gpa_cr).endswith('.0') else str(gpa_cr)
                             tot_cr_str = str(tot_cr).replace('.0', '') if str(tot_cr).endswith('.0') else str(tot_cr)
                             
                             if gpa_val == -1:
                                 gpa_bg = "transparent"
                                 gpa_col = text_col
-                                display_text = f"GPA past {gpa_cr_str}CR : N/A  (CGPA {cgpa_val} / {tot_cr_str}CR total)"
+                                display_text = f"GPA past {gpa_cr_str}CR : N/A <br> CGPA {cgpa_val} / {tot_cr_str}CR total"
                             else:
                                 if gpa_val <= gpa_threshold:
                                     gpa_bg = "#c0392b"
@@ -654,24 +638,62 @@ def update_status():
                                 else:
                                     gpa_bg = "transparent"
                                     gpa_col = text_col 
-                                display_text = f"GPA past {gpa_cr_str}CR : {gpa_val}  (CGPA {cgpa_val} / {tot_cr_str}CR total)"
+                                display_text = f"GPA past {gpa_cr_str}CR : {gpa_val} <br> CGPA {cgpa_val} / {tot_cr_str}CR total"
 
-                            gpa_html = f"<div style='background-color: {gpa_bg}; color: {gpa_col}; font-size: 10px; padding: 4px; margin-top: 4px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.1);'>{display_text}</div>"
-                            
+                            gpa_html = f"<div style='background-color: {gpa_bg}; color: {gpa_col}; font-size: 10px; padding: 4px; margin-top: 4px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.1); font-weight: normal;'>{display_text}</div>"
 
                         terms_html += f"<td style='padding: 5px; border: 1px solid {border_col}; text-align: center; font-weight: bold; background-color: {bg_col}; color: {text_col};'>{cr} CR{wt_note_html}{gpa_html}</td>"
+                    
+                    terms_html += "</tr><tr>"
+                    
+                    for t in ["SUM", "FALL", "WIN"]:
+                        t_data = data_term.get(t, {})
+                        courses = t_data.get('courses', [])
+                        
+                        is_curr = t_data.get('is_current_term')
+                        is_inst = t_data.get('is_institute_wt')
+                        is_coop = t_data.get('is_coop')
+                        
+                        bg_col = "#ffffff"
+                        border_col = "#ddd"
+                        
+                        if is_curr:
+                            bg_col = "#fffde7"
+                            border_col = "#fbc02d"
+                        elif is_inst:
+                            bg_col = "#AED6F1" 
+                        elif is_coop:
+                            bg_col = "#e1f5fe"
+                            
+                        courses_html = ""
+                        for c in courses:
+                            if c.get('is_wt'):
+                                courses_html += f"<div style='background-color: #d5f5e3; font-weight: bold; padding: 4px; border-radius: 4px; color: #27ae60; border: 1px solid #abebc6; margin-bottom: 3px; text-align: center;'>{c.get('name')}</div>"
+                            else:
+                                c_text_col = "#154360" if is_inst else "#333333"
+                                c_sub_col = "#2980B9" if is_inst else "#7f8c8d"
+                                courses_html += f"<div style='margin-bottom: 2px; text-align: center; color: {c_text_col};'>{c.get('name')} <span style='font-size: 11px; color: {c_sub_col};'>({c.get('credit')} cr)</span></div>"
+                                
+                        terms_html += f"<td style='padding: 10px; border: 1px solid {border_col}; vertical-align: top; background-color: {bg_col};'>{courses_html}</td>"
+                    terms_html += "</tr>"
                     
                 terms_html += "</tbody></table>"
 
             html_body = f"""
-            <div style="font-family: Arial, sans-serif; max-width: 750px; margin: 0 auto; color: #333;">
-                <p>Hello,</p>
-                <p>Please find the approved sequence for {student_name} ({target_sid}) - {program}</p>
+            <div style="font-family: Arial, sans-serif; color: #333; max-width: 750px; margin: 0 auto; border: 1px solid #e0e0e0; padding: 20px; border-radius: 8px;">
+                <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">Approved Course Sequence</h2>
+                <p><b>Student Email:</b> {submitter_email}</p>
+                <p><b>Student Name:</b> {student_name}</p>
+                <p><b>Student ID:</b> {target_sid}</p>
+                <p><b>Program:</b> {program}</p>
+                
                 <div style="background-color: #f0f7ff; border-left: 4px solid #3498db; padding: 10px; margin: 15px 0;">
                     {wt_html}
                 </div>
                 
-                <p><b>MIAE COOP AD / MIAE PA / Student Comments:</b></p>
+                <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+                
+                <p><b>MIAE COOP AD/PA Comments:</b></p>
                 <div style="background-color: #e8f5e9; border: 1px solid #c8e6c9; padding: 12px; border-radius: 5px; white-space: pre-wrap; font-style: italic; margin-bottom: 15px;">{pub_comment if pub_comment else 'No additional comments.'}</div>
                 
                 <h3 style="color: #2c3e50; margin-top: 25px; border-bottom: 1px solid #eee; padding-bottom: 5px;">Automated System Check:</h3>
@@ -692,11 +714,17 @@ def update_status():
         else: # REWORK
             subject = f"REWORK for {student_name} ({target_sid}) - sequence submitted on {original_timestamp_title}"
             html_body = f"""
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
-                <p>Hello {student_name},</p>
+            <div style="font-family: Arial, sans-serif; color: #333; max-width: 750px; margin: 0 auto; border: 1px solid #e0e0e0; padding: 20px; border-radius: 8px;">
+                <h2 style="color: #c0392b; border-bottom: 2px solid #e74c3c; padding-bottom: 10px;">Action Required: Course Sequence Rework</h2>
+                <p><b>Student Email:</b> {submitter_email}</p>
+                <p><b>Student Name:</b> {student_name}</p>
+                <p><b>Student ID:</b> {target_sid}</p>
+                <p><b>Program:</b> {program}</p>
+                
+                <p style="margin-top: 20px;">Hello {student_name},</p>
                 <p>Please consider the comments and the validation errors below to update your sequence.</p>
                 
-                <p><b>MIAE COOP AD / MIAE PA / Student Comments:</b></p>
+                <p><b>MIAE COOP AD/PA Comments:</b></p>
                 <div style="background-color: #fff8e1; border-left: 4px solid #f39c12; padding: 10px; border-radius: 5px; white-space: pre-wrap; margin: 15px 0;">{pub_comment if pub_comment else 'Please review your sequence rules.'}</div>
                 
                 <h3 style="color: #2c3e50; margin-top: 20px; border-bottom: 1px solid #eee; padding-bottom: 5px;">Automated System Check:</h3>
@@ -706,6 +734,10 @@ def update_status():
 
                 <p><b>Student's Justification / Comments:</b></p>
                 <div style="background-color: #f9f9f9; border: 1px solid #ddd; padding: 12px; border-radius: 5px; white-space: pre-wrap; font-style: italic; margin-bottom: 25px;">{justification if justification else 'No comments provided.'}</div>
+                
+                <div style="text-align: center; margin: 35px 0;">
+                    <a href="https://concordia-sequence-planner.onrender.com/" style="background-color: #e74c3c; color: #ffffff; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 16px; display: inline-block; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">Log in to Update Sequence</a>
+                </div>
                 
                 <br>
                 <p>Best Regards,<br><b>{power_user_name}</b></p>
@@ -721,20 +753,18 @@ def update_status():
                 "cc": email_data["cc"],
                 "bcc": email_data["bcc"], 
                 "reply_to": "coop_miae@concordia.ca",
-                "subject": subject,       
+                "subject": subject,      
                 "html": html_body         
             })
         except Exception as e:
             print(f"Eroare la trimitere email: {e}")
             
-        invalidate_cache("Saved_Sequences") # <-- NOU
-        invalidate_cache("S_id_comments") # <-- NOU
+        invalidate_cache("Saved_Sequences") 
+        invalidate_cache("S_id_comments")     
         return jsonify({"success": True})
     except Exception as e:
         print(f"Status Update Error: {e}")
         return jsonify({"error": str(e)}), 500
-    
-
 
 
 @app.route("/health", methods=["GET"])
@@ -1160,6 +1190,7 @@ def save_sequence():
                         terms_html += "<tr>"
                         terms_html += f"<td rowspan='2' style='padding: 10px; border: 1px solid #ddd; vertical-align: middle; background-color: #f8f9fa; text-align: center; font-weight: bold; color: #333;'>{year_str}</td>"
                         
+                        # RÂNDUL 1: Credite și GPA
                         for t in ["SUM", "FALL", "WIN"]:
                             t_data = data_term.get(t, {})
                             cr = t_data.get('cr', 0)
@@ -1183,40 +1214,41 @@ def save_sequence():
                             elif is_coop:
                                 bg_col = "#b3e5fc"
                                 
-                        
-
-                        gpa_info = t_data.get('gpa_info')
-                        gpa_html = ""
-                        if gpa_info:
-                            gpa_val = gpa_info.get('val', 0)
-                            gpa_cr = gpa_info.get('credits', 0)
-                            cgpa_val = gpa_info.get('cgpa', 0)
-                            tot_cr = gpa_info.get('tot_cr', 0)
-                            gpa_threshold = gpa_info.get('threshold', 2.0)
-                            
-                            # Curățăm zecimalele de tip .0 pentru credite
-                            gpa_cr_str = str(gpa_cr).replace('.0', '') if str(gpa_cr).endswith('.0') else str(gpa_cr)
-                            tot_cr_str = str(tot_cr).replace('.0', '') if str(tot_cr).endswith('.0') else str(tot_cr)
-                            
-                            if gpa_val == -1:
-                                gpa_bg = "transparent"
-                                gpa_col = text_col
-                                display_text = f"GPA past {gpa_cr_str}CR : N/A  (CGPA {cgpa_val} / {tot_cr_str}CR total)"
-                            else:
-                                if gpa_val <= gpa_threshold:
-                                    gpa_bg = "#c0392b"
-                                    gpa_col = "#ffffff"
-                                elif gpa_val <= gpa_threshold + 0.2:
-                                    gpa_bg = "#e67e22"
-                                    gpa_col = "#ffffff"
-                                else:
+                            gpa_info = t_data.get('gpa_info')
+                            gpa_html = ""
+                            if gpa_info:
+                                gpa_val = gpa_info.get('val', 0)
+                                gpa_cr = gpa_info.get('credits', 0)
+                                cgpa_val = gpa_info.get('cgpa', 0)
+                                tot_cr = gpa_info.get('tot_cr', 0)
+                                gpa_threshold = gpa_info.get('threshold', 2.0)
+                                
+                                gpa_cr_str = str(gpa_cr).replace('.0', '') if str(gpa_cr).endswith('.0') else str(gpa_cr)
+                                tot_cr_str = str(tot_cr).replace('.0', '') if str(tot_cr).endswith('.0') else str(tot_cr)
+                                
+                                if gpa_val == -1:
                                     gpa_bg = "transparent"
-                                    gpa_col = text_col 
-                                display_text = f"GPA past {gpa_cr_str}CR : {gpa_val}  (CGPA {cgpa_val} / {tot_cr_str}CR total)"
+                                    gpa_col = text_col
+                                    display_text = f"GPA past {gpa_cr_str}CR : N/A  <br> CGPA {cgpa_val} / {tot_cr_str}CR total"
+                                else:
+                                    if gpa_val <= gpa_threshold:
+                                        gpa_bg = "#c0392b"
+                                        gpa_col = "#ffffff"
+                                    elif gpa_val <= gpa_threshold + 0.2:
+                                        gpa_bg = "#e67e22"
+                                        gpa_col = "#ffffff"
+                                    else:
+                                        gpa_bg = "transparent"
+                                        gpa_col = text_col 
+                                    display_text = f"GPA past {gpa_cr_str}CR : {gpa_val}  <br> CGPA {cgpa_val} / {tot_cr_str}CR total"
 
-                            gpa_html = f"<div style='background-color: {gpa_bg}; color: {gpa_col}; font-size: 10px; padding: 4px; margin-top: 4px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.1);'>{display_text}</div>"
+                                gpa_html = f"<div style='background-color: {gpa_bg}; color: {gpa_col}; font-size: 10px; padding: 4px; margin-top: 4px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.1); font-weight: normal;'>{display_text}</div>"
 
-                            
+                            terms_html += f"<td style='padding: 5px; border: 1px solid {border_col}; text-align: center; font-weight: bold; background-color: {bg_col}; color: {text_col};'>{cr} CR{wt_note_html}{gpa_html}</td>"
+                        
+                        terms_html += "</tr><tr>"
+
+                        # RÂNDUL 2: Cursurile
                         for t in ["SUM", "FALL", "WIN"]:
                             t_data = data_term.get(t, {})
                             courses = t_data.get('courses', [])

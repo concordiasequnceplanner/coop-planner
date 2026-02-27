@@ -671,7 +671,7 @@ def update_status():
                     {wt_html}
                 </div>
                 
-                <p><b>MIAE COOP AD/PA Comments:</b></p>
+                <p><b>MIAE COOP AD / MIAE PA / Student Comments:</b></p>
                 <div style="background-color: #e8f5e9; border: 1px solid #c8e6c9; padding: 12px; border-radius: 5px; white-space: pre-wrap; font-style: italic; margin-bottom: 15px;">{pub_comment if pub_comment else 'No additional comments.'}</div>
                 
                 <h3 style="color: #2c3e50; margin-top: 25px; border-bottom: 1px solid #eee; padding-bottom: 5px;">Automated System Check:</h3>
@@ -696,7 +696,7 @@ def update_status():
                 <p>Hello {student_name},</p>
                 <p>Please consider the comments and the validation errors below to update your sequence.</p>
                 
-                <p><b>MIAE COOP AD/PA Comments:</b></p>
+                <p><b>MIAE COOP AD / MIAE PA / Student Comments:</b></p>
                 <div style="background-color: #fff8e1; border-left: 4px solid #f39c12; padding: 10px; border-radius: 5px; white-space: pre-wrap; margin: 15px 0;">{pub_comment if pub_comment else 'Please review your sequence rules.'}</div>
                 
                 <h3 style="color: #2c3e50; margin-top: 20px; border-bottom: 1px solid #eee; padding-bottom: 5px;">Automated System Check:</h3>

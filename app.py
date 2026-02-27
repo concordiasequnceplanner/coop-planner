@@ -14,8 +14,8 @@ app = Flask(__name__)
 app.secret_key = "SVsecretKEY"
 resend.api_key = os.environ.get("RESEND_API_KEY")
 
-#debug_no_emails = "DEBUG" # debug
-debug_no_emails =  "SITE_ACTIVE" # then it works
+debug_no_emails = "DEBUG" # debug
+#debug_no_emails =  "SITE_ACTIVE" # then it works
 debug_email="sorin.voiculescu@concordia.ca"
 
 STANDARD_SEQUENCES = {
@@ -694,7 +694,7 @@ def update_status():
                             if gpa_val == -1:
                                 gpa_bg = "transparent"
                                 gpa_col = text_col
-                                display_text = f"GPA_2 past 2 full terms: N/A computed on {gpa_cr} credits"
+                                display_text = f"GPA past 2 full terms: N/A computed on {gpa_cr} credits"
                             else:
                                 if gpa_val <= gpa_threshold:
                                     gpa_bg = "#c0392b"

@@ -2240,35 +2240,51 @@
                         if (c) {
                             yearData[t].courses.push({ name: c.full_name, credit: c.credit, is_wt: c.is_wt });
                             if (c.is_wt) {
-                                let wtCode = c.full_name; // Ex: "WT1"
+                                let wtCode = c.full_name; 
+                                let normCode = wtCode.replace(/[^0-9]/g, ''); 
                                 let wtTarget = `Study term / Other`;
+                                
                                 if (is_institute_wt) {
                                     let info = studentCoopData[`${termRealYear}_${t}`];
-                                    if (info && info.label && info.label.toLowerCase() !== 'nan') wtTarget = info.label; // Ex: "W-1" sau "W 1"
+                                    if (info && info.label && info.label.toLowerCase() !== 'nan') wtTarget = info.label; 
                                 }
                                 
                                 let changeText = "";
                                 let isChange = true;
                                 
                                 if (wtTarget !== "Study term / Other") {
-                                    // Extragem doar cifra din ambele texte pentru a face o comparație sigură
-                                    let normCode = wtCode.replace(/[^0-9]/g, '');
                                     let normTarget = wtTarget.replace(/[^0-9]/g, '');
-                                    
-                                    // Dacă ținta este un Work Term (are W) și are aceeași cifră ca și cursul de pe grilă (ex: WT1 == W-1)
+                                    // Verificăm dacă grila institutului coincide cu cursul
                                     if (wtTarget.toUpperCase().includes('W') && normCode === normTarget) {
                                         isChange = false; 
                                     }
                                 }
                                 
+                                let seasonMap = {'SUM': 'Summer', 'FALL': 'Fall', 'WIN': 'Winter'};
+                                
                                 if (isChange) {
-                                    changeText = `Requested change: Institute has this as ${wtTarget}`;
+                                    // Căutăm în datele institutului unde era plasat acest WT (ex: W-1) inițial
+                                    let origTermKey = Object.keys(studentCoopData).find(k => {
+                                        let lbl = studentCoopData[k].label || "";
+                                        return lbl.toUpperCase().includes('W') && lbl.replace(/[^0-9]/g, '') === normCode;
+                                    });
+                                    
+                                    if (origTermKey) {
+                                        let [oYearStr, oTerm] = origTermKey.split('_'); 
+                                        let oYearInt = parseInt(oYearStr);
+                                        // Calculăm Anul Academic corect pentru locul de unde a fost mutat
+                                        let oAcaYearStr = (oTerm === 'WIN') ? `${oYearInt-1}-${oYearInt}` : `${oYearInt}-${oYearInt+1}`;
+                                        
+                                        changeText = `moved from ${oAcaYearStr} ${seasonMap[oTerm]}`;
+                                    } else {
+                                        changeText = `placed outside original schedule`;
+                                    }
                                 }
                                 
                                 yearData[t].wt_change = changeText;
                                 
                                 wtSummary[wtCode] = {
-                                    new_term: `${t === 'SUM' ? 'Summer' : (t === 'FALL' ? 'Fall' : 'Winter')} ${termRealYear}`,
+                                    new_term: `${yearStr} ${seasonMap[t]}`, // Setăm și destinația tot în formatul an academic
                                     change_text: changeText
                                 };
                             }
@@ -2389,35 +2405,51 @@
                         if (c) {
                             yearData[t].courses.push({ name: c.full_name, credit: c.credit, is_wt: c.is_wt });
                             if (c.is_wt) {
-                                let wtCode = c.full_name; // Ex: "WT1"
+                                let wtCode = c.full_name; 
+                                let normCode = wtCode.replace(/[^0-9]/g, ''); 
                                 let wtTarget = `Study term / Other`;
+                                
                                 if (is_institute_wt) {
                                     let info = studentCoopData[`${termRealYear}_${t}`];
-                                    if (info && info.label && info.label.toLowerCase() !== 'nan') wtTarget = info.label; // Ex: "W-1" sau "W 1"
+                                    if (info && info.label && info.label.toLowerCase() !== 'nan') wtTarget = info.label; 
                                 }
                                 
                                 let changeText = "";
                                 let isChange = true;
                                 
                                 if (wtTarget !== "Study term / Other") {
-                                    // Extragem doar cifra din ambele texte pentru a face o comparație sigură
-                                    let normCode = wtCode.replace(/[^0-9]/g, '');
                                     let normTarget = wtTarget.replace(/[^0-9]/g, '');
-                                    
-                                    // Dacă ținta este un Work Term (are W) și are aceeași cifră ca și cursul de pe grilă (ex: WT1 == W-1)
+                                    // Verificăm dacă grila institutului coincide cu cursul
                                     if (wtTarget.toUpperCase().includes('W') && normCode === normTarget) {
                                         isChange = false; 
                                     }
                                 }
                                 
+                                let seasonMap = {'SUM': 'Summer', 'FALL': 'Fall', 'WIN': 'Winter'};
+                                
                                 if (isChange) {
-                                    changeText = `Requested change: Institute has this as ${wtTarget}`;
+                                    // Căutăm în datele institutului unde era plasat acest WT (ex: W-1) inițial
+                                    let origTermKey = Object.keys(studentCoopData).find(k => {
+                                        let lbl = studentCoopData[k].label || "";
+                                        return lbl.toUpperCase().includes('W') && lbl.replace(/[^0-9]/g, '') === normCode;
+                                    });
+                                    
+                                    if (origTermKey) {
+                                        let [oYearStr, oTerm] = origTermKey.split('_'); 
+                                        let oYearInt = parseInt(oYearStr);
+                                        // Calculăm Anul Academic corect pentru locul de unde a fost mutat
+                                        let oAcaYearStr = (oTerm === 'WIN') ? `${oYearInt-1}-${oYearInt}` : `${oYearInt}-${oYearInt+1}`;
+                                        
+                                        changeText = `moved from ${oAcaYearStr} ${seasonMap[oTerm]}`;
+                                    } else {
+                                        changeText = `placed outside original schedule`;
+                                    }
                                 }
                                 
                                 yearData[t].wt_change = changeText;
                                 
                                 wtSummary[wtCode] = {
-                                    new_term: `${t === 'SUM' ? 'Summer' : (t === 'FALL' ? 'Fall' : 'Winter')} ${termRealYear}`,
+                                    new_term: `${yearStr} ${seasonMap[t]}`, // Setăm și destinația tot în formatul an academic
                                     change_text: changeText
                                 };
                             }

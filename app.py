@@ -231,13 +231,27 @@ def get_email_recipients(program, target_sid, submitter_email, priority1_email, 
 
     return recipients
 
+# Add a global variable to hold the DataFrame
+_CORE_TE_DF = None
 
 def load_data():
+    global _CORE_TE_DF
+    
+    # If it's already loaded, return a copy so routes can safely modify it
+    if _CORE_TE_DF is not None:
+        return _CORE_TE_DF.copy()
+        
     try:
         df = pd.read_excel(os.path.join(os.path.dirname(os.path.abspath(__file__)), "CORE_TE.xlsx"))
         df.columns = [str(c).strip() for c in df.columns] 
-        return df.fillna("")
-    except Exception: return pd.DataFrame()
+        _CORE_TE_DF = df.fillna("")
+        
+        return _CORE_TE_DF.copy()
+    except Exception as e: 
+        print(f"Error loading Excel: {e}")
+        return pd.DataFrame()
+    
+    
 
 def extract_course_code(course_name):
     if not course_name: return ""

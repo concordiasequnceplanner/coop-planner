@@ -271,6 +271,81 @@ def get_program_ft_credits():
         print("Error fetching Program_names:", e)
         return {}
 
+
+def get_program_gpa_thresholds():
+    try:
+        client = get_gspread_client()
+        sheet = client.open("Sid_Email_Mirror").worksheet("Program_names")
+        records = sheet.get_all_values()
+        gpa_dict = {}
+        for row in records[1:]:  # Sărim peste header
+            if len(row) >= 3:
+                prog = str(row[0]).strip().upper()
+                prog = " ".join(prog.split()) # normalizăm spațiile
+                try: gpa = float(row[2])
+                except: gpa = 2.0 # Valoare de rezervă
+                gpa_dict[prog] = gpa
+        return gpa_dict
+    except Exception as e:
+        print("Error fetching GPA thresholds:", e)
+        return {}
+
+@app.route("/api/get_cgpa_timeline", methods=["POST"])
+def api_get_cgpa_timeline():
+    if 'user_email' not in session: return jsonify({"error": "Unauthorized"}), 401
+    
+    # Restricție strictă: Oprim guest-ul să acceseze CGPA
+    if session.get('is_guest'): return jsonify({})
+    
+    target_sid = str(request.json.get("student_id", "")).strip()
+    if not target_sid: return jsonify({})
+
+    try:
+        client = get_gspread_client()
+        sheet = client.open("Sid_Email_Mirror").worksheet("CGPA_Timeline")
+        
+        headers = [str(h).strip() for h in sheet.row_values(1)]
+        try:
+            idx_sid = headers.index('Student ID')
+            idx_term = headers.index('Academic Term')
+            idx_gpa = headers.index('GPA_X_CR')
+            idx_cr = headers.index('GPA_X_CR_Actual_Credits')
+        except ValueError:
+            return jsonify({}) # Dacă lipsesc coloanele din Excel
+
+        all_sids = sheet.col_values(idx_sid + 1)
+        matching_rows = [i + 1 for i, sid in enumerate(all_sids) if str(sid).strip().replace('.0','') == target_sid]
+        
+        if not matching_rows: return jsonify({})
+
+        ranges = [f"A{r}:Z{r}" for r in matching_rows]
+        raw_results = sheet.batch_get(ranges)
+
+        cgpa_data = {}
+        for res in raw_results:
+            if not res or not res[0]: continue
+            row = res[0]
+            row.extend([""] * (len(headers) - len(row))) # Pad în caz că rândul e prea scurt
+            
+            term_str = str(row[idx_term]).strip()
+            gpa_val = str(row[idx_gpa]).strip()
+            cr_val = str(row[idx_cr]).strip()
+
+            if gpa_val and gpa_val.lower() != 'nan':
+                try:
+                    cgpa_data[term_str] = {
+                        "gpa_val": float(gpa_val),
+                        "credits_val": float(cr_val) if cr_val else 0.0
+                    }
+                except ValueError:
+                    pass
+                    
+        return jsonify(cgpa_data)
+    except Exception as e:
+        print("Error fetching CGPA Timeline:", e)
+        return jsonify({})
+
+
 def get_student_coop_data(target_sid):
     if not target_sid: return {"found": False}
     target_sid = str(target_sid).strip().replace('.0', '')
@@ -487,10 +562,11 @@ def update_status():
         
         # 2. Update Saved_Sequences Status (FOLOSIND RANDUL EXACT + CLEANUP PENDING)
         seq_sheet = client.open("Sid_Email_Mirror").worksheet("Saved_Sequences")
+        seq_records = seq_sheet.get_all_values()
+        justification = "" # <-- ADAUGAT PENTRU A EXTRAGE JUSTIFICAREA STUDENTULUI
         
         if status == "APPROVED":
             status_to_save = f"APPROVED on {datetime.datetime.now().strftime('%Y-%m-%d')}"
-            seq_records = seq_sheet.get_all_values()
             
             # Parcurgem tot fisierul pentru a aproba secventa curenta si a le anula pe restul
             for i, row in enumerate(seq_records[1:], start=2):
@@ -501,6 +577,7 @@ def update_status():
                 # A. Aceasta este secventa pe care o aprobam ACUM
                 if (row_idx is not None and i == row_idx) or (row_idx is None and row_sid == target_sid and row_time == str(timestamp).strip()):
                     seq_sheet.update_cell(i, 8, status_to_save)
+                    justification = str(row[8]).strip() if len(row) > 8 else "" # Extragem comentariul!
                     
                 # B. Daca e acelasi student si secventa e inca in Pending, o trecem pe IGNORED
                 elif row_sid == target_sid and row_status == "PENDING APPROVAL":
@@ -511,17 +588,16 @@ def update_status():
             status_to_save = status
             if row_idx is not None:
                 seq_sheet.update_cell(row_idx, 8, status_to_save)
+                justification = str(seq_records[row_idx - 1][8]).strip() if len(seq_records[row_idx - 1]) > 8 else "" # Extragem comentariul!
             else:
-                seq_records = seq_sheet.get_all_values()
                 for i, row in enumerate(seq_records[1:], start=2):
                     row_sid = str(row[10]).strip() if len(row) > 10 else ""
                     row_time = str(row[4]).strip() if len(row) > 4 else ""
                     if row_sid == target_sid and row_time == str(timestamp).strip():
                         seq_sheet.update_cell(i, 8, status_to_save) 
+                        justification = str(row[8]).strip() if len(row) > 8 else "" # Extragem comentariul!
                         break
                 
-        # 3. Trimitem Emailul
-        # (Inside @app.route("/update_status") around line 337)
         # 3. Trimitem Emailul
         submitter_email = data.get("submitter_email", "") 
         if not submitter_email: # Fallback în caz că vine gol din frontend
@@ -529,6 +605,16 @@ def update_status():
             
         priority1_email = get_priority1_email(target_sid)
         power_user_name = session.get('guest_name', 'Coordinator') if session.get('is_guest') else session.get('user_email').split('@')[0]
+
+        # --- Procesăm Erorile din Live Check ---
+        val_errors = data.get('validation_errors', [])
+        val_errors_html = "<ul style='margin: 0; padding-left: 20px; font-size: 14px;'>"
+        if not val_errors:
+            val_errors_html += "<li style='color: #27ae60; font-weight: bold;'>✅ No validation errors.</li>"
+        else:
+            for err_html in val_errors:
+                val_errors_html += f"<li style='margin-bottom: 4px;'>{err_html}</li>"
+        val_errors_html += "</ul>"
 
 
         if status == "APPROVED":
@@ -558,6 +644,21 @@ def update_status():
                     terms_html += "<tr>"
                     terms_html += f"<td rowspan='2' style='padding: 10px; border: 1px solid #ddd; vertical-align: middle; background-color: #f8f9fa; text-align: center; font-weight: bold; color: #333;'>{year_str}</td>"
                     
+                    for t in ["SUM", "FALL", "WIN"]:
+                        t_data = data_term.get(t, {})
+                        cr = t_data.get('cr', 0)
+                        wt_change = t_data.get('wt_change', '')
+                        wt_note_html = f"<br><span style='color: #c0392b; font-size: 10px; font-weight: bold;'>{wt_change}</span>" if wt_change else ""
+                        is_curr = t_data.get('is_current_term'); is_inst = t_data.get('is_institute_wt'); is_coop = t_data.get('is_coop')
+                        
+                        bg_col = "#fcfcfc"; text_col = "#333333"; border_col = "#ddd"
+                        if is_curr: bg_col = "#fff9c4"; border_col = "#fbc02d"
+                        elif is_inst: bg_col = "#5DADE2"; text_col = "#ffffff"
+                        elif is_coop: bg_col = "#b3e5fc"
+                            
+                        terms_html += f"<td style='padding: 5px; border: 1px solid {border_col}; text-align: center; font-weight: bold; background-color: {bg_col}; color: {text_col};'>{cr} CR{wt_note_html}</td>"
+                    terms_html += "</tr><tr>"
+                    
                     # RÂNDUL 1: Credite și Avertizări WT
                     for t in ["SUM", "FALL", "WIN"]:
                         t_data = data_term.get(t, {})
@@ -577,46 +678,39 @@ def update_status():
                             bg_col = "#fff9c4"
                             border_col = "#fbc02d"
                         elif is_inst:
-                            bg_col = "#5DADE2" # Albastru Celest (mult mai deschis)
+                            bg_col = "#5DADE2" 
                             text_col = "#ffffff"
                         elif is_coop:
                             bg_col = "#b3e5fc"
                             
-                        terms_html += f"<td style='padding: 5px; border: 1px solid {border_col}; text-align: center; font-weight: bold; background-color: {bg_col}; color: {text_col};'>{cr} CR{wt_note_html}</td>"
-                    terms_html += "</tr><tr>"
-                    
-                    # RÂNDUL 2: Materiile plasate
-                    for t in ["SUM", "FALL", "WIN"]:
-                        t_data = data_term.get(t, {})
-                        courses = t_data.get('courses', [])
-                        
-                        is_curr = t_data.get('is_current_term')
-                        is_inst = t_data.get('is_institute_wt')
-                        is_coop = t_data.get('is_coop')
-                        
-                        bg_col = "#ffffff"
-                        border_col = "#ddd"
-                        
-                        if is_curr:
-                            bg_col = "#fffde7"
-                            border_col = "#fbc02d"
-                        elif is_inst:
-                            bg_col = "#AED6F1" # Albastru deschis (distinct de coop normal)
-                        elif is_coop:
-                            bg_col = "#e1f5fe"
+                       # --- NOU: LOGICA DE AFISARE GPA IN EMAIL ---
+                        gpa_info = t_data.get('gpa_info')
+                        gpa_html = ""
+                        if gpa_info:
+                            gpa_val = gpa_info.get('val', 0)
+                            gpa_cr = gpa_info.get('credits', 0)
+                            gpa_threshold = gpa_info.get('threshold', 2.0)
                             
-                        courses_html = ""
-                        for c in courses:
-                            if c.get('is_wt'):
-                                courses_html += f"<div style='background-color: #d5f5e3; font-weight: bold; padding: 4px; border-radius: 4px; color: #27ae60; border: 1px solid #abebc6; margin-bottom: 3px; text-align: center;'>{c.get('name')}</div>"
+                            if gpa_val == -1:
+                                gpa_bg = "transparent"
+                                gpa_col = text_col
+                                display_text = f"GPA_2 past 2 full terms: N/A computed on {gpa_cr} credits"
                             else:
-                                # Adaptăm culoarea textului în funcție de fundalul celest
-                                c_text_col = "#154360" if is_inst else "#333333"
-                                c_sub_col = "#2980B9" if is_inst else "#7f8c8d"
-                                courses_html += f"<div style='margin-bottom: 2px; text-align: center; color: {c_text_col};'>{c.get('name')} <span style='font-size: 11px; color: {c_sub_col};'>({c.get('credit')} cr)</span></div>"
-                                
-                        terms_html += f"<td style='padding: 10px; border: 1px solid {border_col}; vertical-align: top; background-color: {bg_col};'>{courses_html}</td>"
-                    terms_html += "</tr>"
+                                if gpa_val <= gpa_threshold:
+                                    gpa_bg = "#c0392b"
+                                    gpa_col = "#ffffff"
+                                elif gpa_val <= gpa_threshold + 0.2:
+                                    gpa_bg = "#e67e22"
+                                    gpa_col = "#ffffff"
+                                else:
+                                    gpa_bg = "transparent"
+                                    gpa_col = text_col # Mosteneste culoarea
+                                display_text = f"GPA past 2 full terms: {gpa_val} computed on {gpa_cr} credits"
+
+                            gpa_html = f"<div style='background-color: {gpa_bg}; color: {gpa_col}; font-size: 10px; padding: 4px; margin-top: 4px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.1);'>{display_text}</div>"
+
+
+                        terms_html += f"<td style='padding: 5px; border: 1px solid {border_col}; text-align: center; font-weight: bold; background-color: {bg_col}; color: {text_col};'>{cr} CR{wt_note_html}{gpa_html}</td>"
                     
                 terms_html += "</tbody></table>"
 
@@ -628,9 +722,17 @@ def update_status():
                     {wt_html}
                 </div>
                 
-                <p><b>Coordinator Comments:</b></p>
-                <div style="background-color: #e8f5e9; border: 1px solid #c8e6c9; padding: 12px; border-radius: 5px; white-space: pre-wrap; font-style: italic;">{pub_comment if pub_comment else 'No additional comments.'}</div>
+                <p><b>MIAE COOP AD/PA Comments:</b></p>
+                <div style="background-color: #e8f5e9; border: 1px solid #c8e6c9; padding: 12px; border-radius: 5px; white-space: pre-wrap; font-style: italic; margin-bottom: 15px;">{pub_comment if pub_comment else 'No additional comments.'}</div>
                 
+                <h3 style="color: #2c3e50; margin-top: 25px; border-bottom: 1px solid #eee; padding-bottom: 5px;">Automated System Check:</h3>
+                <div style="background-color: #fcfcfc; border: 1px solid #eee; padding: 10px; border-radius: 4px; margin-bottom: 15px;">
+                    {val_errors_html}
+                </div>
+
+                <p><b>Student's Justification / Comments:</b></p>
+                <div style="background-color: #f9f9f9; border: 1px solid #ddd; padding: 12px; border-radius: 5px; white-space: pre-wrap; font-style: italic; margin-bottom: 25px;">{justification if justification else 'No comments provided.'}</div>
+
                 <h3 style="color: #2c3e50; margin-top: 25px; border-bottom: 1px solid #eee; padding-bottom: 5px;">Approved Sequence Breakdown</h3>
                 {terms_html}
                 
@@ -643,8 +745,19 @@ def update_status():
             html_body = f"""
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
                 <p>Hello {student_name},</p>
-                <p>Please consider the comments below and update your sequence.</p>
+                <p>Please consider the comments and the validation errors below to update your sequence.</p>
+                
+                <p><b>MIAE COOP AD/PA Comments:</b></p>
                 <div style="background-color: #fff8e1; border-left: 4px solid #f39c12; padding: 10px; border-radius: 5px; white-space: pre-wrap; margin: 15px 0;">{pub_comment if pub_comment else 'Please review your sequence rules.'}</div>
+                
+                <h3 style="color: #2c3e50; margin-top: 20px; border-bottom: 1px solid #eee; padding-bottom: 5px;">Automated System Check:</h3>
+                <div style="background-color: #fdf2f2; border: 1px solid #fadbd8; padding: 10px; border-radius: 4px; margin-bottom: 15px;">
+                    {val_errors_html}
+                </div>
+
+                <p><b>Student's Justification / Comments:</b></p>
+                <div style="background-color: #f9f9f9; border: 1px solid #ddd; padding: 12px; border-radius: 5px; white-space: pre-wrap; font-style: italic; margin-bottom: 25px;">{justification if justification else 'No comments provided.'}</div>
+                
                 <br>
                 <p>Best Regards,<br><b>{power_user_name}</b></p>
             </div>
@@ -734,14 +847,16 @@ def index():
                     })
         except Exception as e:
             print(f"Pending List Error: {e}")
+    # (În interiorul def index(): pe la linia 400)
     ft_credits_dict = get_program_ft_credits()
+    gpa_thresholds_dict = get_program_gpa_thresholds() # <-- ADAUGĂ ACEASTĂ LINIE
 
     return render_template("planner.html", programe=programs, coop_data_json=json.dumps(coop_data),
                            is_power_user=is_power_user, viewing_sid=viewing_sid, pending_list=pending_list,
-                           program_ft_credits_json=json.dumps(ft_credits_dict))
+                           program_ft_credits_json=json.dumps(ft_credits_dict),
+                           program_gpa_thresholds_json=json.dumps(gpa_thresholds_dict)) # <-- ADAUGĂ ACEST PARAMETRU
 
-    return render_template("planner.html", programe=programs, coop_data_json=json.dumps(coop_data),
-                           is_power_user=is_power_user, viewing_sid=viewing_sid, pending_list=pending_list)
+
 
 @app.route("/admin_change_sid", methods=["POST"])
 def admin_change_sid():
@@ -1144,6 +1259,7 @@ def save_sequence():
                         terms_html += f"<td rowspan='2' style='padding: 10px; border: 1px solid #ddd; vertical-align: middle; background-color: #f8f9fa; text-align: center; font-weight: bold; color: #333;'>{year_str}</td>"
                         
                         # RÂNDUL 1: Credite și Avertizări WT
+                        # RÂNDUL 1: Credite și Avertizări WT
                         for t in ["SUM", "FALL", "WIN"]:
                             t_data = data_term.get(t, {})
                             cr = t_data.get('cr', 0)
@@ -1162,13 +1278,38 @@ def save_sequence():
                                 bg_col = "#fff9c4"
                                 border_col = "#fbc02d"
                             elif is_inst:
-                                bg_col = "#5DADE2" # Albastru Celest (mult mai deschis)
+                                bg_col = "#5DADE2" 
                                 text_col = "#ffffff"
                             elif is_coop:
                                 bg_col = "#b3e5fc"
                                 
-                            terms_html += f"<td style='padding: 5px; border: 1px solid {border_col}; text-align: center; font-weight: bold; background-color: {bg_col}; color: {text_col};'>{cr} CR{wt_note_html}</td>"
-                        terms_html += "</tr><tr>"
+                            # --- NOU: LOGICA DE AFISARE GPA IN EMAIL ---
+                        gpa_info = t_data.get('gpa_info')
+                        gpa_html = ""
+                        if gpa_info:
+                            gpa_val = gpa_info.get('val', 0)
+                            gpa_cr = gpa_info.get('credits', 0)
+                            gpa_threshold = gpa_info.get('threshold', 2.0)
+                            
+                            if gpa_val == -1:
+                                gpa_bg = "transparent"
+                                gpa_col = text_col
+                                display_text = f"GPA past 2 full terms: N/A computed on {gpa_cr} credits"
+                            else:
+                                if gpa_val <= gpa_threshold:
+                                    gpa_bg = "#c0392b"
+                                    gpa_col = "#ffffff"
+                                elif gpa_val <= gpa_threshold + 0.2:
+                                    gpa_bg = "#e67e22"
+                                    gpa_col = "#ffffff"
+                                else:
+                                    gpa_bg = "transparent"
+                                    gpa_col = text_col # Mosteneste culoarea
+                                display_text = f"GPA past 2 full terms: {gpa_val} computed on {gpa_cr} credits"
+
+                            gpa_html = f"<div style='background-color: {gpa_bg}; color: {gpa_col}; font-size: 10px; padding: 4px; margin-top: 4px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.1);'>{display_text}</div>"
+
+                            terms_html += f"<td style='padding: 5px; border: 1px solid {border_col}; text-align: center; font-weight: bold; background-color: {bg_col}; color: {text_col};'>{cr} CR{wt_note_html}{gpa_html}</td>"
                         
                         # RÂNDUL 2: Materiile plasate
                         for t in ["SUM", "FALL", "WIN"]:
@@ -1205,6 +1346,18 @@ def save_sequence():
                         
                     terms_html += "</tbody></table>"
 
+
+                # --- NOU: Procesăm Erorile din Live Check ---
+                val_errors = data.get('validation_errors', [])
+                val_errors_html = "<ul style='margin: 0; padding-left: 20px; font-size: 14px;'>"
+                if not val_errors:
+                    val_errors_html += "<li style='color: #27ae60; font-weight: bold;'>✅ No validation errors.</li>"
+                else:
+                    for err_html in val_errors:
+                        val_errors_html += f"<li style='margin-bottom: 4px;'>{err_html}</li>"
+                val_errors_html += "</ul>"
+
+
                 # Incorporăm totul în HTML-ul E-mailului de Submit
                 html_body = f"""
                 <div style="font-family: Arial, sans-serif; color: #333; max-width: 750px; margin: 0 auto; border: 1px solid #e0e0e0; padding: 20px; border-radius: 8px;">
@@ -1219,8 +1372,15 @@ def save_sequence():
                     </div>
                     
                     <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+
+                   <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+
+                    <h3 style="color: #2c3e50; margin-top: 15px; border-bottom: 1px solid #eee; padding-bottom: 5px;">Automated System Check</h3>
+                    <div style="background-color: #fdf2f2; border: 1px solid #fadbd8; padding: 10px; border-radius: 4px; margin-bottom: 15px;">
+                        {val_errors_html}
+                    </div>
                     
-                    <p><b>Validation Warnings & Student Justification:</b><br>
+                    <p><b>Student's Justification / Comments:</b><br>
                     <span style="color: #c0392b; background-color: #fdf2f2; padding: 10px; display: inline-block; margin-top: 5px; border-radius: 4px; border: 1px solid #fadbd8; width: 95%; white-space: pre-wrap;">{justification if justification else '✅ Sequence is valid. No warnings or justification provided.'}</span></p>
                     
                     <h3 style="color: #2c3e50; margin-top: 25px; border-bottom: 1px solid #eee; padding-bottom: 5px;">Submitted Sequence Breakdown</h3>
@@ -1328,8 +1488,12 @@ def get_transcript():
             idx_name = headers.index('NAME') if 'NAME' in headers else -1
             idx_prog = headers.index('PROG_LINK') if 'PROG_LINK' in headers else -1
             idx_disc = headers.index('DISCIPLINE1_DESCR') if 'DISCIPLINE1_DESCR' in headers else -1
+            # --- NOU: Adăugăm coloanele G și H ---
+            idx_disc2 = headers.index('DISCIPLINE2_DESCR') if 'DISCIPLINE2_DESCR' in headers else -1
+            idx_disc3 = headers.index('DISCIPLINE3_DESCR') if 'DISCIPLINE3_DESCR' in headers else -1
         except ValueError:
             return jsonify({"transcript": [], "student_name": "", "suggested_program": ""})
+        
 
         # 2. Descărcăm DOAR coloana cu ID-uri (rapid și nu consumă RAM)
         all_sids = sheet.col_values(idx_sid + 1)
@@ -1348,6 +1512,7 @@ def get_transcript():
         raw_results = sheet.batch_get(ranges)
 
         my_courses = []
+        term_disciplines = {} # <-- NOU: Memorează disciplina per trimestru
         student_name = ""
         last_prog_link = ""
         last_disc = ""
@@ -1359,6 +1524,17 @@ def get_transcript():
             
             # În caz că rândul e mai scurt pentru că ultimele celule erau goale
             row.extend([""] * (len(headers) - len(row)))
+
+            # --- NOU: Extragem Discipline 2 si 3 pe fiecare termen ---
+            term_str = str(row[idx_term]).strip() if len(row) > idx_term else ""
+            if term_str:
+                val_d2 = str(row[idx_disc2]).strip() if idx_disc2 != -1 and len(row) > idx_disc2 else ""
+                val_d3 = str(row[idx_disc3]).strip() if idx_disc3 != -1 and len(row) > idx_disc3 else ""
+                combined = " ".join([v for v in [val_d2, val_d3] if v]).strip()
+                # Dacă am găsit text și nu l-am salvat deja pentru acest termen:
+                if combined and (term_str not in term_disciplines or not term_disciplines[term_str]):
+                    term_disciplines[term_str] = combined
+            # -----------------------------------------------------------
 
             if not student_name and idx_name != -1 and len(row) > idx_name:
                 student_name = str(row[idx_name]).strip()
@@ -1401,7 +1577,8 @@ def get_transcript():
         return jsonify({
             "transcript": my_courses, 
             "student_name": student_name, 
-            "suggested_program": suggested_program
+            "suggested_program": suggested_program,
+            "term_disciplines": term_disciplines # <-- ADAUGĂ ACEASTĂ LINIE
         })
     except Exception as e:
         print("Transcript fetch error:", e)

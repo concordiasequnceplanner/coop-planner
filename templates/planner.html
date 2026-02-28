@@ -453,6 +453,7 @@
 
     
     const programGpaThresholds = {{ program_gpa_thresholds_json | safe }}; 
+    const serverRestrictions = {{ restrictions_json | safe }}; // NOU: Regulile incarcate de la server
     let studentCGPAData = {}; 
     let studentTermDisciplines = {}; 
 
@@ -1544,9 +1545,18 @@
                         let baseYear = sTerm === 'Winter' ? sYear - 1 : sYear;
                         
                         let parsed = parseConcordiaTerm(item.term);
-                        let tYear = parsed.year;
-                        let tSeason = parsed.season;
-                        if (item.forceSeason) tSeason = item.forceSeason;
+                    let tYear = parsed.year;
+                    let tSeason = parsed.season;
+                    
+                    // --- NOU: Ajustăm ANUL dacă cursul a fost forțat într-un alt sezon! ---
+                    if (item.forceSeason) {
+                        if (tSeason === 'WIN' && item.forceSeason === 'FALL') {
+                            tYear -= 1; // Un WIN 2026 forțat pe FALL trebuie să devină FALL 2025
+                        } else if (tSeason === 'FALL' && item.forceSeason === 'WIN') {
+                            tYear += 1; // Un FALL 2025 forțat pe WIN trebuie să devină WIN 2026
+                        }
+                        tSeason = item.forceSeason;
+                    }
                         
                         let targetZoneId = 'zone_Y0_ANY';
                         
@@ -2041,7 +2051,11 @@
                     if (hasCredits) studyTermsBefore++;
                 }
 
-                if (studyTermsBefore < 2) {
+                // --- NOU: Verificăm dacă primul WT de pe grilă este efectiv WT1 ---
+                let isFirstWtActuallyWT1 = currentSequence[firstWtIdx].courses.some(id => id.toUpperCase().includes('WT1'));
+
+                // Aplicăm regula de 2 semestre DOAR dacă e vorba de WT1
+                if (isFirstWtActuallyWT1 && studyTermsBefore < 2) {
                     errors.push("Invalid Sequence: There must be at least 2 study terms before your first Work Term.");
                 }
 
@@ -2058,7 +2072,8 @@
                             }
                         });
                     }
-                    if (coreCrBefore < 30) {
+                    // Aplicăm regula de 30 credite DOAR dacă e vorba de WT1
+                    if (isFirstWtActuallyWT1 && coreCrBefore < 30) {
                         let firstWtName = currentSequence[firstWtIdx].courses.find(id => id.includes('WT')) || "WT";
                         errors.push(`Requirement not met: Only ${coreCrBefore} credits of CORE/TE before ${firstWtName}. Programs with multiple Work Terms require at least 30 CR before the first WT.`);
                     }
@@ -2154,8 +2169,15 @@
             }
         }
 
+        // --- NOU: Rulăm aplicarea restricțiilor și capturăm erorile cu "YES" pe col H ---
+        let restrictionWarnings = applyRestrictions();
+        if (restrictionWarnings && restrictionWarnings.length > 0) {
+            restrictionWarnings.forEach(w => errors.push(`Rule Restriction: ${w}`));
+        }
+
         list.innerHTML = '';
-        errors = [...new Set(errors)];
+        errors = [...new Set(errors)]; // Eliminăm automat duplicatele!
+
         if (errors.length === 0) {
             list.innerHTML = `
                 <li style="color:#27ae60; font-weight:bold; margin-bottom: 6px;">✅ Sequence looks good! All rules implemented in this tool seem to be satisfied.</li>
@@ -2195,6 +2217,8 @@
                 }
             }
         }
+
+        
     }
 
     async function submitSequence() {
@@ -2840,9 +2864,14 @@
                     let match = Array.from(progSelect.options).find(o => o.value.toUpperCase().includes(data.suggested_program));
                     if (match && progSelect.value !== match.value) {
                         progSelect.value = match.value;
-                        // IMPORTANT: Transmitem un semnal funcției onchange că noi am pus deja loading screen-ul
+                        
+                        // NOU: Afișăm alerta dacă sunt mai multe programe
+                        if (data.multiple_programs) {
+                            alert("Atenție: Au fost detectate mai multe programe în istoric. Cel mai recent a fost selectat automat (" + match.value + ").");
+                        }
+                        
                         await progSelect.onchange({ detail: { keepLoadingScreenActive: true } }); 
-                        return; // Oprim execuția aici. Funcția onchange va ascunde ea Loading-ul la final.
+                        return;
                     }
                 }
             }
@@ -2852,6 +2881,101 @@
         
         // Dacă a ajuns aici (nu a găsit program sau a dat eroare), stingem noi ecranul de loading.
         document.getElementById('loadingOverlay').style.display = 'none';
+    }
+
+
+    function applyRestrictions() {
+        let activeWarnings = []; // NOU: Colectăm avertismentele critice
+        document.querySelectorAll('.restriction-msg').forEach(el => el.remove());
+        if (typeof serverRestrictions === 'undefined' || !serverRestrictions.length) return activeWarnings;
+
+        let progName = document.getElementById('programSelect').value.toUpperCase();
+        let isCoop = document.getElementById('coopRegistered').checked;
+        let today = new Date().toISOString().split('T')[0]; 
+
+        for(let y=1; y<=7; y++) {
+            ['SUM', 'FALL', 'WIN'].forEach(t => {
+                let container = document.getElementById(`cont_Y${y}_${t}`);
+                if (!container) return;
+
+                let pTerm = document.getElementById('startTerm').value;
+                let pYear = parseInt(document.getElementById('startYear').value);
+                let baseYear = pTerm === 'Winter' ? pYear - 1 : pYear;
+                let termYear = (t === 'WIN') ? (baseYear + y) : (baseYear + y - 1);
+                
+                let acaYearStr = (t === 'WIN') ? `${termYear-1}-${termYear}` : `${termYear}-${termYear+1}`;
+                let seasonStr = t === 'SUM' ? 'Summer' : (t === 'WIN' ? 'Winter' : 'Fall');
+
+                let zone = document.getElementById(`zone_Y${y}_${t}`);
+                let placedCourses = zone ? Array.from(zone.children).map(c => c.id.toUpperCase()) : [];
+
+                serverRestrictions.forEach(rule => {
+                    let effDate = rule['Date after which takes effect'] ? String(rule['Date after which takes effect']).trim().split(' ')[0] : "";
+                    if (effDate && effDate.toLowerCase() !== 'nan' && today <= effDate) return;
+
+                    let rProg = rule['Program'] ? String(rule['Program']).trim().toUpperCase() : "";
+                    if (rProg && rProg !== 'NAN' && !progName.includes(rProg)) return;
+
+                    let rCoop = rule['COOP selected'] ? String(rule['COOP selected']).trim().toUpperCase() : "";
+                    if (rCoop === 'YES' && !isCoop) return;
+                    if (rCoop === 'NO' && isCoop) return;
+
+                    let rYear = rule['Year'] ? String(rule['Year']).trim() : "";
+                    if (rYear && rYear.toLowerCase() !== 'nan' && rYear !== acaYearStr) return;
+
+                    let rTerm = rule['Term'] ? String(rule['Term']).trim().toUpperCase() : "";
+                    if (rTerm && rTerm !== 'NAN' && rTerm !== seasonStr.toUpperCase()) return;
+
+                    let rCourse = rule['Course'] ? String(rule['Course']).trim().toUpperCase() : "";
+                    if (rCourse && rCourse !== 'NAN') {
+                        let matchFound = false;
+                        let rCourseClean = rCourse.replace(/\s+/g, '');
+                        placedCourses.forEach(cid => {
+                            let cData = coursesData[cid];
+                            let cName = cData ? cData.full_name.toUpperCase() : cid;
+                            let cNameClean = cName.replace(/\s+/g, '');
+                            if (cNameClean.includes(rCourseClean)) matchFound = true;
+                        });
+                        if (!matchFound) return;
+                    }
+
+                    let msg = rule['Restriction'] ? String(rule['Restriction']).trim() : "";
+                    if (msg && msg.toLowerCase() !== 'nan') {
+                        let div = document.createElement('div');
+                        div.className = 'restriction-msg';
+                        div.style.backgroundColor = '#fdf2f2';
+                        div.style.color = '#c0392b';
+                        div.style.padding = '5px 8px';
+                        div.style.fontSize = '11px';
+                        div.style.fontWeight = 'bold';
+                        div.style.borderTop = '1px solid #fadbd8';
+                        div.style.borderBottom = '1px solid #fadbd8';
+                        div.style.marginBottom = '3px';
+                        div.style.marginTop = '2px';
+                        div.innerHTML = "📌 Rule: " + msg;
+
+                        let header = container.querySelector('.coop-header-info') || container.querySelector('.discipline-info-box') || container.querySelector('.cgpa-info-box') || container.querySelector('.term-header');
+                        if (header && header.nextSibling) {
+                            header.parentNode.insertBefore(div, header.nextSibling);
+                        } else if (header) {
+                            header.parentNode.appendChild(div);
+                        } else {
+                            container.prepend(div);
+                        }
+
+                        // --- NOU: Verificăm Coloana H (index 7) pentru YES ---
+                        let keys = Object.keys(rule);
+                        if (keys.length > 7) {
+                            let colH_val = String(rule[keys[7]]).trim().toUpperCase();
+                            if (colH_val === 'YES') {
+                                activeWarnings.push(msg); // O trimitem către Live Check
+                            }
+                        }
+                    }
+                });
+            });
+        }
+        return activeWarnings; // Returnăm lista de erori generate
     }
 
     autoDetectProgram();

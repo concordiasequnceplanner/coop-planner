@@ -7,3 +7,4 @@ resend==0.7.1
 
 gunicorn==21.2.0
 sqlalchemy==2.0.47
+pymysql==1.1.2

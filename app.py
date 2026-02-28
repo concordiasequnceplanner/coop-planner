@@ -5,10 +5,10 @@ import json
 import datetime
 from collections import defaultdict
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
 import resend
+from sqlalchemy import create_engine, text
+import pymysql
 
 app = Flask(__name__)
 app.secret_key = "SVsecretKEY"
@@ -17,6 +17,27 @@ resend.api_key = os.environ.get("RESEND_API_KEY")
 debug_no_emails = "DEBUG" # debug
 #debug_no_emails =  "SITE_ACTIVE" # then it works
 debug_email="sorin.voiculescu@concordia.ca"
+
+# =========================================================
+# 1. CONFIGURARE BAZĂ DE DATE (MySQL GoDaddy)
+# =========================================================
+DB_USER = os.environ.get("planner_db_USER")
+DB_PASS = os.environ.get("planner_db_password")
+DB_HOST = os.environ.get("planner_db_HOST")
+DB_NAME = os.environ.get("planner_db_NAME")
+
+if DB_PASS:
+    DATABASE_URI = f"mysql+pymysql://{DB_USER}:{DB_PASS}@{DB_HOST}:3306/{DB_NAME}"
+    engine = create_engine(
+    DATABASE_URI,
+    pool_pre_ping=True,  
+    pool_recycle=280,
+    connect_args={'ssl': {}}  # <--- AICI e modificarea (dicționar SSL gol pentru a forța criptarea standard)
+        )
+    print("🟢 App connected to MySQL Database successfully.")
+else:
+    engine = None
+    print("❌ WARNING: Environment variable planner_db_password not set!")
 
 STANDARD_SEQUENCES = {
     "INDUSTRIAL": {
@@ -32,7 +53,6 @@ STANDARD_SEQUENCES = {
         "INDU342": "Y4_FALL", "INDU423": "Y4_FALL", "INDU490A": "Y4_FALL",
         "INDU490B": "Y4_WIN"
     },
-    
     "MECHANICAL": {
         "ENCS282": "Y1_FALL", "ENGR213": "Y1_FALL", "ENGR242": "Y1_FALL", "MIAE211": "Y1_FALL", "MIAE215": "Y1_FALL",
         "ENGR233": "Y1_WIN", "ENGR243": "Y1_WIN", "ENGR244": "Y1_WIN", "MIAE313": "Y1_WIN", "MIAE221": "Y1_WIN",
@@ -46,7 +66,6 @@ STANDARD_SEQUENCES = {
         "MECH368": "Y4_FALL", "ENGR301": "Y4_FALL", "MECH344": "Y4_FALL", "MECH490A": "Y4_FALL",
         "MECH490B": "Y4_WIN"
     },
-
     "AERO_A": {
         "ENCS282": "Y1_FALL", "ENGR213": "Y1_FALL", "ENGR242": "Y1_FALL", "MIAE215": "Y1_FALL", "AERO201": "Y1_FALL",
         "ENGR233": "Y1_WIN", "ENGR201": "Y1_WIN", "ENGR243": "Y1_WIN", "ENGR244": "Y1_WIN", "ENGR251": "Y1_WIN", "ENGR202": "Y1_WIN",
@@ -60,7 +79,6 @@ STANDARD_SEQUENCES = {
         "AERO462": "Y4_FALL", "AERO464": "Y4_FALL", "MECH461": "Y4_FALL", "AERO455": "Y4_FALL", "AERO490A": "Y4_FALL",
         "AERO465": "Y4_WIN", "AERO490B": "Y4_WIN"
     },
-    
     "AERO_B": {
         "AERO201": "Y1_FALL", "ENCS282": "Y1_FALL", "ENGR213": "Y1_FALL", "ENGR242": "Y1_FALL", "MIAE215": "Y1_FALL",
         "AERO253": "Y1_WIN", "ENGR201": "Y1_WIN", "ENGR233": "Y1_WIN", "ENGR243": "Y1_WIN", "ENGR244": "Y1_WIN", "ENGR202": "Y1_WIN",
@@ -74,7 +92,6 @@ STANDARD_SEQUENCES = {
         "AERO431": "Y4_FALL", "AERO417": "Y4_FALL", "AERO486": "Y4_FALL", "MECH460": "Y4_FALL", "MECH412": "Y4_FALL", "AERO490A": "Y4_FALL",
         "AERO487": "Y4_WIN", "AERO490B": "Y4_WIN"
     },
-    
     "AERO_C": {
         "AERO201": "Y1_FALL", "ENCS282": "Y1_FALL", "ENGR213": "Y1_FALL", "ENGR242": "Y1_FALL", "COEN243": "Y1_FALL",
         "ELEC273": "Y1_WIN", "ENGR233": "Y1_WIN", "ENGR243": "Y1_WIN", "ENGR244": "Y1_WIN", "ENGR201": "Y1_WIN",
@@ -89,50 +106,38 @@ STANDARD_SEQUENCES = {
         "AERO490B": "Y4_WIN"
     }
 }
-def get_gspread_client():
-    base_path = os.path.dirname(os.path.abspath(__file__))
-    json_path = os.path.join(base_path, "cheie_google.json")
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name(json_path, scope)
-    return gspread.authorize(creds)
 
 def verify_email_in_sheets(email):
     try:
-        client = get_gspread_client()
-        sheet = client.open("Sid_Email_Mirror").worksheet("Sid_Email_Admission")
-        for row in sheet.get_all_records():
-            if str(row.get('Primary Email', '')).strip().lower() == email.strip().lower():
-                return True, str(row.get('Student ID', ''))
-        return False, ""
-    except Exception: return False, ""
-
-
+        with engine.connect() as conn:
+            query = text("SELECT `Student ID` FROM `Sid_Email_Admission` WHERE LOWER(`Primary Email`) = :email LIMIT 1")
+            result = conn.execute(query, {"email": email.strip().lower()}).fetchone()
+            if result:
+                return True, str(result[0]).strip()
+    except Exception as e:
+        print(f"DB Error verify_email: {e}")
+    return False, ""
 
 def get_student_email(target_sid, fallback_email="student@concordia.ca"):
     try:
-        client = get_gspread_client()
-        # Ne uitam in sheet-ul corect pentru a lega ID-ul de Email!
-        sheet = client.open("Sid_Email_Mirror").worksheet("Sid_Email_Admission")
-        for row in sheet.get_all_records():
-            if str(row.get('Student ID', '')).strip() == str(target_sid).strip():
-                em = str(row.get('Primary Email', '')).strip()
-                return em if em else fallback_email
+        with engine.connect() as conn:
+            query = text("SELECT `Primary Email` FROM `Sid_Email_Admission` WHERE `Student ID` = :sid ORDER BY `email_priority` ASC LIMIT 1")
+            result = conn.execute(query, {"sid": str(target_sid).strip()}).fetchone()
+            if result and result[0]:
+                return str(result[0]).strip()
     except Exception as e:
-        print("Error finding email:", e)
+        print(f"DB Error get_student_email: {e}")
     return fallback_email
 
 def get_priority1_email(target_sid):
     try:
-        client = get_gspread_client()
-        sheet = client.open("Sid_Email_Mirror").worksheet("Sid_Email_Admission")
-        for row in sheet.get_all_records():
-            if str(row.get('Student ID', '')).strip() == str(target_sid).strip():
-                # Check for priority 1
-                if str(row.get('email_priority', '')).strip() == '1':
-                    em = str(row.get('Primary Email', '')).strip()
-                    if em: return em
+        with engine.connect() as conn:
+            query = text("SELECT `Primary Email` FROM `Sid_Email_Admission` WHERE `Student ID` = :sid AND `email_priority` = 1 LIMIT 1")
+            result = conn.execute(query, {"sid": str(target_sid).strip()}).fetchone()
+            if result and result[0]:
+                return str(result[0]).strip()
     except Exception as e:
-        print("Error finding priority1 email:", e)
+        print(f"DB Error get_prio1_email: {e}")
     return ""
 
 def send_otp_email(recipient, otp):
@@ -145,7 +150,6 @@ def send_otp_email(recipient, otp):
             "html": f"<h2>Concordia MIAE</h2><p>Your login access code is: <strong style='font-size: 24px;'>{otp}</strong></p><p>This code is valid for 30 minutes.</p>",
             "reply_to": "coop_miae@concordia.ca"
         })
-        # Dacă trece de linia de mai sus fără eroare, Resend confirmă expedierea!
         return True, "The email has been sent"
     except Exception as e:
         print(f"Resend Error: {e}")
@@ -153,7 +157,6 @@ def send_otp_email(recipient, otp):
 
 
 def get_email_recipients(program, target_sid, submitter_email, priority1_email, action_type):
-    # Adrese fixe
     coop_ad_email = "coop_miae@concordia.ca"
     submit_notification = "sorin.voiculescu@concordia.ca"
 
@@ -163,8 +166,9 @@ def get_email_recipients(program, target_sid, submitter_email, priority1_email, 
     else:
         miae_program_assistant = debug_email
         email_coop_approval = debug_email
+        priority1_email = "vosorin@gmail.com"
+        submitter_email = "vosorin@gmail.com"
 
-    # Logica de selectare a coordonatorului
     coord_email = "frederick.francis@concordia.ca" 
     if program and "INDU" in str(program).upper():
         if debug_no_emails == "SITE_ACTIVE" : coord_email = "nadia.mazzaferro@concordia.ca"
@@ -182,26 +186,22 @@ def get_email_recipients(program, target_sid, submitter_email, priority1_email, 
             
     recipients = {"to": [], "cc": [], "bcc": []}
 
-    # Aplicăm logica în funcție de acțiune
     if action_type == "SUBMIT":
         recipients["to"].append(coop_ad_email)
         recipients["cc"].extend([miae_program_assistant, coord_email, submitter_email])
         recipients["bcc"].append(submit_notification)
-        # Adăugăm priority 1 în bcc dacă e diferit de cel care dă submit
         if priority1_email and priority1_email.strip().lower() != submitter_email.strip().lower():
             recipients["bcc"].append(priority1_email)
         
     elif action_type == "REWORK":
         recipients["to"].append(submitter_email)
         recipients["cc"].extend([coop_ad_email, miae_program_assistant, coord_email])
-        # Adăugăm priority 1 în bcc dacă e diferit de cel care a dat submit
         if priority1_email and priority1_email.strip().lower() != submitter_email.strip().lower():
             recipients["bcc"].append(priority1_email)
         
     elif action_type == "APPROVED":
         recipients["to"].append(email_coop_approval)
         recipients["cc"].extend([coop_ad_email, miae_program_assistant, coord_email, submitter_email])
-        # AICI E LOGICA PRINCIPALĂ CERUTĂ:
         if priority1_email and priority1_email.strip().lower() != submitter_email.strip().lower():
             recipients["bcc"].append(priority1_email)
 
@@ -211,15 +211,21 @@ def get_email_recipients(program, target_sid, submitter_email, priority1_email, 
 
     return recipients
 
-
+_CORE_TE_DF = None
 
 def load_data():
+    global _CORE_TE_DF
+    if _CORE_TE_DF is not None:
+        return _CORE_TE_DF.copy()
     try:
         df = pd.read_excel(os.path.join(os.path.dirname(os.path.abspath(__file__)), "CORE_TE.xlsx"))
         df.columns = [str(c).strip() for c in df.columns] 
-        return df.fillna("")
-    except Exception: return pd.DataFrame()
-
+        _CORE_TE_DF = df.fillna("")
+        return _CORE_TE_DF.copy()
+    except Exception as e: 
+        print(f"Error loading Excel: {e}")
+        return pd.DataFrame()
+    
 def extract_course_code(course_name):
     if not course_name: return ""
     match = re.search(r'(?:REP_)?[A-Z]{3,4}\s?\d{3}[A-Z]?|WT\d', str(course_name).upper())
@@ -251,98 +257,70 @@ def parse_coop_term_string(term_str):
     return str(year), season
 
 def get_program_ft_credits():
+    ft_dict = {}
     try:
-        client = get_gspread_client()
-        sheet = client.open("Sid_Email_Mirror").worksheet("Program_names")
-        records = sheet.get_all_values()
-        ft_dict = {}
-        for row in records[1:]:  # Sărim peste header
-            if len(row) >= 2:
+        with engine.connect() as conn:
+            query = text("SELECT Program, Credits_FT FROM Program_names")
+            for row in conn.execute(query):
                 prog = str(row[0]).strip().upper()
-                prog = " ".join(prog.split()) # normalizăm spațiile
-                try:
-                    cr = float(row[1])
-                    if cr == 0: cr = 99
-                except:
-                    cr = 99
-                ft_dict[prog] = cr
-        return ft_dict
+                prog = " ".join(prog.split()) 
+                try: cr = float(row[1]) if row[1] else 99
+                except: cr = 99
+                ft_dict[prog] = cr if cr != 0 else 99
     except Exception as e:
-        print("Error fetching Program_names:", e)
-        return {}
-
+        print(f"DB Error Program_names FT: {e}")
+    return ft_dict
 
 def get_program_gpa_thresholds():
+    gpa_dict = {}
     try:
-        client = get_gspread_client()
-        sheet = client.open("Sid_Email_Mirror").worksheet("Program_names")
-        records = sheet.get_all_values()
-        gpa_dict = {}
-        for row in records[1:]:  # Sărim peste header
-            if len(row) >= 3:
+        with engine.connect() as conn:
+            query = text("SELECT Program, GPA_2_terms FROM Program_names")
+            for row in conn.execute(query):
                 prog = str(row[0]).strip().upper()
-                prog = " ".join(prog.split()) # normalizăm spațiile
-                try: gpa = float(row[2])
-                except: gpa = 2.0 # Valoare de rezervă
+                prog = " ".join(prog.split()) 
+                try: gpa = float(row[1]) if row[1] else 2.0
+                except: gpa = 2.0 
                 gpa_dict[prog] = gpa
-        return gpa_dict
     except Exception as e:
-        print("Error fetching GPA thresholds:", e)
-        return {}
+        print(f"DB Error Program_names GPA: {e}")
+    return gpa_dict
+
+# --- ROUTES ---
 
 @app.route("/api/get_cgpa_timeline", methods=["POST"])
 def api_get_cgpa_timeline():
     if 'user_email' not in session: return jsonify({"error": "Unauthorized"}), 401
-    
-    # Restricție strictă: Oprim guest-ul să acceseze CGPA
     if session.get('is_guest'): return jsonify({})
     
     target_sid = str(request.json.get("student_id", "")).strip()
     if not target_sid: return jsonify({})
 
     try:
-        client = get_gspread_client()
-        sheet = client.open("Sid_Email_Mirror").worksheet("CGPA_Timeline")
+        query = text("SELECT * FROM `CGPA_Timeline` WHERE `Student ID` = :sid")
+        df = pd.read_sql(query, engine, params={"sid": target_sid})
         
-        headers = [str(h).strip() for h in sheet.row_values(1)]
-        try:
-            idx_sid = headers.index('Student ID')
-            idx_term = headers.index('Academic Term')
-            idx_gpa = headers.index('GPA_X_CR')
-            idx_cr = headers.index('GPA_X_CR_Actual_Credits')
-        except ValueError:
-            return jsonify({}) # Dacă lipsesc coloanele din Excel
-
-        all_sids = sheet.col_values(idx_sid + 1)
-        matching_rows = [i + 1 for i, sid in enumerate(all_sids) if str(sid).strip().replace('.0','') == target_sid]
-        
-        if not matching_rows: return jsonify({})
-
-        ranges = [f"A{r}:Z{r}" for r in matching_rows]
-        raw_results = sheet.batch_get(ranges)
-
         cgpa_data = {}
-        for res in raw_results:
-            if not res or not res[0]: continue
-            row = res[0]
-            row.extend([""] * (len(headers) - len(row))) # Pad în caz că rândul e prea scurt
-            
-            term_str = str(row[idx_term]).strip()
-            gpa_val = str(row[idx_gpa]).strip()
-            cr_val = str(row[idx_cr]).strip()
+        for _, row in df.iterrows():
+            term_str = str(row.get('Academic Term', '')).strip()
+            gpa_val = str(row.get('GPA_X_CR', '')).strip()
+            cr_val = str(row.get('GPA_X_CR_Actual_Credits', '')).strip()
 
             if gpa_val and gpa_val.lower() != 'nan':
                 try:
+                    c_val = row.get('CGPA', 0.0)
+                    t_cr = row.get('CGPA_Total_Credits', 0.0)
+
                     cgpa_data[term_str] = {
                         "gpa_val": float(gpa_val),
-                        "credits_val": float(cr_val) if cr_val else 0.0
+                        "credits_val": float(cr_val) if cr_val else 0.0,
+                        "cgpa": float(c_val) if pd.notna(c_val) else 0.0,
+                        "tot_cr": float(t_cr) if pd.notna(t_cr) else 0.0
                     }
-                except ValueError:
-                    pass
-                    
+                except ValueError: pass
         return jsonify(cgpa_data)
     except Exception as e:
-        print("Error fetching CGPA Timeline:", e)
+        print(f"DB Error CGPA: {e}")
         return jsonify({})
 
 
@@ -351,72 +329,42 @@ def get_student_coop_data(target_sid):
     target_sid = str(target_sid).strip().replace('.0', '')
     
     try:
-        client = get_gspread_client()
-        sheet = client.open("Sid_Email_Mirror").worksheet("COOP")
+        query = text("SELECT * FROM `coop` WHERE `Student ID` = :sid")
+        df = pd.read_sql(query, engine, params={"sid": target_sid})
+        if df.empty: return {"found": False}
         
-        # 1. Citim Headerele
-        headers = [str(h).strip() for h in sheet.row_values(1)]
-        if 'Student ID' not in headers: return {"found": False}
-        idx_sid = headers.index('Student ID')
-        
-        # 2. Descărcăm doar coloana de ID-uri
-        all_sids = sheet.col_values(idx_sid + 1)
-        
-        # 3. Găsim pe ce rânduri se află studentul nostru
-        matching_rows = []
-        for i, sid in enumerate(all_sids):
-            if str(sid).strip().replace('.0', '') == target_sid:
-                matching_rows.append(i + 1)
-                
-        if not matching_rows: return {"found": False}
-        
-        # 4. Cerem DOAR rândurile studentului din Google Sheets
-        ranges = [f"A{r}:Z{r}" for r in matching_rows]
-        raw_results = sheet.batch_get(ranges)
-        
-        # Reconstruim formatul de dicționar așteptat de restul codului tău
-        student_records = []
-        for res in raw_results:
-            if not res or not res[0]: continue
-            row = res[0]
-            row.extend([""] * (len(headers) - len(row)))
-            row_dict = dict(zip(headers, row))
-            student_records.append(row_dict)
-
+        student_records = df.to_dict('records')
         admission_info = None
         cutoff_score = float('inf') 
         parsed_records = []
 
-        # ... De aici în jos lasă codul tău ORIGINAL ...
         for row in student_records:
             raw_term = str(row.get('Term', ''))
-            # ... restul funcției tale care calculează score, ws, views etc.
             year, season = parse_coop_term_string(raw_term)
             
-            if not admission_info and str(row.get('Admission Term', '')).lower() != 'nan':
-                 adm_year, adm_season = parse_coop_term_string(row.get('Admission Term'))
+            adm_val = str(row.get('Admission Term', ''))
+            if not admission_info and adm_val and adm_val.lower() != 'nan':
+                 adm_year, adm_season = parse_coop_term_string(adm_val)
                  if adm_year and adm_season: admission_info = {"year": adm_year, "term": adm_season}
 
             if year and season:
-                # 1. Calculăm SCORUL CRONOLOGIC (Ex: Winter 2025 = 20251, Summer 2025 = 20252, Fall = 20253)
                 score = 0
                 y_int = int(year)
                 if season == 'WIN': score = y_int * 10 + 1
                 elif season == 'SUM': score = y_int * 10 + 2
                 elif season == 'FALL': score = y_int * 10 + 3
 
-                # 2. Verificăm "Transferred Withdrawn OK"
                 tw_ok = str(row.get('Transferred Withdrawn OK', '')).strip()
                 tw_lower = tw_ok.lower()
                 is_cutoff = False
                 
-                # Dacă e diferit de "OK" sau gol, stabilim un nou punct de cut-off
-                if tw_lower and tw_lower != 'nan' and tw_lower != 'ok':
+                if tw_lower and tw_lower != 'nan' and tw_lower != 'ok' and tw_lower != 'none':
                     is_cutoff = True
-                    if score < cutoff_score:
-                        cutoff_score = score # Păstrăm cel mai devreme termen cu problemă
+                    if score < cutoff_score: cutoff_score = score 
 
                 ws_raw = str(row.get('WS', '')).replace('_NF', ' not found')
+                if ws_raw.lower() == 'nan': ws_raw = ""
+                
                 views, applied = 0, 0
                 try: views = int(float(row.get('Jobs View no', 0)))
                 except: pass
@@ -424,46 +372,30 @@ def get_student_coop_data(target_sid):
                 except: pass
                 
                 details = str(row.get('Term Details', '')).strip()
-                if details.lower() == 'nan': details = ""
+                if details.lower() == 'nan' or details.lower() == 'none': details = ""
 
                 parsed_records.append({
-                    "score": score,
-                    "key": f"{year}_{season}",
-                    "label": str(row.get('Term number Sx or Wx', '')),
-                    "ws": ws_raw, 
-                    "views": views, 
-                    "applied": applied, 
-                    "details": details,
-                    "tw_ok": tw_ok if is_cutoff else "" # Trimitem mesajul de eroare către UI
+                    "score": score, "key": f"{year}_{season}", "label": str(row.get('Term number Sx or Wx', '')),
+                    "ws": ws_raw, "views": views, "applied": applied, "details": details,
+                    "tw_ok": tw_ok if is_cutoff else "" 
                 })
         
-        # 3. FILTRAM DATELE pe baza cut-off-ului
         coop_data = {}
         for rec in parsed_records:
-            # Păstrăm datele doar până la termenul problemă inclusiv (score <= cutoff_score)
             if rec["score"] <= cutoff_score:
                 coop_data[rec["key"]] = {
-                    "label": rec["label"],
-                    "ws": rec["ws"],
-                    "views": rec["views"],
-                    "applied": rec["applied"],
-                    "details": rec["details"],
-                    "tw_ok": rec["tw_ok"]
+                    "label": rec["label"], "ws": rec["ws"], "views": rec["views"],
+                    "applied": rec["applied"], "details": rec["details"], "tw_ok": rec["tw_ok"]
                 }
 
         return {"found": True, "admission": admission_info, "terms": coop_data}
-    
     except Exception as e:
-        print(f"Eroare COOP Fetch Backend: {e}")
-        return {"found": False, "error": str(e)}
-     
+        print(f"DB Error COOP: {e}")
+        return {"found": False}
 
-
-# --- ROUTES ---
 
 @app.route("/save_comments", methods=["POST"])
 def save_comments():
-    # Doar Power Userii au voie să salveze comentarii automat
     if not str(session.get('student_id', '')).startswith('9'): 
         return jsonify({"error": "Unauthorized"}), 403
         
@@ -475,26 +407,17 @@ def save_comments():
     if not target_sid: return jsonify({"error": "No ID"}), 400
     
     try:
-        client = get_gspread_client()
-        comments_sheet = client.open("Sid_Email_Mirror").worksheet("S_id_comments")
-        records = comments_sheet.get_all_values()
-        
-        found_row = -1
-        for i, row in enumerate(records[1:], start=2): # +2 pt că indexăm de la rândul 2 (după headere)
-            if len(row) > 0 and str(row[0]).strip() == target_sid:
-                found_row = i
-                break
-                
-        if found_row != -1:
-            # Rândul există, dăm update
-            comments_sheet.update(values=[[pub_comment, priv_comment]], range_name=f"B{found_row}:C{found_row}")
-        else:
-            # Studentul nu are comentarii încă, adăugăm un rând nou
-            comments_sheet.append_row([target_sid, pub_comment, priv_comment])
-            
+        with engine.begin() as conn:
+            check = conn.execute(text("SELECT 1 FROM S_id_comments WHERE S_id = :sid"), {"sid": target_sid}).fetchone()
+            if check:
+                conn.execute(text("UPDATE S_id_comments SET Public_comments=:pub, PRIVATE_comments=:priv WHERE S_id=:sid"), 
+                             {"sid": target_sid, "pub": pub_comment, "priv": priv_comment})
+            else:
+                conn.execute(text("INSERT INTO S_id_comments (S_id, Public_comments, PRIVATE_comments) VALUES (:sid, :pub, :priv)"), 
+                             {"sid": target_sid, "pub": pub_comment, "priv": priv_comment})
         return jsonify({"success": True})
     except Exception as e:
-        print(f"Error auto-saving comments: {e}")
+        print(f"DB Error save_comments: {e}")
         return jsonify({"error": str(e)}), 500
     
 
@@ -505,26 +428,22 @@ def get_comments():
     if not sid: return jsonify({"public": "", "private": ""})
     
     try:
-        client = get_gspread_client()
-        sheet = client.open("Sid_Email_Mirror").worksheet("S_id_comments")
-        records = sheet.get_all_values() # Folosim values, nu records
-        
-        for row in records[1:]: # Sarim peste primul rand (headerele)
-            if len(row) > 0 and str(row[0]).strip() == sid:
+        with engine.connect() as conn:
+            query = text("SELECT Public_comments, PRIVATE_comments FROM S_id_comments WHERE S_id = :sid LIMIT 1")
+            result = conn.execute(query, {"sid": sid}).fetchone()
+            if result:
                 return jsonify({
-                    "public": str(row[1]).strip() if len(row) > 1 else "",
-                    "private": str(row[2]).strip() if len(row) > 2 else ""
+                    "public": str(result[0]).strip() if result[0] and str(result[0]).lower() != 'none' else "",
+                    "private": str(result[1]).strip() if result[1] and str(result[1]).lower() != 'none' else ""
                 })
     except Exception as e:
-        print(f"Error fetching comments: {e}")
+        print(f"DB Error get_comments: {e}")
     return jsonify({"public": "", "private": ""})
 
 
 
 @app.route("/update_status", methods=["POST"])
 def update_status():
-
-    
     if not str(session.get('student_id', '')).startswith('9'): 
         return jsonify({"error": "Unauthorized"}), 403
         
@@ -541,72 +460,41 @@ def update_status():
     original_timestamp_title = data.get("original_title", "Untitled")
     
     try:
-        client = get_gspread_client()
-        
-        # 1. Update S_id_comments (Corectat pentru noul format gspread)
-        comments_sheet = client.open("Sid_Email_Mirror").worksheet("S_id_comments")
-        records = comments_sheet.get_all_values()
-        found_row = -1
-        for i, row in enumerate(records[1:], start=2):
-            if len(row) > 0 and str(row[0]).strip() == target_sid:
-                found_row = i
-                break
-                
-        if found_row != -1:
-            # Formatul corect: specificam argumentele cu nume (values si range_name)
-            comments_sheet.update(values=[[pub_comment, priv_comment]], range_name=f"B{found_row}:C{found_row}")
-        else:
-            comments_sheet.append_row([target_sid, pub_comment, priv_comment])
-            
-        row_idx = data.get("row_index") # Extragem randul sigur
-        
-        # 2. Update Saved_Sequences Status (FOLOSIND RANDUL EXACT + CLEANUP PENDING)
-        seq_sheet = client.open("Sid_Email_Mirror").worksheet("Saved_Sequences")
-        seq_records = seq_sheet.get_all_values()
-        justification = "" # <-- ADAUGAT PENTRU A EXTRAGE JUSTIFICAREA STUDENTULUI
-        
-        if status == "APPROVED":
-            status_to_save = f"APPROVED on {datetime.datetime.now().strftime('%Y-%m-%d')}"
-            
-            # Parcurgem tot fisierul pentru a aproba secventa curenta si a le anula pe restul
-            for i, row in enumerate(seq_records[1:], start=2):
-                row_sid = str(row[10]).strip() if len(row) > 10 else ""
-                row_time = str(row[4]).strip() if len(row) > 4 else ""
-                row_status = str(row[7]).strip().upper() if len(row) > 7 else ""
-                
-                # A. Aceasta este secventa pe care o aprobam ACUM
-                if (row_idx is not None and i == row_idx) or (row_idx is None and row_sid == target_sid and row_time == str(timestamp).strip()):
-                    seq_sheet.update_cell(i, 8, status_to_save)
-                    justification = str(row[8]).strip() if len(row) > 8 else "" # Extragem comentariul!
-                    
-                # B. Daca e acelasi student si secventa e inca in Pending, o trecem pe IGNORED
-                elif row_sid == target_sid and row_status == "PENDING APPROVAL":
-                    seq_sheet.update_cell(i, 8, "IGNORED")
-                    
-        else:
-            # Daca statusul este REWORK, modificam STRICT secventa selectata, nu ne atingem de restul
-            status_to_save = status
-            if row_idx is not None:
-                seq_sheet.update_cell(row_idx, 8, status_to_save)
-                justification = str(seq_records[row_idx - 1][8]).strip() if len(seq_records[row_idx - 1]) > 8 else "" # Extragem comentariul!
+        # 1. Update Comments
+        with engine.begin() as conn:
+            check = conn.execute(text("SELECT 1 FROM S_id_comments WHERE S_id = :sid"), {"sid": target_sid}).fetchone()
+            if check:
+                conn.execute(text("UPDATE S_id_comments SET Public_comments=:pub, PRIVATE_comments=:priv WHERE S_id=:sid"), 
+                             {"sid": target_sid, "pub": pub_comment, "priv": priv_comment})
             else:
-                for i, row in enumerate(seq_records[1:], start=2):
-                    row_sid = str(row[10]).strip() if len(row) > 10 else ""
-                    row_time = str(row[4]).strip() if len(row) > 4 else ""
-                    if row_sid == target_sid and row_time == str(timestamp).strip():
-                        seq_sheet.update_cell(i, 8, status_to_save) 
-                        justification = str(row[8]).strip() if len(row) > 8 else "" # Extragem comentariul!
-                        break
+                conn.execute(text("INSERT INTO S_id_comments (S_id, Public_comments, PRIVATE_comments) VALUES (:sid, :pub, :priv)"), 
+                             {"sid": target_sid, "pub": pub_comment, "priv": priv_comment})
+                             
+        # 2. Update Sequence Status
+        justification = ""
+        with engine.begin() as conn:
+            query = text("SELECT student_comments FROM Saved_Sequences WHERE student_id = :sid AND Date_Saved = :ts LIMIT 1")
+            res = conn.execute(query, {"sid": target_sid, "ts": timestamp}).fetchone()
+            justification = res[0] if (res and res[0] and str(res[0]).lower() != 'none') else ""
+
+            if status == "APPROVED":
+                status_to_save = f"APPROVED on {datetime.datetime.now().strftime('%Y-%m-%d')}"
+                conn.execute(text("UPDATE Saved_Sequences SET status = :stat WHERE student_id = :sid AND Date_Saved = :ts"), 
+                             {"stat": status_to_save, "sid": target_sid, "ts": timestamp})
+                conn.execute(text("UPDATE Saved_Sequences SET status = 'IGNORED' WHERE student_id = :sid AND status = 'PENDING APPROVAL'"), 
+                             {"sid": target_sid})
+            else:
+                conn.execute(text("UPDATE Saved_Sequences SET status = :stat WHERE student_id = :sid AND Date_Saved = :ts"), 
+                             {"stat": status, "sid": target_sid, "ts": timestamp})
                 
-        # 3. Trimitem Emailul
+        # 3. Handle Emails
         submitter_email = data.get("submitter_email", "") 
-        if not submitter_email: # Fallback în caz că vine gol din frontend
+        if not submitter_email: 
             submitter_email = get_student_email(target_sid)
             
         priority1_email = get_priority1_email(target_sid)
         power_user_name = session.get('guest_name', 'Coordinator') if session.get('is_guest') else session.get('user_email').split('@')[0]
 
-        # --- Procesăm Erorile din Live Check ---
         val_errors = data.get('validation_errors', [])
         val_errors_html = "<ul style='margin: 0; padding-left: 20px; font-size: 14px;'>"
         if not val_errors:
@@ -615,7 +503,6 @@ def update_status():
             for err_html in val_errors:
                 val_errors_html += f"<li style='margin-bottom: 4px;'>{err_html}</li>"
         val_errors_html += "</ul>"
-
 
         if status == "APPROVED":
             subject = f"Approved sequence for {student_name} {target_sid} {program}"
@@ -649,22 +536,6 @@ def update_status():
                         cr = t_data.get('cr', 0)
                         wt_change = t_data.get('wt_change', '')
                         wt_note_html = f"<br><span style='color: #c0392b; font-size: 10px; font-weight: bold;'>{wt_change}</span>" if wt_change else ""
-                        is_curr = t_data.get('is_current_term'); is_inst = t_data.get('is_institute_wt'); is_coop = t_data.get('is_coop')
-                        
-                        bg_col = "#fcfcfc"; text_col = "#333333"; border_col = "#ddd"
-                        if is_curr: bg_col = "#fff9c4"; border_col = "#fbc02d"
-                        elif is_inst: bg_col = "#5DADE2"; text_col = "#ffffff"
-                        elif is_coop: bg_col = "#b3e5fc"
-                            
-                        terms_html += f"<td style='padding: 5px; border: 1px solid {border_col}; text-align: center; font-weight: bold; background-color: {bg_col}; color: {text_col};'>{cr} CR{wt_note_html}</td>"
-                    terms_html += "</tr><tr>"
-                    
-                    # RÂNDUL 1: Credite și Avertizări WT
-                    for t in ["SUM", "FALL", "WIN"]:
-                        t_data = data_term.get(t, {})
-                        cr = t_data.get('cr', 0)
-                        wt_change = t_data.get('wt_change', '')
-                        wt_note_html = f"<br><span style='color: #c0392b; font-size: 10px; font-weight: bold;'>{wt_change}</span>" if wt_change else ""
                         
                         is_curr = t_data.get('is_current_term')
                         is_inst = t_data.get('is_institute_wt')
@@ -683,18 +554,22 @@ def update_status():
                         elif is_coop:
                             bg_col = "#b3e5fc"
                             
-                       # --- NOU: LOGICA DE AFISARE GPA IN EMAIL ---
                         gpa_info = t_data.get('gpa_info')
                         gpa_html = ""
                         if gpa_info:
                             gpa_val = gpa_info.get('val', 0)
                             gpa_cr = gpa_info.get('credits', 0)
+                            cgpa_val = gpa_info.get('cgpa', 0)
+                            tot_cr = gpa_info.get('tot_cr', 0)
                             gpa_threshold = gpa_info.get('threshold', 2.0)
+                            
+                            gpa_cr_str = str(gpa_cr).replace('.0', '') if str(gpa_cr).endswith('.0') else str(gpa_cr)
+                            tot_cr_str = str(tot_cr).replace('.0', '') if str(tot_cr).endswith('.0') else str(tot_cr)
                             
                             if gpa_val == -1:
                                 gpa_bg = "transparent"
                                 gpa_col = text_col
-                                display_text = f"GPA past 2 full terms: N/A computed on {gpa_cr} credits"
+                                display_text = f"GPA past {gpa_cr_str}CR : N/A <br> CGPA {cgpa_val} / {tot_cr_str}CR total"
                             else:
                                 if gpa_val <= gpa_threshold:
                                     gpa_bg = "#c0392b"
@@ -704,23 +579,61 @@ def update_status():
                                     gpa_col = "#ffffff"
                                 else:
                                     gpa_bg = "transparent"
-                                    gpa_col = text_col # Mosteneste culoarea
-                                display_text = f"GPA past 2 full terms: {gpa_val} computed on {gpa_cr} credits"
+                                    gpa_col = text_col 
+                                display_text = f"GPA past {gpa_cr_str}CR : {gpa_val} <br> CGPA {cgpa_val} / {tot_cr_str}CR total"
 
-                            gpa_html = f"<div style='background-color: {gpa_bg}; color: {gpa_col}; font-size: 10px; padding: 4px; margin-top: 4px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.1);'>{display_text}</div>"
-
+                            gpa_html = f"<div style='background-color: {gpa_bg}; color: {gpa_col}; font-size: 10px; padding: 4px; margin-top: 4px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.1); font-weight: normal;'>{display_text}</div>"
 
                         terms_html += f"<td style='padding: 5px; border: 1px solid {border_col}; text-align: center; font-weight: bold; background-color: {bg_col}; color: {text_col};'>{cr} CR{wt_note_html}{gpa_html}</td>"
+                    
+                    terms_html += "</tr><tr>"
+                    
+                    for t in ["SUM", "FALL", "WIN"]:
+                        t_data = data_term.get(t, {})
+                        courses = t_data.get('courses', [])
+                        
+                        is_curr = t_data.get('is_current_term')
+                        is_inst = t_data.get('is_institute_wt')
+                        is_coop = t_data.get('is_coop')
+                        
+                        bg_col = "#ffffff"
+                        border_col = "#ddd"
+                        
+                        if is_curr:
+                            bg_col = "#fffde7"
+                            border_col = "#fbc02d"
+                        elif is_inst:
+                            bg_col = "#AED6F1" 
+                        elif is_coop:
+                            bg_col = "#e1f5fe"
+                            
+                        courses_html = ""
+                        for c in courses:
+                            if c.get('is_wt'):
+                                courses_html += f"<div style='background-color: #d5f5e3; font-weight: bold; padding: 4px; border-radius: 4px; color: #27ae60; border: 1px solid #abebc6; margin-bottom: 3px; text-align: center;'>{c.get('name')}</div>"
+                            else:
+                                c_text_col = "#154360" if is_inst else "#333333"
+                                c_sub_col = "#2980B9" if is_inst else "#7f8c8d"
+                                courses_html += f"<div style='margin-bottom: 2px; text-align: center; color: {c_text_col};'>{c.get('name')} <span style='font-size: 11px; color: {c_sub_col};'>({c.get('credit')} cr)</span></div>"
+                                
+                        terms_html += f"<td style='padding: 10px; border: 1px solid {border_col}; vertical-align: top; background-color: {bg_col};'>{courses_html}</td>"
+                    terms_html += "</tr>"
                     
                 terms_html += "</tbody></table>"
 
             html_body = f"""
-            <div style="font-family: Arial, sans-serif; max-width: 750px; margin: 0 auto; color: #333;">
-                <p>Hello,</p>
-                <p>Please find the approved sequence for {student_name} ({target_sid}) - {program}</p>
+            <div style="font-family: Arial, sans-serif; color: #333; max-width: 750px; margin: 0 auto; border: 1px solid #e0e0e0; padding: 20px; border-radius: 8px;">
+                <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">Approved Course Sequence</h2>
+                <p><b>Student Email:</b> {submitter_email}</p>
+                <p><b>Student Name:</b> {student_name}</p>
+                <p><b>Student ID:</b> {target_sid}</p>
+                <p><b>Program:</b> {program}</p>
+                
                 <div style="background-color: #f0f7ff; border-left: 4px solid #3498db; padding: 10px; margin: 15px 0;">
                     {wt_html}
                 </div>
+                
+                <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
                 
                 <p><b>MIAE COOP AD/PA Comments:</b></p>
                 <div style="background-color: #e8f5e9; border: 1px solid #c8e6c9; padding: 12px; border-radius: 5px; white-space: pre-wrap; font-style: italic; margin-bottom: 15px;">{pub_comment if pub_comment else 'No additional comments.'}</div>
@@ -743,8 +656,14 @@ def update_status():
         else: # REWORK
             subject = f"REWORK for {student_name} ({target_sid}) - sequence submitted on {original_timestamp_title}"
             html_body = f"""
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
-                <p>Hello {student_name},</p>
+            <div style="font-family: Arial, sans-serif; color: #333; max-width: 750px; margin: 0 auto; border: 1px solid #e0e0e0; padding: 20px; border-radius: 8px;">
+                <h2 style="color: #c0392b; border-bottom: 2px solid #e74c3c; padding-bottom: 10px;">Action Required: Course Sequence Rework</h2>
+                <p><b>Student Email:</b> {submitter_email}</p>
+                <p><b>Student Name:</b> {student_name}</p>
+                <p><b>Student ID:</b> {target_sid}</p>
+                <p><b>Program:</b> {program}</p>
+                
+                <p style="margin-top: 20px;">Hello {student_name},</p>
                 <p>Please consider the comments and the validation errors below to update your sequence.</p>
                 
                 <p><b>MIAE COOP AD/PA Comments:</b></p>
@@ -758,13 +677,15 @@ def update_status():
                 <p><b>Student's Justification / Comments:</b></p>
                 <div style="background-color: #f9f9f9; border: 1px solid #ddd; padding: 12px; border-radius: 5px; white-space: pre-wrap; font-style: italic; margin-bottom: 25px;">{justification if justification else 'No comments provided.'}</div>
                 
+                <div style="text-align: center; margin: 35px 0;">
+                    <a href="https://concordia-sequence-planner.onrender.com/" style="background-color: #e74c3c; color: #ffffff; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 16px; display: inline-block; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">Log in to Update Sequence</a>
+                </div>
+                
                 <br>
                 <p>Best Regards,<br><b>{power_user_name}</b></p>
             </div>
             """
                     
-                # Așa preiei destinatarii acum:
-        # Așa preiei destinatarii acum (am adăugat parametrul 'status'):
         email_data = get_email_recipients(program, target_sid, submitter_email, priority1_email, status)
 
         try:
@@ -774,23 +695,20 @@ def update_status():
                 "cc": email_data["cc"],
                 "bcc": email_data["bcc"], 
                 "reply_to": "coop_miae@concordia.ca",
-                "subject": subject,       # <-- Folosim variabila reală creată mai sus
-                "html": html_body         # <-- Folosim corpul de email real creat mai sus
+                "subject": subject,      
+                "html": html_body         
             })
         except Exception as e:
             print(f"Eroare la trimitere email: {e}")
             
         return jsonify({"success": True})
     except Exception as e:
-        print(f"Status Update Error: {e}")
+        print(f"Status Update DB Error: {e}")
         return jsonify({"error": str(e)}), 500
-    
-
 
 
 @app.route("/health", methods=["GET"])
 def health_check():
-    # Returnează un simplu 200 OK pentru Render, ca să nu ne mai restarteze aplicația
     return "OK", 200
 
 
@@ -799,15 +717,11 @@ def index():
     if 'user_email' not in session: return redirect(url_for('login'))
     
     df = load_data()
-    
-    # 1. NORMALIZEAZA COLOANELE (Litere mari, fara spatii la capete)
     df.columns = [str(c).strip().upper() for c in df.columns]
     
     programs = []
     if not df.empty and 'PROGRAM' in df.columns:
-        # 2. STERGE SPATIILE DUBLE SI INVIZIBILE DIN NUMELE PROGRAMELOR
         df['PROGRAM'] = df['PROGRAM'].astype(str).replace(r'\s+', ' ', regex=True).str.strip()
-        
         programs = sorted(df['PROGRAM'].unique().tolist())
         programs = [p for p in programs if p and p.lower() != 'nan']
     else:
@@ -822,39 +736,39 @@ def index():
     pending_list = []
     if is_power_user:
         try:
-            client = get_gspread_client()
-            sheet = client.open("Sid_Email_Mirror").worksheet("Saved_Sequences")
-            
-            # Folosim get_all_values() în loc de records, citim strict după poziția coloanei
-            rows = sheet.get_all_values()
-            
-            for r in rows[1:]: # Sărim peste primul rând (headerele)
-                # Verificăm coloana 7 (Index 7 = Statusul "PENDING APPROVAL")
-                if len(r) > 7 and str(r[7]).strip().upper() == 'PENDING APPROVAL':
+            with engine.connect() as conn:
+                query = text("SELECT * FROM Saved_Sequences WHERE status = 'PENDING APPROVAL' ORDER BY Date_Saved DESC")
+                df_pending = pd.read_sql(query, conn)
+                for _, r in df_pending.iterrows():
+                    def safe_json(val):
+                        if pd.notna(val) and str(val).strip() and str(val).lower() != 'none':
+                            try: return json.loads(str(val))
+                            except: return {}
+                        return {}
+                        
                     pending_list.append({
-                        "email": r[0] if len(r) > 0 else "N/A",
-                        "name": r[1] if len(r) > 1 else "Untitled",
-                        "program": r[2] if len(r) > 2 else "",
-                        "sequence_data": r[3] if len(r) > 3 else "{}",
-                        "timestamp": r[4] if len(r) > 4 else "",
-                        "term_data": r[5] if len(r) > 5 else "{}",
-                        "settings_data": r[6] if len(r) > 6 else "{}",
-                        "status": r[7],
-                        "justification": r[8] if len(r) > 8 else "",
-                        "student_comments": r[9] if len(r) > 9 else "",
-                        "student_id": r[10] if len(r) > 10 else "Unknown ID",
-                        "student_name": r[11] if len(r) > 11 else "Student"
+                        "email": r.get('Student_Email', 'N/A'),
+                        "name": r.get('Sequence_Name', 'Untitled'),
+                        "program": r.get('Program', ''),
+                        "sequence_data": safe_json(r.get('JSON_Data')),
+                        "timestamp": str(r.get('Date_Saved', '')),
+                        "term_data": safe_json(r.get('Term_Json_data')),
+                        "settings_data": safe_json(r.get('sequence_Json_data')),
+                        "status": r.get('status', ''),
+                        "justification": r.get('student_comments', ''),
+                        "student_id": str(r.get('student_id', '')),
+                        "student_name": r.get('student_id_name', '')
                     })
         except Exception as e:
-            print(f"Pending List Error: {e}")
-    # (În interiorul def index(): pe la linia 400)
+            print(f"Pending List DB Error: {e}")
+            
     ft_credits_dict = get_program_ft_credits()
-    gpa_thresholds_dict = get_program_gpa_thresholds() # <-- ADAUGĂ ACEASTĂ LINIE
+    gpa_thresholds_dict = get_program_gpa_thresholds() 
 
     return render_template("planner.html", programe=programs, coop_data_json=json.dumps(coop_data),
                            is_power_user=is_power_user, viewing_sid=viewing_sid, pending_list=pending_list,
                            program_ft_credits_json=json.dumps(ft_credits_dict),
-                           program_gpa_thresholds_json=json.dumps(gpa_thresholds_dict)) # <-- ADAUGĂ ACEST PARAMETRU
+                           program_gpa_thresholds_json=json.dumps(gpa_thresholds_dict)) 
 
 
 
@@ -871,77 +785,55 @@ def admin_change_sid():
 
 
 def handle_otp_logic(email, sid, is_guest=False, guest_name=''):
-    client = get_gspread_client()
-    doc = client.open("Sid_Email_Mirror")
-    
-    sheet = None
-    for s in doc.worksheets():
-        if s.title.strip().lower() == "logins":
-            sheet = s
-            break
-            
-    if sheet is None:
-        sheet = doc.add_worksheet(title="logins", rows="1000", cols="4")
-        sheet.append_row(["Email", "Time", "login_code", "used"])
-        
-    records = sheet.get_all_values()
     now = datetime.datetime.now()
     fmt = "%Y-%m-%d %H:%M:%S"
     
-    # 1. Verificăm dacă există deja un cod trimis în ultimele 30 de minute
-    for i in range(len(records)-1, 0, -1):
-        if records[i][0].strip().lower() == email.strip().lower() and str(records[i][3]).strip() == "0":
-            try:
-                req_time = datetime.datetime.strptime(records[i][1], fmt)
-            except ValueError:
-                continue 
-                
-            if (now - req_time).total_seconds() < 1800:
-                time_str = req_time.strftime('%H:%M:%S')
-                
-                # Calculăm câte minute mai sunt din cele 30 (1800 secunde)
-                remaining_seconds = 1800 - (now - req_time).total_seconds()
-                remaining_minutes = int(remaining_seconds // 60)
-                
-                # Dacă e sub un minut, afișăm secunde, altfel minute
-                if remaining_minutes > 0:
-                    time_left_text = f"{remaining_minutes} minute(s)"
-                else:
-                    time_left_text = f"{int(remaining_seconds)} second(s)"
-                
-                # Studentul a cerut un cod prea devreme, NU trimitem altul.
-                session['otp_message'] = f"⚠️ A code was already sent at {time_str} (server's time). Please check your spam folder. That code is still valid for {time_left_text}."
-                session['pre_auth_email'] = email
-                session['temp_sid'] = sid
-                session['temp_is_guest'] = is_guest
-                session['temp_guest_name'] = guest_name
-                return
+    try:
+        with engine.begin() as conn:
+            query = text("SELECT time, login_code FROM logins WHERE email = :email AND used = 0 ORDER BY time DESC LIMIT 1")
+            recent = conn.execute(query, {"email": email}).fetchone()
+            
+            if recent:
+                req_time = recent[0]
+                if isinstance(req_time, str):
+                    try: req_time = datetime.datetime.strptime(req_time, fmt)
+                    except ValueError: pass
+                    
+                if isinstance(req_time, datetime.datetime) and (now - req_time).total_seconds() < 1800:
+                    time_str = req_time.strftime('%H:%M:%S')
+                    remaining_seconds = 1800 - (now - req_time).total_seconds()
+                    rem_min = int(remaining_seconds // 60)
+                    time_left_text = f"{rem_min} minute(s)" if rem_min > 0 else f"{int(remaining_seconds)} second(s)"
+                    
+                    session['otp_message'] = f"⚠️ A code was already sent at {time_str} (server's time). Please check your spam folder. That code is still valid for {time_left_text}."
+                    session['pre_auth_email'] = email
+                    session['temp_sid'] = sid
+                    session['temp_is_guest'] = is_guest
+                    session['temp_guest_name'] = guest_name
+                    return
+                    
+            conn.execute(text("UPDATE logins SET used = 1 WHERE email = :email"), {"email": email})
+            
+            otp = str(random.randint(100000, 999999))
+            is_sent, resend_msg = send_otp_email(email, otp)
+            
+            conn.execute(text("INSERT INTO logins (email, time, login_code, used) VALUES (:email, :time, :code, 0)"), 
+                         {"email": email, "time": now.strftime(fmt), "code": otp})
+            
+            valid_until = (now + datetime.timedelta(minutes=30)).strftime('%H:%M:%S')
+            nowtime = now.strftime('%H:%M:%S')
+            
+            if is_sent:
+                session['otp_message'] = f"✅ {resend_msg} to {email}! Please enter the access code below. The code is valid until {valid_until}. FYI, server's time is now {nowtime}."
             else:
-                # Codul este mai vechi de 30 de minute, îl marcăm ca expirat (used=1)
-                sheet.update_cell(i + 1, 4, 1)
-
-    # 2. Generăm cod NOU
-    otp = str(random.randint(100000, 999999))
-    
-    # 3. Trimitem pe email și capturăm răspunsul de la serverul Resend
-    is_sent, resend_msg = send_otp_email(email, otp)
-    
-    # 4. Salvăm în Google Sheets
-    sheet.append_row([email, now.strftime(fmt), otp, 0])
-    valid_until = (now + datetime.timedelta(minutes=30)).strftime('%H:%M:%S')
-    nowtime = (now).strftime('%H:%M:%S')
-    
-    if is_sent:
-        # Mesajul verde de confirmare dorit
-        session['otp_message'] = f"✅ {resend_msg} to {email}! Please enter the access code below. The code is valid until {valid_until}  FYI, server's time is now {nowtime}."
-    else:
-        # Mesajul roșu în caz că Resend e picat sau API key-ul e greșit
-        session['otp_message'] = f"❌ Error sending email via Resend API: {resend_msg}"
-    
-    session['pre_auth_email'] = email
-    session['temp_sid'] = sid
-    session['temp_is_guest'] = is_guest
-    session['temp_guest_name'] = guest_name
+                session['otp_message'] = f"❌ Error sending email via Resend API: {resend_msg}"
+            
+            session['pre_auth_email'] = email
+            session['temp_sid'] = sid
+            session['temp_is_guest'] = is_guest
+            session['temp_guest_name'] = guest_name
+    except Exception as e:
+        print(f"DB Error OTP: {e}")
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -962,75 +854,49 @@ def login():
             guest_name = request.form.get("guest_name", "Unknown").strip()
             guest_sid = request.form.get("guest_sid", "00000000").strip()
             
-            # --- BLOCĂM GUEST-UL DACĂ FOLOSEȘTE UN ID OFICIAL DEJA EXISTENT ---
             if guest_sid and guest_sid != "00000000":
-                try:
-                    client = get_gspread_client()
-                    sheet = client.open("Sid_Email_Mirror").worksheet("Sid_Email_Admission")
-                    priority1_email = ""
-                    
-                    # Căutăm ID-ul în baza de date
-                    for row in sheet.get_all_records():
-                        if str(row.get('Student ID', '')).strip() == guest_sid:
-                            current_email = str(row.get('Primary Email', '')).strip()
-                            priority = str(row.get('email_priority', '')).strip()
-                            
-                            # Căutăm prioritatea 1
-                            if priority == '1':
-                                priority1_email = current_email
-                                break
-                            elif current_email and not priority1_email:
-                                priority1_email = current_email # Fallback dacă nu e trecut 1
-
-                    if priority1_email:
-                        # --- NOU: TRIMITEM ALERTA DE SECURITATE CĂTRE STUDENTUL REAL ---
-                        try:
-                            www = "https://concordia-sequence-planner.onrender.com/"
-                            resend.Emails.send({
-                                "from": "MIAE Planner <auth@concordiasequenceplanner.ca>",
-                                "to": [priority1_email],
-                                "subject": "Security Alert: Unauthorized Login Attempt",
-                                "html": f"""
-                                <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px;">
-                                    <h2 style="color: #c0392b; border-bottom: 2px solid #c0392b; padding-bottom: 10px;">Security Alert</h2>
-                                    <p>Hello,</p>
-                                    <p>There was a login attempt to the Concordia MIAE Academic Planner using your Student ID (<strong>{guest_sid}</strong>).</p>
-                                    <p>The email address used for this attempt was: <strong>{email}</strong></p>
-                                    <div style="background-color: #f9f9f9; border-left: 4px solid #f39c12; padding: 10px; margin: 15px 0;">
-                                        <strong>If this was you:</strong> Please return to <a href="{www}" style="color: #3498db; text-decoration: none; font-weight: bold;">the Planner</a> and log in using this official email address ({priority1_email}) instead of choosing the Guest option.
-                                    </div>
-                                    <p>If you did not make this request, no further action is required. The login request was denied.</p>
+                priority1_email = get_priority1_email(guest_sid)
+                
+                if priority1_email:
+                    try:
+                        www = "https://concordia-sequence-planner.onrender.com/"
+                        resend.Emails.send({
+                            "from": "MIAE Planner <auth@concordiasequenceplanner.ca>",
+                            "to": [priority1_email],
+                            "subject": "Security Alert: Unauthorized Login Attempt",
+                            "html": f"""
+                            <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px;">
+                                <h2 style="color: #c0392b; border-bottom: 2px solid #c0392b; padding-bottom: 10px;">Security Alert</h2>
+                                <p>Hello,</p>
+                                <p>There was a login attempt to the Concordia MIAE Academic Planner using your Student ID (<strong>{guest_sid}</strong>).</p>
+                                <p>The email address used for this attempt was: <strong>{email}</strong></p>
+                                <div style="background-color: #f9f9f9; border-left: 4px solid #f39c12; padding: 10px; margin: 15px 0;">
+                                    <strong>If this was you:</strong> Please return to <a href="{www}" style="color: #3498db; text-decoration: none; font-weight: bold;">the Planner</a> and log in using this official email address ({priority1_email}) instead of choosing the Guest option.
                                 </div>
-                                """,
-                                "reply_to": "coop_miae@concordia.ca"
-                            })
-                        except Exception as mail_err:
-                            print(f"Failed to send security alert email: {mail_err}")
+                                <p>If you did not make this request, no further action is required. The login request was denied.</p>
+                            </div>
+                            """,
+                            "reply_to": "coop_miae@concordia.ca"
+                        })
+                    except Exception as mail_err:
+                        print(f"Failed to send security alert email: {mail_err}")
 
-                        # Mascăm emailul pentru a proteja identitatea (ex: a******@g***.com)
-                        parts = priority1_email.split('@')
-                        if len(parts) == 2:
-                            name_part = parts[0]
-                            domain_parts = parts[1].split('.')
-                            tld = domain_parts.pop()
-                            host_part = ".".join(domain_parts)
-                            
-                            masked_name = name_part[0] + "******" if len(name_part) > 0 else "******"
-                            masked_host = host_part[0] + "***" if len(host_part) > 0 else "***"
-                            masked_email = f"{masked_name}@{masked_host}.{tld}"
-                        else:
-                            masked_email = priority1_email
+                    parts = priority1_email.split('@')
+                    if len(parts) == 2:
+                        name_part = parts[0]
+                        domain_parts = parts[1].split('.')
+                        tld = domain_parts.pop()
+                        host_part = ".".join(domain_parts)
+                        masked_name = name_part[0] + "******" if len(name_part) > 0 else "******"
+                        masked_host = host_part[0] + "***" if len(host_part) > 0 else "***"
+                        masked_email = f"{masked_name}@{masked_host}.{tld}"
+                    else:
+                        masked_email = priority1_email
 
-                        error_msg = f"⛔ For this student ID please use the email registered with the CO-OP Institue / Concordia University {masked_email}. For help, contact coop_miae@concordia.ca ."
+                    error_msg = f"⛔ For this student ID please use the email registered with the CO-OP Institue / Concordia University {masked_email}. For help, contact coop_miae@concordia.ca ."
+                    
+                    return render_template("login.html", ask_guest_info=True, email=email, error=error_msg)
 
-                        
-                        # Returnăm userul pe pagină cu mesajul de eroare și îl oprim
-                        return render_template("login.html", ask_guest_info=True, email=email, error=error_msg)
-
-                except Exception as e:
-                    print("Error checking guest SID:", e)
-
-            # --- Dacă a trecut de verificare (ID nou sau 00000000), îl logăm ca guest ---
             session['user_email'] = email
             session['student_id'] = guest_sid
             session['is_guest'] = True
@@ -1046,50 +912,48 @@ def verify():
     email = session.get('pre_auth_email')
     if not email: return redirect(url_for('login'))
     
-    # Preluăm mesajul dinamic generat anterior
     msg = session.get('otp_message', "Please enter your access code.")
 
     if request.method == "POST":
         user_otp = request.form.get("otp").strip()
-        
-        client = get_gspread_client()
-        sheet = client.open("Sid_Email_Mirror").worksheet("logins")
-        records = sheet.get_all_values()
-        
         now = datetime.datetime.now()
         fmt = "%Y-%m-%d %H:%M:%S"
         
-        # Căutăm codul activ în sheet
-        for i in range(len(records)-1, 0, -1):
-            if records[i][0].strip().lower() == email and str(records[i][3]).strip() == "0":
-                stored_otp = str(records[i][2]).strip()
-                try:
-                    req_time = datetime.datetime.strptime(records[i][1], fmt)
-                except ValueError:
-                    continue
+        try:
+            with engine.begin() as conn:
+                query = text("SELECT time, login_code FROM logins WHERE email = :email AND used = 0 ORDER BY time DESC LIMIT 1")
+                record = conn.execute(query, {"email": email}).fetchone()
                 
-                # Verificăm dacă a expirat între timp (verificare de siguranță)
-                if (now - req_time).total_seconds() > 1800:
-                    sheet.update_cell(i + 1, 4, 1) # Îl marcăm ca expirat
+                if not record:
+                    return render_template("verify.html", error="No valid code found or code expired. Please request a new one.", message=msg)
+                    
+                req_time = record[0]
+                stored_otp = str(record[1]).strip()
+                
+                if isinstance(req_time, str):
+                    try: req_time = datetime.datetime.strptime(req_time, fmt)
+                    except ValueError: pass
+                    
+                if isinstance(req_time, datetime.datetime) and (now - req_time).total_seconds() > 1800:
+                    conn.execute(text("UPDATE logins SET used = 1 WHERE email = :email AND login_code = :code"), {"email": email, "code": stored_otp})
                     return render_template("verify.html", error="Code expired! Please request a new one.", message=msg)
                 
-                # Verificăm dacă a introdus codul corect
                 if user_otp == stored_otp:
-                    # AM ELIMINAT LINIA AICI: Nu mai marcăm cu 1 la succes! 
-                    # Codul rămâne '0' pe coloana D, putând fi folosit iar în cele 30 min.
-                    
+                    conn.execute(text("UPDATE logins SET used = 1 WHERE email = :email AND login_code = :code"), {"email": email, "code": stored_otp})
                     session['user_email'] = email
                     session['student_id'] = session.get('temp_sid', '')
                     session['is_guest'] = session.get('temp_is_guest', False)
                     session['guest_name'] = session.get('temp_guest_name', '')
-                    session.pop('otp_message', None) # Curățăm mesajul
+                    session.pop('otp_message', None) 
                     return redirect(url_for('index'))
                 else:
                     return render_template("verify.html", error="Incorrect code!", message=msg)
-                    
-        return render_template("verify.html", error="No valid code found or code expired. Please request a new one.", message=msg)
+        except Exception as e:
+            print(f"DB Error verify: {e}")
+            return render_template("verify.html", error="Database error occurred.", message=msg)
 
     return render_template("verify.html", message=msg)
+
 
 @app.route("/logout")
 def logout():
@@ -1100,50 +964,50 @@ def logout():
 @app.route("/api/get_coop_data", methods=["POST"])
 def api_get_coop_data():
     if 'user_email' not in session: return jsonify({"error": "Unauthorized"}), 401
-    
-    # --- NOU: Securitate Strictă! Guest-ul primește mereu obiect GOL ---
     if session.get('is_guest'): 
         return jsonify({"found": False})
         
-    # Primim ID-ul studentului de la interfață și cerem excel-ul
     target_sid = str(request.json.get("student_id", "")).strip()
     coop_data = get_student_coop_data(target_sid)
-    
     return jsonify(coop_data)
+
 
 @app.route("/api/pending_approvals", methods=["GET"])
 def get_pending_approvals():
     current_sid = str(session.get('student_id', ''))
     is_guest = session.get('is_guest', False)
     if not (current_sid.startswith('9') and not is_guest):
-        return jsonify([]) # Dacă nu e Power User, returnează listă goală
+        return jsonify([]) 
         
     pending_list = []
     try:
-        client = get_gspread_client()
-        sheet = client.open("Sid_Email_Mirror").worksheet("Saved_Sequences")
-        rows = sheet.get_all_values()
-        
-        for idx, r in enumerate(rows[1:], start=2): # Memoram exact randul din Excel!
-            if len(r) > 7 and str(r[7]).strip().upper() == 'PENDING APPROVAL':
+        with engine.connect() as conn:
+            query = text("SELECT * FROM Saved_Sequences WHERE status = 'PENDING APPROVAL' ORDER BY Date_Saved DESC")
+            df = pd.read_sql(query, conn)
+            
+            for _, r in df.iterrows():
+                def safe_json(val):
+                    if pd.notna(val) and str(val).strip() and str(val).lower() != 'none':
+                        try: return json.loads(str(val))
+                        except: return {}
+                    return {}
+
                 pending_list.append({
-                    "row_index": idx,  # <-- ADAUGAT
-                    "email": r[0] if len(r) > 0 else "N/A",
-                    "name": r[1] if len(r) > 1 else "Untitled",
-                    "program": r[2] if len(r) > 2 else "",
-                    "sequence_data": r[3] if len(r) > 3 else "{}",
-                    "timestamp": r[4] if len(r) > 4 else "",
-                    "term_data": r[5] if len(r) > 5 else "{}",
-                    "settings_data": r[6] if len(r) > 6 else "{}",
-                    "student_id": r[10] if len(r) > 10 else "Unknown ID",
-                    "student_name": r[11] if len(r) > 11 else "Student"
+                    "email": r.get('Student_Email', 'N/A'),
+                    "name": r.get('Sequence_Name', 'Untitled'),
+                    "program": r.get('Program', ''),
+                    "sequence_data": safe_json(r.get('JSON_Data')),
+                    "timestamp": str(r.get('Date_Saved', '')),
+                    "term_data": safe_json(r.get('Term_Json_data')),
+                    "settings_data": safe_json(r.get('sequence_Json_data')),
+                    "student_id": str(r.get('student_id', '')),
+                    "student_name": r.get('student_id_name', ''),
+                    "status": r.get('status', ''),
+                    "justification": r.get('student_comments', '')
                 })
     except Exception as e:
-        print(f"Pending List Error: {e}")
+        print(f"Pending List DB Error: {e}")
         
-    # NOU: Sortăm descrescător după timestamp
-    pending_list.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
-    
     return jsonify(pending_list)
 
 
@@ -1161,76 +1025,60 @@ def save_sequence():
         
         status = data.get('status', 'SAVED DRAFT') 
         justification = data.get('justification', '')
-        student_comments = data.get('student_comments', '')
         
-        # ... existing save_sequence code ...
-        # Identificăm cine face salvarea
         current_user_id = str(session.get('student_id', ''))
         is_guest = session.get('is_guest', False)
         is_power_user = current_user_id.startswith('9') and not is_guest
         student_name_ui = data.get('student_name', '').strip()
+        
         if is_guest:
             current_name = f"GUEST - {session.get('guest_name', '')}"
         else:
             current_name = student_name_ui if student_name_ui else "Official Student"
         
-        # ... Codul de identificare a utilizatorului rămâne la fel ...
         email_to_save = session['user_email']
-        client = get_gspread_client()
         
-        # --- REQUIREMENT 3: Find real student email AND change sequence name ---
         if is_power_user and target_id != current_user_id:
-            # MODIFICARE AICI: Folosim helper-ul 
             email_to_save = get_student_email(target_id, fallback_email=session['user_email'])
-                
-            # Override the name of the sequence
             power_user_name = session.get('guest_name', 'Coordinator') if is_guest else session.get('user_email').split('@')[0]
             name = f"Submitted on {datetime.datetime.now().strftime('%Y-%m-%d')} by {power_user_name}"
             current_name = "ADMIN (PowerUser)"
         
-        sheet = client.open("Sid_Email_Mirror").worksheet("Saved_Sequences")
         timestamp = str(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         
-        sheet.append_row([email_to_save, name, program, seq_json, timestamp, term_json, settings_json, status, justification, student_comments, target_id, current_name])
+        with engine.begin() as conn:
+            query = text("""
+                INSERT INTO Saved_Sequences 
+                (Student_Email, Sequence_Name, Program, JSON_Data, Date_Saved, Term_Json_data, sequence_Json_data, status, student_comments, student_id, student_id_name)
+                VALUES (:em, :name, :prog, :jdata, :dsaved, :tdata, :sdata, :stat, :scomm, :sid, :sidname)
+            """)
+            conn.execute(query, {
+                "em": email_to_save, "name": name, "prog": program, "jdata": seq_json, "dsaved": timestamp, 
+                "tdata": term_json, "sdata": settings_json, "stat": status, "scomm": justification, 
+                "sid": target_id, "sidname": current_name
+            })
         
-        # 2. Trimitem E-mailul daca este Submit Oficial
-        # 2. Trimitem E-mailul daca este Submit Oficial
         if status == "PENDING APPROVAL":
-            
-            # --- NOU: Adăugarea automată a justificării în S_id_comments ---
             if justification:
                 try:
-                    comments_sheet = client.open("Sid_Email_Mirror").worksheet("S_id_comments")
-                    records = comments_sheet.get_all_values()
-                    found_row = -1
-                    existing_pub = ""
-                    existing_priv = ""
-                    
-                    for i, row in enumerate(records[1:], start=2):
-                        if len(row) > 0 and str(row[0]).strip() == target_id:
-                            found_row = i
-                            existing_pub = str(row[1]).strip() if len(row) > 1 else ""
-                            existing_priv = str(row[2]).strip() if len(row) > 2 else ""
-                            break
-                    
-                    timestamp_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
-                    new_addition = f"[{timestamp_str}] Student_answer: {justification}"
-                    
-                    # Păstrăm comentariile vechi și le adăugăm pe cele noi cu un spațiu între ele
-                    new_pub = (existing_pub + "\n\n" + new_addition).strip() if existing_pub else new_addition
-                    
-                    if found_row != -1:
-                        comments_sheet.update(values=[[new_pub, existing_priv]], range_name=f"B{found_row}:C{found_row}")
-                    else:
-                        comments_sheet.append_row([target_id, new_pub, ""])
+                    with engine.begin() as conn:
+                        check = conn.execute(text("SELECT Public_comments, PRIVATE_comments FROM S_id_comments WHERE S_id = :sid"), {"sid": target_id}).fetchone()
+                        timestamp_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
+                        new_addition = f"[{timestamp_str}] Student_answer: {justification}"
+                        
+                        if check:
+                            existing_pub = str(check[0]).strip() if check[0] and str(check[0]).lower() != 'none' else ""
+                            new_pub = (existing_pub + "\n\n" + new_addition).strip() if existing_pub else new_addition
+                            conn.execute(text("UPDATE S_id_comments SET Public_comments=:pub WHERE S_id=:sid"), {"sid": target_id, "pub": new_pub})
+                        else:
+                            conn.execute(text("INSERT INTO S_id_comments (S_id, Public_comments, PRIVATE_comments) VALUES (:sid, :pub, '')"), {"sid": target_id, "pub": new_addition})
                 except Exception as e:
-                    print(f"Error saving justification to S_id_comments: {e}")
-            # --- FINAL NOU ---
+                    print(f"DB Error save justification: {e}")
+                    
             try:
                 priority1_email = get_priority1_email(target_id)
                 recipients = get_email_recipients(program, target_id, email_to_save, priority1_email, "SUBMIT")
                 
-                # --- NOU: Preluăm sumarul trimis de pe frontend ---
                 wt_summary = data.get('wt_summary', {})
                 term_summary = data.get('term_summary', [])
                 
@@ -1258,8 +1106,6 @@ def save_sequence():
                         terms_html += "<tr>"
                         terms_html += f"<td rowspan='2' style='padding: 10px; border: 1px solid #ddd; vertical-align: middle; background-color: #f8f9fa; text-align: center; font-weight: bold; color: #333;'>{year_str}</td>"
                         
-                        # RÂNDUL 1: Credite și Avertizări WT
-                        # RÂNDUL 1: Credite și Avertizări WT
                         for t in ["SUM", "FALL", "WIN"]:
                             t_data = data_term.get(t, {})
                             cr = t_data.get('cr', 0)
@@ -1283,35 +1129,40 @@ def save_sequence():
                             elif is_coop:
                                 bg_col = "#b3e5fc"
                                 
-                            # --- NOU: LOGICA DE AFISARE GPA IN EMAIL ---
-                        gpa_info = t_data.get('gpa_info')
-                        gpa_html = ""
-                        if gpa_info:
-                            gpa_val = gpa_info.get('val', 0)
-                            gpa_cr = gpa_info.get('credits', 0)
-                            gpa_threshold = gpa_info.get('threshold', 2.0)
-                            
-                            if gpa_val == -1:
-                                gpa_bg = "transparent"
-                                gpa_col = text_col
-                                display_text = f"GPA past 2 full terms: N/A computed on {gpa_cr} credits"
-                            else:
-                                if gpa_val <= gpa_threshold:
-                                    gpa_bg = "#c0392b"
-                                    gpa_col = "#ffffff"
-                                elif gpa_val <= gpa_threshold + 0.2:
-                                    gpa_bg = "#e67e22"
-                                    gpa_col = "#ffffff"
-                                else:
+                            gpa_info = t_data.get('gpa_info')
+                            gpa_html = ""
+                            if gpa_info:
+                                gpa_val = gpa_info.get('val', 0)
+                                gpa_cr = gpa_info.get('credits', 0)
+                                cgpa_val = gpa_info.get('cgpa', 0)
+                                tot_cr = gpa_info.get('tot_cr', 0)
+                                gpa_threshold = gpa_info.get('threshold', 2.0)
+                                
+                                gpa_cr_str = str(gpa_cr).replace('.0', '') if str(gpa_cr).endswith('.0') else str(gpa_cr)
+                                tot_cr_str = str(tot_cr).replace('.0', '') if str(tot_cr).endswith('.0') else str(tot_cr)
+                                
+                                if gpa_val == -1:
                                     gpa_bg = "transparent"
-                                    gpa_col = text_col # Mosteneste culoarea
-                                display_text = f"GPA past 2 full terms: {gpa_val} computed on {gpa_cr} credits"
+                                    gpa_col = text_col
+                                    display_text = f"GPA past {gpa_cr_str}CR : N/A  <br> CGPA {cgpa_val} / {tot_cr_str}CR total"
+                                else:
+                                    if gpa_val <= gpa_threshold:
+                                        gpa_bg = "#c0392b"
+                                        gpa_col = "#ffffff"
+                                    elif gpa_val <= gpa_threshold + 0.2:
+                                        gpa_bg = "#e67e22"
+                                        gpa_col = "#ffffff"
+                                    else:
+                                        gpa_bg = "transparent"
+                                        gpa_col = text_col 
+                                    display_text = f"GPA past {gpa_cr_str}CR : {gpa_val}  <br> CGPA {cgpa_val} / {tot_cr_str}CR total"
 
-                            gpa_html = f"<div style='background-color: {gpa_bg}; color: {gpa_col}; font-size: 10px; padding: 4px; margin-top: 4px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.1);'>{display_text}</div>"
+                                gpa_html = f"<div style='background-color: {gpa_bg}; color: {gpa_col}; font-size: 10px; padding: 4px; margin-top: 4px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.1); font-weight: normal;'>{display_text}</div>"
 
                             terms_html += f"<td style='padding: 5px; border: 1px solid {border_col}; text-align: center; font-weight: bold; background-color: {bg_col}; color: {text_col};'>{cr} CR{wt_note_html}{gpa_html}</td>"
                         
-                        # RÂNDUL 2: Materiile plasate
+                        terms_html += "</tr><tr>"
+
                         for t in ["SUM", "FALL", "WIN"]:
                             t_data = data_term.get(t, {})
                             courses = t_data.get('courses', [])
@@ -1327,7 +1178,7 @@ def save_sequence():
                                 bg_col = "#fffde7"
                                 border_col = "#fbc02d"
                             elif is_inst:
-                                bg_col = "#AED6F1" # Albastru deschis (distinct de coop normal)
+                                bg_col = "#AED6F1" 
                             elif is_coop:
                                 bg_col = "#e1f5fe"
                                 
@@ -1336,7 +1187,6 @@ def save_sequence():
                                 if c.get('is_wt'):
                                     courses_html += f"<div style='background-color: #d5f5e3; font-weight: bold; padding: 4px; border-radius: 4px; color: #27ae60; border: 1px solid #abebc6; margin-bottom: 3px; text-align: center;'>{c.get('name')}</div>"
                                 else:
-                                    # Adaptăm culoarea textului în funcție de fundalul celest
                                     c_text_col = "#154360" if is_inst else "#333333"
                                     c_sub_col = "#2980B9" if is_inst else "#7f8c8d"
                                     courses_html += f"<div style='margin-bottom: 2px; text-align: center; color: {c_text_col};'>{c.get('name')} <span style='font-size: 11px; color: {c_sub_col};'>({c.get('credit')} cr)</span></div>"
@@ -1346,8 +1196,6 @@ def save_sequence():
                         
                     terms_html += "</tbody></table>"
 
-
-                # --- NOU: Procesăm Erorile din Live Check ---
                 val_errors = data.get('validation_errors', [])
                 val_errors_html = "<ul style='margin: 0; padding-left: 20px; font-size: 14px;'>"
                 if not val_errors:
@@ -1357,8 +1205,6 @@ def save_sequence():
                         val_errors_html += f"<li style='margin-bottom: 4px;'>{err_html}</li>"
                 val_errors_html += "</ul>"
 
-
-                # Incorporăm totul în HTML-ul E-mailului de Submit
                 html_body = f"""
                 <div style="font-family: Arial, sans-serif; color: #333; max-width: 750px; margin: 0 auto; border: 1px solid #e0e0e0; padding: 20px; border-radius: 8px;">
                     <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">New Course Sequence Submitted for Approval</h2>
@@ -1372,8 +1218,6 @@ def save_sequence():
                     </div>
                     
                     <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-
-                   <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
 
                     <h3 style="color: #2c3e50; margin-top: 15px; border-bottom: 1px solid #eee; padding-bottom: 5px;">Automated System Check</h3>
                     <div style="background-color: #fdf2f2; border: 1px solid #fadbd8; padding: 10px; border-radius: 4px; margin-bottom: 15px;">
@@ -1414,48 +1258,41 @@ def save_sequence():
 def load_sequences():
     if 'user_email' not in session: return jsonify({"error": "Unauthorized"}), 401
     try:
-        client = get_gspread_client()
-        sheet = client.open("Sid_Email_Mirror").worksheet("Saved_Sequences")
-        raw_rows = sheet.get_all_values() 
-        
         current_sid = str(session.get('student_id', ''))
         is_power_user = current_sid.startswith('9') and not session.get('is_guest', False)
         viewing_sid = str(session.get('admin_view_sid', current_sid)).strip()
         target_email = session['user_email'].lower().strip()
         
-        my_recs = []
-        for row in raw_rows[1:]:
-            if len(row) == 0: continue
-            row_email = str(row[0]).lower().strip()
-            row_sid = str(row[10]).strip() if len(row) > 10 else ""
-            
-            # Daca e admin, filtreaza dupa studentul vizualizat. Daca e student, dupa email!
-            is_match = False
+        with engine.connect() as conn:
             if is_power_user and viewing_sid and viewing_sid != "ADMIN":
-                if row_sid == viewing_sid: is_match = True
+                query = text("SELECT * FROM Saved_Sequences WHERE student_id = :val ORDER BY Date_Saved DESC")
+                df = pd.read_sql(query, conn, params={"val": viewing_sid})
             else:
-                if row_email == target_email: is_match = True
+                query = text("SELECT * FROM Saved_Sequences WHERE LOWER(Student_Email) = :val ORDER BY Date_Saved DESC")
+                df = pd.read_sql(query, conn, params={"val": target_email})
                 
-            if is_match:
-                def safe_json(idx):
-                    if len(row) > idx and row[idx].strip():
-                        try: return json.loads(row[idx])
+            my_recs = []
+            for _, r in df.iterrows():
+                def safe_json(val):
+                    if pd.notna(val) and str(val).strip() and str(val).lower() != 'none':
+                        try: return json.loads(str(val))
                         except: return {}
                     return {}
+                    
                 my_recs.append({
-                    "Sequence_Name": row[1] if len(row) > 1 else "Untitled",
-                    "Program": row[2] if len(row) > 2 else "",
-                    "Date_Saved": row[4] if len(row) > 4 else "",
-                    "JSON_Data": safe_json(3), "Term_Data": safe_json(5), "Settings_Data": safe_json(6),
-                    "Status": row[7] if len(row) > 7 else "",
-                    "Student_ID": row_sid,
-                    "Student_Name": row[11] if len(row) > 11 else ""
+                    "Sequence_Name": r.get('Sequence_Name', 'Untitled'),
+                    "Program": r.get('Program', ''),
+                    "Date_Saved": str(r.get('Date_Saved', '')),
+                    "JSON_Data": safe_json(r.get('JSON_Data')), 
+                    "Term_Data": safe_json(r.get('Term_Json_data')), 
+                    "Settings_Data": safe_json(r.get('sequence_Json_data')),
+                    "Status": r.get('status', ''),
+                    "Student_ID": str(r.get('student_id', '')),
+                    "Student_Name": r.get('student_id_name', '')
                 })
-                
-        my_recs.sort(key=lambda x: x.get('Date_Saved', ''), reverse=True)
         return jsonify({"sequences": my_recs}) 
     except Exception as e:
-        print(f"Load Error: {e}")
+        print(f"Load Error DB: {e}")
         return jsonify({"error": str(e)}), 500
 
 
@@ -1464,102 +1301,57 @@ def get_transcript():
     if 'user_email' not in session: return jsonify({"error": "Unauthorized"}), 401
     
     target_id = request.json.get("student_id", "").strip()
-    
     if session.get('is_guest'):
-        guest_name = session.get('guest_name', 'Unknown')
-        return jsonify({"transcript": [], "student_name": f"GUEST - {guest_name}", "suggested_program": ""})
-
+        return jsonify({"transcript": [], "student_name": f"GUEST - {session.get('guest_name', 'Unknown')}", "suggested_program": ""})
     if not target_id or target_id == "ADMIN": 
         return jsonify({"transcript": [], "student_name": "", "suggested_program": ""})
 
     try:
-        client = get_gspread_client()
-        sheet = client.open("Sid_Email_Mirror").worksheet("Transcripts")
+        query = text("SELECT * FROM `Transcripts` WHERE `Student ID` = :sid")
+        df = pd.read_sql(query, engine, params={"sid": target_id})
         
-        # 1. Citim DOAR primul rând pentru Headere
-        headers = [str(h).strip() for h in sheet.row_values(1)]
-        
-        try:
-            idx_sid = headers.index('Student ID')
-            idx_course = headers.index('COURSE')
-            idx_term = headers.index('Academic Term')
-            idx_grade = headers.index('GRADE')
-            idx_cred = headers.index('CREDVAL') if 'CREDVAL' in headers else -1
-            idx_name = headers.index('NAME') if 'NAME' in headers else -1
-            idx_prog = headers.index('PROG_LINK') if 'PROG_LINK' in headers else -1
-            idx_disc = headers.index('DISCIPLINE1_DESCR') if 'DISCIPLINE1_DESCR' in headers else -1
-            # --- NOU: Adăugăm coloanele G și H ---
-            idx_disc2 = headers.index('DISCIPLINE2_DESCR') if 'DISCIPLINE2_DESCR' in headers else -1
-            idx_disc3 = headers.index('DISCIPLINE3_DESCR') if 'DISCIPLINE3_DESCR' in headers else -1
-        except ValueError:
+        if df.empty:
             return jsonify({"transcript": [], "student_name": "", "suggested_program": ""})
-        
-
-        # 2. Descărcăm DOAR coloana cu ID-uri (rapid și nu consumă RAM)
-        all_sids = sheet.col_values(idx_sid + 1)
-        
-        # 3. Găsim rândurile unde apare studentul nostru
-        matching_rows = []
-        for i, sid in enumerate(all_sids):
-            if str(sid).strip() == target_id:
-                matching_rows.append(i + 1) # gspread folosește rânduri începând de la 1
-                
-        if not matching_rows:
-            return jsonify({"transcript": [], "student_name": "", "suggested_program": ""})
-
-        # 4. Cerem de la Google FIX rândurile studentului
-        ranges = [f"A{r}:Z{r}" for r in matching_rows]
-        raw_results = sheet.batch_get(ranges)
 
         my_courses = []
-        term_disciplines = {} # <-- NOU: Memorează disciplina per trimestru
+        term_disciplines = {}
         student_name = ""
         last_prog_link = ""
         last_disc = ""
 
-        # Iterăm prin rândurile primite direct de la server
-        for res in raw_results:
-            if not res or not res[0]: continue
-            row = res[0]
-            
-            # În caz că rândul e mai scurt pentru că ultimele celule erau goale
-            row.extend([""] * (len(headers) - len(row)))
-
-            # --- NOU: Extragem Discipline 2 si 3 pe fiecare termen ---
-            term_str = str(row[idx_term]).strip() if len(row) > idx_term else ""
-            if term_str:
-                val_d2 = str(row[idx_disc2]).strip() if idx_disc2 != -1 and len(row) > idx_disc2 else ""
-                val_d3 = str(row[idx_disc3]).strip() if idx_disc3 != -1 and len(row) > idx_disc3 else ""
-                combined = " ".join([v for v in [val_d2, val_d3] if v]).strip()
-                # Dacă am găsit text și nu l-am salvat deja pentru acest termen:
+        for _, row in df.iterrows():
+            term_str = str(row.get('Academic Term', '')).strip()
+            if term_str and term_str.lower() != 'nan':
+                val_d2 = str(row.get('DISCIPLINE2_DESCR', '')).strip()
+                val_d3 = str(row.get('DISCIPLINE3_DESCR', '')).strip()
+                combined = " ".join([v for v in [val_d2, val_d3] if v and v.lower() != 'nan']).strip()
                 if combined and (term_str not in term_disciplines or not term_disciplines[term_str]):
                     term_disciplines[term_str] = combined
-            # -----------------------------------------------------------
 
-            if not student_name and idx_name != -1 and len(row) > idx_name:
-                student_name = str(row[idx_name]).strip()
-            
-            if idx_prog != -1 and len(row) > idx_prog:
-                val_prog = str(row[idx_prog]).strip().upper()
-                if val_prog: last_prog_link = val_prog
+            if not student_name:
+                name_val = str(row.get('NAME', '')).strip()
+                if name_val.lower() != 'nan': student_name = name_val
                 
-            if idx_disc != -1 and len(row) > idx_disc:
-                val_disc = str(row[idx_disc]).strip().upper()
-                if val_disc: last_disc = val_disc
+            val_prog = str(row.get('PROG_LINK', '')).strip().upper()
+            if val_prog and val_prog != 'NAN': last_prog_link = val_prog
             
-            cred_val = 0.0
-            if idx_cred != -1 and len(row) > idx_cred:
-                try: cred_val = float(str(row[idx_cred]).strip())
-                except ValueError: cred_val = 0.0
+            val_disc = str(row.get('DISCIPLINE1_DESCR', '')).strip().upper()
+            if val_disc and val_disc != 'NAN': last_disc = val_disc
+            
+            cred_val = row.get('CREDVAL', 0.0)
+            try: cred_val = float(cred_val) if pd.notna(cred_val) else 0.0
+            except: cred_val = 0.0
+
+            grade = str(row.get('GRADE', '')).strip()
+            if grade.lower() == 'nan': grade = ""
 
             my_courses.append({
-                "course": str(row[idx_course]).strip().replace(" ", "").upper(),
-                "term": str(row[idx_term]).strip(),
-                "grade": str(row[idx_grade]).strip() if len(row) > idx_grade else "",
+                "course": str(row.get('COURSE', '')).strip().replace(" ", "").upper(),
+                "term": term_str,
+                "grade": grade,
                 "credit": cred_val
             })
 
-        # Logica de deducere a programului
         suggested_program = ""
         last_prog_link_upper = last_prog_link.upper()
         last_disc_upper = last_disc.upper()
@@ -1575,13 +1367,11 @@ def get_transcript():
             elif "INDU" in last_disc_upper: suggested_program = "INDUSTRIAL GRAD"
 
         return jsonify({
-            "transcript": my_courses, 
-            "student_name": student_name, 
-            "suggested_program": suggested_program,
-            "term_disciplines": term_disciplines # <-- ADAUGĂ ACEASTĂ LINIE
+            "transcript": my_courses, "student_name": student_name, 
+            "suggested_program": suggested_program, "term_disciplines": term_disciplines 
         })
     except Exception as e:
-        print("Transcript fetch error:", e)
+        print(f"DB Error Transcript: {e}")
         return jsonify({"transcript": [], "student_name": "", "suggested_program": ""})
 
     
@@ -1590,16 +1380,11 @@ def get_courses():
     if 'user_email' not in session: return jsonify({"error": "Unauthorized"}), 401
     
     df_prog = load_data()
-    
-    # 1. NORMALIZEAZA COLOANELE
     df_prog.columns = [str(c).strip().upper() for c in df_prog.columns]
-    
-    # 2. NORMALIZEAZA PROGRAMUL CERUT DE FRONTEND (sterge spatiile duble)
     program_name = request.json.get('program', '').strip()
     program_name = " ".join(program_name.split()) 
     
     if 'PROGRAM' in df_prog.columns:
-        # NORMALIZEAZA DATELE DIN EXCEL
         df_prog['PROGRAM'] = df_prog['PROGRAM'].astype(str).replace(r'\s+', ' ', regex=True).str.strip()
         df_prog = df_prog[df_prog['PROGRAM'] == program_name].copy()
     else:
@@ -1621,8 +1406,6 @@ def get_courses():
 
     for _, row in df_prog.iterrows():
         cid = extract_course_code(row.get('COURSE', ''))
-        
-        # Combinam verile citind coloanele normalizate
         terms_offered = []
         if safe_str(row.get('FALL', '')).upper() == 'X': terms_offered.append('FALL')
         if safe_str(row.get('WIN', '')).upper() == 'X': terms_offered.append('WIN')
@@ -1654,7 +1437,6 @@ def generate():
     if 'user_email' not in session: return jsonify({"error": "Unauthorized"}), 401
     
     data = request.json
-    # Stergem spatiile duble din numele venit de la browser
     program_name = " ".join(data.get('program', '').strip().upper().split())
     
     term_limits = data.get('term_limits', {})
@@ -1665,7 +1447,6 @@ def generate():
     df = load_data()
     df.columns = [str(c).strip().upper() for c in df.columns]
     
-    # Filtrare blindată: stergem spatiile duble si din Excel inainte de comparare
     df['PROGRAM'] = df['PROGRAM'].astype(str).replace(r'\s+', ' ', regex=True).str.strip().str.upper()
     df_prog = df[df['PROGRAM'] == program_name].copy()
 
@@ -1694,7 +1475,6 @@ def generate():
                 new_prqs_str = "; ".join(to_add)
                 c_data['PRE-REQUISITE'] = (existing_prqs + "; " + new_prqs_str) if (existing_prqs and existing_prqs.lower() not in ['n/a', 'none']) else new_prqs_str
 
-    # --- LOGICA PENTRU CURSURI REPETATE ---
     rep_counts = defaultdict(int)
     for cid in data.get('repeated', []):
         if cid in all_courses_dict:
@@ -1702,34 +1482,27 @@ def generate():
             count = rep_counts[cid]
             rep_id = f"REP{count}_{cid}"
             
-            # Denumire cu REPEATED
             suffix = f" {count}" if count > 1 else ""
             dummy = all_courses_dict[cid].copy()
             dummy['COURSE'] = f"{str(dummy['COURSE'])} REPEATED{suffix}"
-            #dummy['CORE_TE'] = "REPEAT"
             dummy['_id'] = rep_id 
             
-            # Repetarea 2 cere Repetarea 1
             dummy['PRE-REQUISITE'] = f"REP{count-1}_{cid}" if count > 1 else ""
             all_courses_dict[rep_id] = dummy
             
-            # 1. Cursul original trebuie sa astepte dupa aceasta repetare
             orig_prq = str(all_courses_dict[cid].get('PRE-REQUISITE', ''))
             if orig_prq and orig_prq.lower() not in ['n/a', 'none']:
                 all_courses_dict[cid]['PRE-REQUISITE'] = orig_prq + "; " + rep_id
             else:
                 all_courses_dict[cid]['PRE-REQUISITE'] = rep_id
 
-            # 2. Orice ALT curs care depindea de original, va depinde acum SI de repetare
             for other_cid, c_data in all_courses_dict.items():
                 if other_cid != cid and other_cid != rep_id:
                     other_prq = str(c_data.get('PRE-REQUISITE', ''))
                     if other_prq and other_prq.lower() not in ['n/a', 'none']:
-                        # Folosim regex pentru a gasi cursul original in text (ex: INDU320)
                         if re.search(rf'\b{cid}\b', other_prq):
                             c_data['PRE-REQUISITE'] = other_prq + "; " + rep_id
     
-    # Folosim o singura cutie pentru SUM, la fel ca in frontend, si adaugam sertarul 'coduri'
     sequence_dict = {str(i): {t: {"credite": 0, "cursuri": [], "coduri": set()} for t in ["SUM", "FALL", "WIN"]} for i in range(1, 8)}
 
     for tk, cids in placed_ui.items():
@@ -1738,7 +1511,6 @@ def generate():
             for cid in cids: taken_courses.add(cid); placements[cid] = (0, 'ANY', -1)
             continue
         y_str = tk.split("_")[0]; t = tk.split("_")[1]; y = int(y_str[1:])
-        # NOU: Orice variatie de SUM1 sau SUM2 devine automat SUM
         if "SUM" in t: 
             t = "SUM"
         for cid in cids:
@@ -1750,8 +1522,6 @@ def generate():
                 sequence_dict[str(y)][t]["credite"] += cr
                 sequence_dict[str(y)][t]["coduri"].add(cid)
                 taken_courses.add(cid)
-                
-                # MODIFICAT: Folosim noul sistem de 3 semestre (index de la 0 la 2)
                 placements[cid] = (str(y), t, (int(y) - 1) * 3 + ["SUM", "FALL", "WIN"].index(t))
 
     remaining = set(c for c in unallocated_ids if c in all_courses_dict and c not in taken_courses)
@@ -1759,9 +1529,6 @@ def generate():
         rep_id = "REP_" + cid
         if rep_id in all_courses_dict and rep_id not in taken_courses: remaining.add(rep_id)
 
-    # =========================================================
-    # --- 1. PRE-CHECK: VERIFICĂRI WORK TERMS (ÎNAINTE DE AI) ---
-    # =========================================================
     unallocated_wts = [c for c in unallocated_ids if 'WT' in c.upper()]
     if unallocated_wts:
         return jsonify({"error": "Please place all Work Terms (WT) on the grid before generating."})
@@ -1769,41 +1536,8 @@ def generate():
     all_wts_in_prog = sorted([c for c in all_courses_dict.keys() if 'WT' in c.upper()])
     
     if all_wts_in_prog:
-        # Obținem indecșii unde au fost plasate WT-urile
         placed_wt_indices = sorted([placements[wt][2] for wt in all_wts_in_prog if wt in placements])
         
-        # =========================================================
-    # --- 1. PRE-CHECK: VERIFICĂRI WORK TERMS (ÎNAINTE DE AI) ---
-    # =========================================================
-    unallocated_wts = [c for c in unallocated_ids if 'WT' in c.upper()]
-    if unallocated_wts:
-        return jsonify({"error": "Please place all Work Terms (WT) on the grid before generating."})
-        
-    all_wts_in_prog = sorted([c for c in all_courses_dict.keys() if 'WT' in c.upper()])
-    
-    if all_wts_in_prog:
-        # Obținem indecșii și termenele (SUM/FALL/WIN) unde au fost plasate WT-urile
-        placed_wt_indices = sorted([placements[wt][2] for wt in all_wts_in_prog if wt in placements])
-        
-        # REGULA: Fără 3 termene consecutive de WT
-        #for i in range(len(placed_wt_indices) - 2):
-        #    if placed_wt_indices[i+2] - placed_wt_indices[i] == 2:
-        #        return jsonify({"error": "You cannot have 3 consecutive Work Terms. Please adjust them."})
-
-        # REGULA NOUĂ: Fără 3 WT-uri plasate în Summer
-        #summer_wts = sum(1 for wt in all_wts_in_prog if wt in placements and placements[wt][1] == 'SUM')
-        #if summer_wts >= 3:
-        #    return jsonify({"error": "You cannot have 3 Work Terms in the Summer semester. Please move at least one to Fall or Winter."})
-                
-        # REGULA: Cel puțin 2 termene înainte de primul WT (raportat la grilă)
-        #first_wt = all_wts_in_prog[0]
-        #if first_wt in placements:
-        #   if placements[first_wt][2] < 2:
-        #        return jsonify({"error": "There must be at least 2 study terms before your first Work Term."})
-    # =========================================================
-    # =========================================================
-
-
     for cid in data.get('repeated', []):
         rep_id = "REP_" + cid
         if rep_id in all_courses_dict and rep_id not in taken_courses: remaining.add(rep_id)
@@ -1827,28 +1561,25 @@ def generate():
     prog_upper = program_name.upper()
     if "INDUSTRIAL" in prog_upper: std_prog = STANDARD_SEQUENCES.get("INDUSTRIAL", {})
     elif "MECHANICAL" in prog_upper: std_prog = STANDARD_SEQUENCES.get("MECHANICAL", {})
-    # NOU pentru AERO: Caută cuvinte cheie din numele pe care le vei pune în Excel
     elif "AERO A" in prog_upper or "AERODYNAMICS" in prog_upper: std_prog = STANDARD_SEQUENCES.get("AERO_A", {})
     elif "AERO B" in prog_upper or "STRUCTURES" in prog_upper: std_prog = STANDARD_SEQUENCES.get("AERO_B", {})
     elif "AERO C" in prog_upper or "AVIONICS" in prog_upper: std_prog = STANDARD_SEQUENCES.get("AERO_C", {})
-    elif "AERO" in prog_upper: std_prog = STANDARD_SEQUENCES.get("AERO_A", {}) # Fallback generic
+    elif "AERO" in prog_upper: std_prog = STANDARD_SEQUENCES.get("AERO_A", {}) 
 
     def get_std_idx(cid):
-        # Cautam indexul standard pe noul sistem de 3 trimestre (0-20)
-        pos_str = std_prog.get(cid, "") # <--- AICI ERA PROBLEMA (standard_seq in loc de std_prog)
+        pos_str = std_prog.get(cid, "") 
         if not pos_str: return 999
         try:
             parts = pos_str.split('_')
             y = int(parts[0].replace('Y', ''))
             t = parts[1]
-            if "SUM" in t: t = "SUM" # Absoarbe orice variatie de SUM din STANDARD_SEQUENCES
+            if "SUM" in t: t = "SUM" 
             if t in ["SUM", "FALL", "WIN"]:
                 return (y - 1) * 3 + ["SUM", "FALL", "WIN"].index(t)
         except: pass
         return 999
 
     def place_temporarily(cid, idx):
-        # Impartirea inteligenta la 3
         y = (idx // 3) + 1
         t = ["SUM", "FALL", "WIN"][idx % 3]
         
@@ -1881,8 +1612,7 @@ def generate():
         taken_courses.remove(cid) 
     
     
-    def is_valid_slot(cid, idx, ignore_offering=False): # <-- Adăugat parametrul aici
-        # 1. Impartim la 3 (pentru SUM, FALL, WIN)
+    def is_valid_slot(cid, idx, ignore_offering=False): 
         y = (idx // 3) + 1
         t = ["SUM", "FALL", "WIN"][idx % 3]
         
@@ -1890,17 +1620,14 @@ def generate():
         
         c_data = all_courses_dict.get(cid, {})
         
-        # 2. Verificam daca e oferit in acest trimestru (cautam in Excel)
-        if not ignore_offering: # <-- Folosim parametrul
+        if not ignore_offering: 
             if t == "SUM":
-                # Verificăm dacă e oferit în oricare variantă de vară din Excel
                 is_offered = (str(c_data.get('SUM 1', '')).strip().upper() == 'X' or 
                               str(c_data.get('SUM 2', '')).strip().upper() == 'X' or
                               str(c_data.get('SUM', '')).strip().upper() == 'X')
             else:
                 is_offered = str(c_data.get(t, '')).strip().upper() == 'X'
                 
-            # AICI ERA PROBLEMA: Daca nu e oferit, trebuie sa ii spunem AI-ului sa se opreasca!
             if not is_offered: 
                 return False
         
@@ -1911,11 +1638,9 @@ def generate():
         
         term_has_wt = any('WT' in str(cx.get('COURSE', '')).upper() for cx in target["cursuri"])
         
-        # 3. Nu permitem unui curs sa se aseze peste un WT (si invers)
         if term_has_wt and not is_wt_c and len(target["cursuri"]) >= 1: return False
         if is_wt_c and len(target["cursuri"]) > 0: return False
 
-        # 4. Limitele noi (16 cr / 6 cursuri pentru vara, 18 / 5 pentru restul)
         l_cr = float(term_limits.get(f"Y{y}_{t}", 16.0 if t == 'SUM' else 18.0))
         l_cnt = int(count_limits.get(f"Y{y}_{t}", 6 if t == 'SUM' else 5))
         
@@ -1925,7 +1650,6 @@ def generate():
             if target["credite"] + cr > l_cr: return False
             if len(target["cursuri"]) >= l_cnt: return False
 
-        # 5. Reguli de pre-requisites nivel 200 vs 400
         if get_level(cid) >= 4:
             for k in taken_courses:
                 if get_level(k) == 2 and placements[k][2] >= idx: return False
@@ -1933,7 +1657,6 @@ def generate():
             for k in taken_courses:
                 if get_level(k) >= 4 and placements[k][2] <= idx: return False
 
-        # 6. Reguli stricte Capstone (490A obligatoriu toamna, 490B obligatoriu iarna)
         if '490B' in cid and t != 'WIN': return False
         if '490A' in cid and t != 'FALL': return False
         if '490A' in cid:
@@ -1945,7 +1668,6 @@ def generate():
     
 
     def solve_branch(cid, max_allowed_idx, depth):
-            # NOU: Preventie impotriva infinite loops la pre-requisites incrucisate
             if depth > 15: return False 
             
             if cid in taken_courses: return placements[cid][2] <= max_allowed_idx
@@ -2023,15 +1745,12 @@ def generate():
         if c in remaining: solve_branch(c, 20, 0)
     print("="*50 + "\n")
 
-    # --- Bucla de limitare la 120 credite ---
     while True:
-        # NOU: Folosim "SUM", "FALL", "WIN"
         total_cr = sum(float(c.get('CREDIT', 0) or 0) for y in range(1, 8) for t in ["SUM", "FALL", "WIN"] for c in sequence_dict[str(y)][t]["cursuri"] if str(c.get('CORE_TE', '')).strip().upper() not in ['REPEAT', 'ECP'] and 'WT' not in str(c['COURSE']).upper())
         if total_cr <= 120: break
         
         removed_any = False
         for y in range(7, 0, -1):
-            # NOU: Folosim "WIN", "FALL", "SUM" in ordine inversa
             for t in ["WIN", "FALL", "SUM"]:
                 target = sequence_dict[str(y)][t]
                 tes = [c for c in target["cursuri"] if str(c.get('CORE_TE', '')).strip().upper() == 'TE']
@@ -2049,19 +1768,14 @@ def generate():
             if removed_any: break
         if not removed_any: break
 
-    # =========================================================
-    # --- 2. POST-CHECK: VALIDARE CREDITE MINIME ---
-    # =========================================================
     warning_msgs = []
     
-    # Extragem limita de credite pentru programul curent
     ft_dict = get_program_ft_credits()
     prog_upper = " ".join(program_name.upper().split())
     ft_limit = ft_dict.get(prog_upper, 99)
     if ft_limit == 0: ft_limit = 99
 
     if all_wts_in_prog:
-        # REGULA 4: 30 CR (CORE/PROG/TE) înainte de primul WT
         first_wt = all_wts_in_prog[0]
         if first_wt in placements:
             first_wt_idx = placements[first_wt][2]
@@ -2077,24 +1791,19 @@ def generate():
             if core_credits < 30.0:
                 warning_msgs.append(f"Only {core_credits} credits of CORE/TE before {first_wt}. You need at least 30 CR.")
 
-        # REGULA 5 NOUĂ: Toate termenele Fall/Winter dinaintea ultimului WT trebuie să fie Full-Time
         if ft_limit != 99:
             last_wt = all_wts_in_prog[-1]
             if last_wt in placements:
                 last_wt_idx = placements[last_wt][2]
-                for c_idx in range(1, last_wt_idx): # Sărim peste Y0
+                for c_idx in range(1, last_wt_idx): 
                     p_y = (c_idx // 3) + 1
                     p_t = ["SUM", "FALL", "WIN"][c_idx % 3]
 
                     if p_t != "SUM":
-                        # Backend-ul doar avertizează dacă găsește un termen de studiu (nu gol) sub limită
                         term_cr = sum(float(c.get('CREDIT', 0) or 0) for c in sequence_dict[str(p_y)][p_t]["cursuri"] if 'WT' not in str(c.get('COURSE', '')).upper())
                         if 0 < term_cr < ft_limit:
                             warning_msgs.append(f"Study term {p_y} {p_t} (before {last_wt}) must be Full-Time (≥ {ft_limit} credits). Currently has {term_cr} CR.")
 
-    # --- Construim raspunsul final de trimis catre Javascript ---
-
-    # --- Construim raspunsul final de trimis catre Javascript ---
     res_seq = {}
     for y in range(1, 8):
         res_seq[f"Year {y}"] = {}
@@ -2111,11 +1820,45 @@ def generate():
                     
             res_seq[f"Year {y}"][t] = {"credite": sequence_dict[str(y)][t]["credite"], "cursuri": cursuri_list}
 
-    # Formatam cursurile ramase (unallocated)
-    unalloc_list = [{"id": c, "display": all_courses_dict[c]["COURSE"]} for c in remaining if c in all_courses_dict]
+    # Construim res_seq (codul vechi rămâne la fel)
+    res_seq = {}
+    for y in range(1, 8):
+        res_seq[f"Year {y}"] = {}
+        for t in ["SUM", "FALL", "WIN"]:
+            cursuri_list = []
+            for c in sequence_dict[str(y)][t]["cursuri"]:
+                cid_for_json = c.get('_id', extract_course_code(c['COURSE']))
+                is_wt = 'WT' in str(c['COURSE']).upper()
+                is_rep = str(c.get('CORE_TE', '')).upper() == 'REPEAT'
+                display_cr = 0 if (is_wt or is_rep) else c.get('CREDIT', 0)
+                display = f"{str(c['COURSE']).strip()} ({display_cr} cr)"
+                cursuri_list.append({"id": cid_for_json, "display": display, "is_wt": is_wt})
+                    
+            res_seq[f"Year {y}"][t] = {"credite": sequence_dict[str(y)][t]["credite"], "cursuri": cursuri_list}
+
+    # =========================================================
+    # REPARAȚIE AICI: Formatăm corect cursurile respinse (Unallocated) 
+    # pentru ca interfața web (JavaScript) să le poată redesena!
+    # =========================================================
+    unalloc_list = []
+    for c in remaining:
+        if c in all_courses_dict:
+            c_data = all_courses_dict[c]
+            is_wt = 'WT' in str(c_data.get('COURSE', '')).upper()
+            is_rep = str(c_data.get('CORE_TE', '')).upper() == 'REPEAT'
+            display_cr = 0 if (is_wt or is_rep) else c_data.get('CREDIT', 0)
+            display = f"{str(c_data.get('COURSE', '')).strip()} ({display_cr} cr)"
+            
+            unalloc_list.append({
+                "id": c, 
+                "display": display, 
+                "is_wt": is_wt
+            })
+    # =========================================================
     
-    # NOU: Returnam efectiv rezultatul catre browser! (Aceasta linie lipsea din ultimul tau fisier)
     return jsonify({"sequence": res_seq, "unallocated": unalloc_list, "warnings": warning_msgs})
+    
+    
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)), debug=True, use_reloader=False)

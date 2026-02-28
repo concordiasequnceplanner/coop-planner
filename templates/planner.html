@@ -420,7 +420,7 @@
             <div class="info-row"><span class="info-label">Credits:</span><span class="info-val" id="info_cr">-</span></div>
             <div class="info-row"><span class="info-label">Terms:</span><span class="info-val" id="info_terms" style="color:#3498db; font-weight:700">-</span></div>
             <div style="margin-top:10px; padding-top:8px; border-top:1px dashed #ccc;"><span class="info-label" style="color:#f57f17; font-size:10px;">PRE-REQUISITES:</span><p id="info_prereq" style="margin:2px 0 8px 0; color:#555; font-size:11px;">-</p><span class="info-label" style="color:#fbc02d; font-size:10px;">CO-REQUISITES:</span><p id="info_coreq" style="margin:2px 0; color:#555; font-size:11px;">-</p></div>
-            <div style="margin-top:10px; padding-top:8px; border-top:1px dashed #ccc;"><span class="info-label" style="color:#0d47a1; font-size:10px;">IS PRE-REQ FOR:<p id="info_post_prereq" style="margin:2px 0 8px 0; color:#555; font-size:11px;">-</p></span><span class="info-label" style="color:#1e88e5; font-size:10px;">IS CO-REQ FOR:</span><p id="info_post_coreq" style="margin:2px 0; color:#555; font-size:11px;">-</p></div>
+            <div style="margin-top:10px; padding-top:8px; border-top:1px dashed #ccc;"><span class="info-label" style="color:#0d47a1; font-size:10px;">IS PRE-REQ FOR:</span><p id="info_post_prereq" style="margin:2px 0 8px 0; color:#555; font-size:11px;">-</p><span class="info-label" style="color:#1e88e5; font-size:10px;">IS CO-REQ FOR:</span><p id="info_post_coreq" style="margin:2px 0; color:#555; font-size:11px;">-</p></div>
         </div>
 
         <div class="validation-box" id="liveValidationBox" style="margin-top: 15px; flex-shrink: 0; max-height: 20vh; display: flex; flex-direction: column;">
@@ -1423,11 +1423,23 @@
                     let y = parsed.year;
                     let s = parsed.season;
                     
-                    let score = y * 10 + (s === 'WIN' ? 1 : (s === 'SUM' ? 2 : 3));
-                    if (score < minScore) {
-                        minScore = score;
-                        firstCoreYear = y;
-                        firstCoreTerm = s === 'WIN' ? 'Winter' : 'Fall'; 
+                    // --- NOU: Extragem anul academic direct din string (ex: "2023" din "2023-2024 Summer")
+                    let acaMatch = t.term.match(/^(\d{4})/);
+                    let cAcaYear = acaMatch ? parseInt(acaMatch[1]) : y;
+
+                    // Calculăm Anul Academic Curent
+                    let currMonth = new Date().getMonth();
+                    let currYr = new Date().getFullYear();
+                    let currAcaYear = (currMonth < 4) ? currYr - 1 : currYr; 
+                    
+                    // Păstrăm pentru auto-detect doar cursurile din ultimii 3 ani (>= 2023 pt 2025-2026)
+                    if (cAcaYear >= currAcaYear - 2) {
+                        let score = y * 10 + (s === 'WIN' ? 1 : (s === 'SUM' ? 2 : 3));
+                        if (score < minScore) {
+                            minScore = score;
+                            firstCoreYear = cAcaYear; // Setăm anul pe baza anului academic (primele 4 caractere)
+                            firstCoreTerm = s === 'WIN' ? 'Winter' : 'Fall'; 
+                        }
                     }
                 }
             });
@@ -1544,7 +1556,18 @@
                         let programIdx = getAbsIdx(sYear, sTerm === 'Fall' ? 'FALL' : 'WIN');
                         let gridStartIdx = getAbsIdx(baseYear, 'SUM'); 
                         
-                        if (courseIdx < programIdx) {
+                        // --- NOU: Extragem anul academic și pentru cursul curent
+                        let acaMatch = item.term.match(/^(\d{4})/);
+                        let cAcaYear = acaMatch ? parseInt(acaMatch[1]) : tYear;
+
+                        let currMonth = new Date().getMonth();
+                        let currYr = new Date().getFullYear();
+                        let currAcaYear = (currMonth < 4) ? currYr - 1 : currYr;
+
+                        // Eliminăm din grilă tot ce începe cu 2022 sau mai vechi (<= currAcaYear - 3).
+                        // IMPORTANT: Am schimbat programIdx cu gridStartIdx pentru a permite coloanei de Summer
+                        // să preia cursuri precum WT2, așa cum ai arătat în screenshot.
+                        if (cAcaYear <= currAcaYear - 3 || courseIdx < gridStartIdx) {
                             targetZoneId = 'zone_Y0_ANY'; 
                         } else {
                             let offset = courseIdx - gridStartIdx;

@@ -288,6 +288,24 @@ def get_program_gpa_thresholds():
 
 # --- ROUTES ---
 
+def get_restrictions():
+    try:
+        # Citim noul sheet "restrictions"
+        df = pd.read_excel(os.path.join(os.path.dirname(os.path.abspath(__file__)), "CORE_TE.xlsx"), sheet_name="restrictions")
+        df.columns = [str(c).strip() for c in df.columns]
+        
+        # Formatăm coloanele de tip dată într-un format text predictibil
+        for col in df.columns:
+            if pd.api.types.is_datetime64_any_dtype(df[col]):
+                df[col] = df[col].dt.strftime('%Y-%m-%d')
+                
+        df = df.fillna("")
+        return df.to_dict('records')
+    except Exception as e:
+        print(f"Error loading Restrictions: {e}")
+        return []
+    
+
 @app.route("/api/get_cgpa_timeline", methods=["POST"])
 def api_get_cgpa_timeline():
     if 'user_email' not in session: return jsonify({"error": "Unauthorized"}), 401
@@ -765,10 +783,13 @@ def index():
     ft_credits_dict = get_program_ft_credits()
     gpa_thresholds_dict = get_program_gpa_thresholds() 
 
+    restrictions_list = get_restrictions()
+
     return render_template("planner.html", programe=programs, coop_data_json=json.dumps(coop_data),
                            is_power_user=is_power_user, viewing_sid=viewing_sid, pending_list=pending_list,
                            program_ft_credits_json=json.dumps(ft_credits_dict),
-                           program_gpa_thresholds_json=json.dumps(gpa_thresholds_dict)) 
+                           program_gpa_thresholds_json=json.dumps(gpa_thresholds_dict),
+                           restrictions_json=json.dumps(restrictions_list))
 
 
 
@@ -1319,6 +1340,8 @@ def get_transcript():
         last_prog_link = ""
         last_disc = ""
 
+        suggested_programs_set = set() # NOU: Salvăm toate programele găsite
+
         for _, row in df.iterrows():
             term_str = str(row.get('Academic Term', '')).strip()
             if term_str and term_str.lower() != 'nan':
@@ -1338,6 +1361,19 @@ def get_transcript():
             val_disc = str(row.get('DISCIPLINE1_DESCR', '')).strip().upper()
             if val_disc and val_disc != 'NAN': last_disc = val_disc
             
+            # --- NOU: Adăugăm în SET orice program prin care a trecut studentul ---
+            last_prog_link_upper = last_prog_link.upper()
+            last_disc_upper = last_disc.upper()
+            if "UGRD" in last_prog_link_upper:
+                if "AERODY" in last_disc_upper: suggested_programs_set.add("AERODYNAMICS")
+                elif "STRUCTURES" in last_disc_upper: suggested_programs_set.add("STRUCTURES")
+                elif "AVIONICS" in val_disc: suggested_programs_set.add("AVIONICS")
+                elif "MECH" in last_disc_upper: suggested_programs_set.add("MECHANICAL")
+                elif "INDU" in last_disc_upper: suggested_programs_set.add("INDUSTRIAL")
+            elif "GRAD" in last_prog_link_upper:
+                if "MECH" in last_disc_upper: suggested_programs_set.add("MECHANICAL GRAD")
+                elif "INDU" in last_disc_upper: suggested_programs_set.add("INDUSTRIAL GRAD")
+
             cred_val = row.get('CREDVAL', 0.0)
             try: cred_val = float(cred_val) if pd.notna(cred_val) else 0.0
             except: cred_val = 0.0
@@ -1353,9 +1389,7 @@ def get_transcript():
             })
 
         suggested_program = ""
-        last_prog_link_upper = last_prog_link.upper()
-        last_disc_upper = last_disc.upper()
-        
+        # Ultimul program va fi cel "suggested", dar știm dacă a mai avut și altele
         if "UGRD" in last_prog_link_upper:
             if "AERODY" in last_disc_upper: suggested_program = "AERODYNAMICS"
             elif "STRUCTURES" in last_disc_upper: suggested_program = "STRUCTURES"
@@ -1366,9 +1400,12 @@ def get_transcript():
             if "MECH" in last_disc_upper: suggested_program = "MECHANICAL GRAD"
             elif "INDU" in last_disc_upper: suggested_program = "INDUSTRIAL GRAD"
 
+        multiple_programs = len(suggested_programs_set) > 1
+
         return jsonify({
             "transcript": my_courses, "student_name": student_name, 
-            "suggested_program": suggested_program, "term_disciplines": term_disciplines 
+            "suggested_program": suggested_program, "term_disciplines": term_disciplines,
+            "multiple_programs": multiple_programs 
         })
     except Exception as e:
         print(f"DB Error Transcript: {e}")

@@ -14,8 +14,11 @@ app = Flask(__name__)
 app.secret_key = "SVsecretKEY"
 resend.api_key = os.environ.get("RESEND_API_KEY")
 
-#debug_no_emails = "DEBUG" # debug
 debug_no_emails =  "SITE_ACTIVE" # then it works
+debug_no_emails = "DEBUG" # debug
+
+
+
 debug_email="sorin.voiculescu@concordia.ca"
 
 # =========================================================
@@ -211,24 +214,19 @@ def get_email_recipients(program, target_sid, submitter_email, priority1_email, 
 
     return recipients
 
-_CORE_TE_DF = None
-
 def load_data():
-    global _CORE_TE_DF
-    if _CORE_TE_DF is not None:
-        return _CORE_TE_DF.copy()
     try:
+        # Citim mereu fresh din Excel, fără cache!
         df = pd.read_excel(os.path.join(os.path.dirname(os.path.abspath(__file__)), "CORE_TE.xlsx"))
         df.columns = [str(c).strip() for c in df.columns] 
-        _CORE_TE_DF = df.fillna("")
-        return _CORE_TE_DF.copy()
+        return df.fillna("")
     except Exception as e: 
         print(f"Error loading Excel: {e}")
         return pd.DataFrame()
     
 def extract_course_code(course_name):
     if not course_name: return ""
-    match = re.search(r'(?:REP_)?[A-Z]{3,4}\s?\d{3}[A-Z]?|WT\d', str(course_name).upper())
+    match = re.search(r'(?:REP_)?[A-Z]{3,4}\s?\d{3,4}[A-Z]?|WT\d', str(course_name).upper())
     return match.group(0).replace(" ", "") if match else str(course_name).strip().upper()
 
 def get_level(course_name):
@@ -692,9 +690,7 @@ def update_status():
                     {val_errors_html}
                 </div>
 
-                <p><b>Student's Justification / Comments:</b></p>
-                <div style="background-color: #f9f9f9; border: 1px solid #ddd; padding: 12px; border-radius: 5px; white-space: pre-wrap; font-style: italic; margin-bottom: 25px;">{justification if justification else 'No comments provided.'}</div>
-                
+               
                 <div style="text-align: center; margin: 35px 0;">
                     <a href="https://concordia-sequence-planner.onrender.com/" style="background-color: #e74c3c; color: #ffffff; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 16px; display: inline-block; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">Log in to Update Sequence</a>
                 </div>
@@ -1062,7 +1058,6 @@ def save_sequence():
         if is_power_user and target_id != current_user_id:
             email_to_save = get_student_email(target_id, fallback_email=session['user_email'])
             power_user_name = session.get('guest_name', 'Coordinator') if is_guest else session.get('user_email').split('@')[0]
-            name = f"Submitted on {datetime.datetime.now().strftime('%Y-%m-%d')} by {power_user_name}"
             current_name = "ADMIN (PowerUser)"
         
         timestamp = str(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
@@ -1080,12 +1075,17 @@ def save_sequence():
             })
         
         if status == "PENDING APPROVAL":
-            if justification:
+            # --- NOU: Extragem DOAR partea de după MY JUSTIFICATION: ---
+            student_answer_clean = justification
+            if "MY JUSTIFICATION:" in justification:
+                student_answer_clean = justification.split("MY JUSTIFICATION:")[1].strip()
+
+            if student_answer_clean:
                 try:
                     with engine.begin() as conn:
                         check = conn.execute(text("SELECT Public_comments, PRIVATE_comments FROM S_id_comments WHERE S_id = :sid"), {"sid": target_id}).fetchone()
                         timestamp_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
-                        new_addition = f"[{timestamp_str}] Student_answer: {justification}"
+                        new_addition = f"[{timestamp_str}] Student_answer:\n{student_answer_clean}"
                         
                         if check:
                             existing_pub = str(check[0]).strip() if check[0] and str(check[0]).lower() != 'none' else ""
@@ -1246,8 +1246,7 @@ def save_sequence():
                     </div>
                     
                     <p><b>Student's Justification / Comments:</b><br>
-                    <span style="color: #c0392b; background-color: #fdf2f2; padding: 10px; display: inline-block; margin-top: 5px; border-radius: 4px; border: 1px solid #fadbd8; width: 95%; white-space: pre-wrap;">{justification if justification else '✅ Sequence is valid. No warnings or justification provided.'}</span></p>
-                    
+                    <span style="color: #c0392b; background-color: #fdf2f2; padding: 10px; display: inline-block; margin-top: 5px; border-radius: 4px; border: 1px solid #fadbd8; width: 95%; white-space: pre-wrap;">{student_answer_clean if student_answer_clean else '✅ Sequence is valid. No warnings or justification provided.'}</span></p>
                     <h3 style="color: #2c3e50; margin-top: 25px; border-bottom: 1px solid #eee; padding-bottom: 5px;">Submitted Sequence Breakdown</h3>
                     {terms_html}
                     
@@ -1337,10 +1336,13 @@ def get_transcript():
         my_courses = []
         term_disciplines = {}
         student_name = ""
-        last_prog_link = ""
-        last_disc = ""
+        
+        # --- NOU: Variabile pentru a găsi cel mai recent program din istoric ---
+        max_term_score = -1
+        best_prog_link = ""
+        best_disc = ""
 
-        suggested_programs_set = set() # NOU: Salvăm toate programele găsite
+        suggested_programs_set = set() 
 
         for _, row in df.iterrows():
             term_str = str(row.get('Academic Term', '')).strip()
@@ -1356,23 +1358,36 @@ def get_transcript():
                 if name_val.lower() != 'nan': student_name = name_val
                 
             val_prog = str(row.get('PROG_LINK', '')).strip().upper()
-            if val_prog and val_prog != 'NAN': last_prog_link = val_prog
-            
             val_disc = str(row.get('DISCIPLINE1_DESCR', '')).strip().upper()
-            if val_disc and val_disc != 'NAN': last_disc = val_disc
             
-            # --- NOU: Adăugăm în SET orice program prin care a trecut studentul ---
-            last_prog_link_upper = last_prog_link.upper()
-            last_disc_upper = last_disc.upper()
-            if "UGRD" in last_prog_link_upper:
-                if "AERODY" in last_disc_upper: suggested_programs_set.add("AERODYNAMICS")
-                elif "STRUCTURES" in last_disc_upper: suggested_programs_set.add("STRUCTURES")
-                elif "AVIONICS" in val_disc: suggested_programs_set.add("AVIONICS")
-                elif "MECH" in last_disc_upper: suggested_programs_set.add("MECHANICAL")
-                elif "INDU" in last_disc_upper: suggested_programs_set.add("INDUSTRIAL")
-            elif "GRAD" in last_prog_link_upper:
-                if "MECH" in last_disc_upper: suggested_programs_set.add("MECHANICAL GRAD")
-                elif "INDU" in last_disc_upper: suggested_programs_set.add("INDUSTRIAL GRAD")
+            # --- NOU: Determinăm scorul termenului pentru a alege mereu cel mai recent program ---
+            if val_prog and val_prog != 'NAN':
+                p_upper = val_prog
+                d_upper = val_disc if val_disc != 'NAN' else ""
+                
+                if "UGRD" in p_upper:
+                    if "AERODY" in d_upper: suggested_programs_set.add("AERODYNAMICS")
+                    elif "STRUCTURES" in d_upper: suggested_programs_set.add("STRUCTURES")
+                    elif "AVIONICS" in d_upper: suggested_programs_set.add("AVIONICS")
+                    elif "MECH" in d_upper: suggested_programs_set.add("MECHANICAL")
+                    elif "INDU" in d_upper: suggested_programs_set.add("INDUSTRIAL")
+                elif "GRAD" in p_upper:
+                    if "AERO" in d_upper: suggested_programs_set.add("AERO GRAD")
+                    elif "MECH" in d_upper: suggested_programs_set.add("MECHANICAL GRAD")
+                    elif "INDU" in d_upper: suggested_programs_set.add("INDUSTRIAL GRAD")
+
+                # Calculăm un scor bazat pe an și sezon pentru a bloca programul celui mai recent curs
+                y_str, s_str = parse_coop_term_string(term_str)
+                if y_str and s_str:
+                    score = int(y_str) * 10 + (1 if s_str == 'WIN' else (2 if s_str == 'SUM' else 3))
+                    if score >= max_term_score:
+                        max_term_score = score
+                        best_prog_link = p_upper
+                        best_disc = d_upper
+                else:
+                    if max_term_score == -1: 
+                        best_prog_link = p_upper
+                        best_disc = d_upper
 
             cred_val = row.get('CREDVAL', 0.0)
             try: cred_val = float(cred_val) if pd.notna(cred_val) else 0.0
@@ -1388,24 +1403,30 @@ def get_transcript():
                 "credit": cred_val
             })
 
-        suggested_program = ""
-        # Ultimul program va fi cel "suggested", dar știm dacă a mai avut și altele
-        if "UGRD" in last_prog_link_upper:
-            if "AERODY" in last_disc_upper: suggested_program = "AERODYNAMICS"
-            elif "STRUCTURES" in last_disc_upper: suggested_program = "STRUCTURES"
-            elif "AVIONICS" in last_disc_upper: suggested_program = "AVIONICS"
-            elif "MECH" in last_disc_upper: suggested_program = "MECHANICAL"
-            elif "INDU" in last_disc_upper: suggested_program = "INDUSTRIAL"
-        elif "GRAD" in last_prog_link_upper:
-            if "MECH" in last_disc_upper: suggested_program = "MECHANICAL GRAD"
-            elif "INDU" in last_disc_upper: suggested_program = "INDUSTRIAL GRAD"
+        # Extragem nivelul și prefixăm disciplina pentru interfață
+        is_grad = "GRAD" in best_prog_link
+        level_str = "GRAD" if is_grad else "UGRD"
+        best_disc_display = f"{level_str} - {best_disc}" if best_disc else level_str
+
+        # Trimitem doar baza numelui (ex: MECHANICAL). JS-ul va decide dacă îi lipește "GRAD" sau nu.
+        suggested_base = ""
+        if "AERODY" in best_disc or "AERO A" in best_disc: suggested_base = "AERODYNAMICS"
+        elif "STRUCTURES" in best_disc or "AERO B" in best_disc: suggested_base = "STRUCTURES"
+        elif "AVIONICS" in best_disc or "AERO C" in best_disc: suggested_base = "AVIONICS"
+        elif "AERO" in best_disc: suggested_base = "AERO"
+        elif "MECH" in best_disc: suggested_base = "MECHANICAL"
+        elif "INDU" in best_disc: suggested_base = "INDUSTRIAL"
 
         multiple_programs = len(suggested_programs_set) > 1
 
         return jsonify({
-            "transcript": my_courses, "student_name": student_name, 
-            "suggested_program": suggested_program, "term_disciplines": term_disciplines,
-            "multiple_programs": multiple_programs 
+            "transcript": my_courses, 
+            "student_name": student_name, 
+            "suggested_program": suggested_base, 
+            "is_grad": is_grad,
+            "term_disciplines": term_disciplines,
+            "multiple_programs": multiple_programs,
+            "discipline": best_disc_display 
         })
     except Exception as e:
         print(f"DB Error Transcript: {e}")
@@ -1598,10 +1619,11 @@ def generate():
     prog_upper = program_name.upper()
     if "INDUSTRIAL" in prog_upper: std_prog = STANDARD_SEQUENCES.get("INDUSTRIAL", {})
     elif "MECHANICAL" in prog_upper: std_prog = STANDARD_SEQUENCES.get("MECHANICAL", {})
+    
     elif "AERO A" in prog_upper or "AERODYNAMICS" in prog_upper: std_prog = STANDARD_SEQUENCES.get("AERO_A", {})
     elif "AERO B" in prog_upper or "STRUCTURES" in prog_upper: std_prog = STANDARD_SEQUENCES.get("AERO_B", {})
     elif "AERO C" in prog_upper or "AVIONICS" in prog_upper: std_prog = STANDARD_SEQUENCES.get("AERO_C", {})
-    elif "AERO" in prog_upper: std_prog = STANDARD_SEQUENCES.get("AERO_A", {}) 
+    #elif "AERO" in prog_upper: std_prog = STANDARD_SEQUENCES.get("AERO_A", {}) 
 
     def get_std_idx(cid):
         pos_str = std_prog.get(cid, "") 

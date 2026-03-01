@@ -310,7 +310,7 @@
         <div class="tool-group">
             <span class="tool-label">Work Terms</span>
             <button onclick="addExtraWT()" style="background:#8e44ad; color:white; border-color:#9b59b6; box-shadow: 0 2px 4px rgba(142, 68, 173, 0.3);">➕ ADD EXTRA WT</button>
-            <span style="font-size: 10px; color:#888; margin-left:10px;">*Creates the next WT dynamically</span>
+            <span style="font-size: 10px; color:#888; margin-left:10px;">*adds a WT (for GRAD)</span>
         </div>
 
 
@@ -1951,12 +1951,23 @@
     }
 
     function checkWT() {
-        const isCoop = document.getElementById('coopRegistered').checked;
-        if (!isCoop) { document.getElementById('generateBtn').disabled = false; return; }
-        const hasUnplacedWT = Array.from(document.getElementById('unallocatedZone').children).some(el => coursesData[el.id]?.is_wt && el.style.display !== 'none');
-        document.getElementById('generateBtn').disabled = false; 
-    }
+        let genBtn = document.getElementById('generateBtn');
+        if (!genBtn) return;
 
+        // --- NOU: Ascundem complet butonul dacă este un program de master (GRAD) ---
+        let progName = document.getElementById('programSelect').value.toUpperCase();
+        if (progName.includes('GRAD')) {
+            genBtn.style.display = 'none';
+            return; // Oprim aici funcția pentru GRAD
+        } else {
+            genBtn.style.display = ''; // Îl afișăm la loc pentru programele de licență (UGRD)
+        }
+
+        const isCoop = document.getElementById('coopRegistered').checked;
+        if (!isCoop) { genBtn.disabled = false; return; }
+        const hasUnplacedWT = Array.from(document.getElementById('unallocatedZone').children).some(el => coursesData[el.id]?.is_wt && el.style.display !== 'none');
+        genBtn.disabled = false; 
+    }
     
 
     document.getElementById('moveEcpBtn').onclick = () => {
@@ -2465,6 +2476,14 @@
         if (appInfo) {
             appInfo.innerHTML = infoText;
             appInfo.style.display = document.getElementById('btnApprove').style.display;
+        }
+
+
+        // --- NOU: Ascunde panoul de Submit dacă studentul NU este în CO-OP ---
+        let isCoopActive = document.getElementById('coopRegistered').checked;
+        let submitPanelSection = document.getElementById('submitPanel');
+        if (submitPanelSection) {
+            submitPanelSection.style.display = isCoopActive ? 'block' : 'none';
         }
     }
 
@@ -2995,18 +3014,30 @@
                     sYearSelect.value = data.admission.year;
                     document.getElementById('startTerm').value = data.admission.term.includes('FALL') ? "Fall" : "Winter";
                     
+                    // Lăsăm bifat atâta timp cât a existat cel puțin o dată în CO-OP
                     document.getElementById('coopRegistered').checked = true;
                     updateCoopYears();
                     document.getElementById('coopStartYear').value = data.admission.year;
                     document.getElementById('coopStartTerm').value = "FALL";
                 }
+
             } else {
                 studentCoopData = {};
+                // Dacă nu găsim studentul deloc în baza de date CO-OP (nu a fost niciodată), debifăm căsuța.
+                document.getElementById('coopRegistered').checked = false;
             }
+            
+            // Actualizăm starea vizuală a detaliilor CO-OP (opacity și disabled) imediat
+            let isChecked = document.getElementById('coopRegistered').checked;
+            document.getElementById('coopDetailsGroup').style.opacity = isChecked ? '1' : '0.4';
+            document.getElementById('coopStartTerm').disabled = !isChecked; 
+            document.getElementById('coopStartYear').disabled = !isChecked;
+
             injectCoopHeaders();
         } catch (e) {
             console.error("Failed to fetch COOP data:", e);
             studentCoopData = {};
+            document.getElementById('coopRegistered').checked = false;
         }
     }
 

@@ -2342,6 +2342,71 @@
             }
         }
 
+        // --- NOU: Regula 400-level dupa toate 200-level pentru UGRD ---
+        let currentProg = document.getElementById('programSelect').value.toUpperCase();
+        if (!currentProg.includes('GRAD')) { // Se aplică doar la Undergrad (Licență)
+            let max200Index = -1;
+            let unallocated200s = [];
+            let placed400s = [];
+
+            // Materiile specifice inginerești
+            const targetSubjects = ['AERO', 'ENGR', 'MIAE', 'INDU', 'MECH'];
+            
+            const isTargetCourse = (cid) => {
+                let c = coursesData[cid];
+                if (!c) return false;
+                let name = c.full_name.toUpperCase();
+                return targetSubjects.some(sub => name.startsWith(sub));
+            };
+
+            const getLevel = (cid) => {
+                let c = coursesData[cid];
+                if (!c) return 0;
+                // Extrage prima cifră după litere (ex: 2 din "MECH 211")
+                let match = c.full_name.match(/[A-Z]+\s*(\d)\d\d/);
+                return match ? parseInt(match[1]) * 100 : 0;
+            };
+
+            // 1. Căutăm 200-level lăsate nealocate (neterminate)
+            Array.from(document.getElementById('unallocatedZone').children).forEach(el => {
+                if (el.style.display !== 'none' && isTargetCourse(el.id)) {
+                    if (getLevel(el.id) === 200) unallocated200s.push(coursesData[el.id].full_name);
+                }
+            });
+
+            // 2. Scanăm toată grila secvențial pentru a găsi cel mai târziu 200-level și toate 400-level
+            currentSequence.forEach((term, index) => {
+                term.courses.forEach(cid => {
+                    if (isTargetCourse(cid)) {
+                        let level = getLevel(cid);
+                        if (level === 200) {
+                            max200Index = Math.max(max200Index, index); // indexul celui mai "târziu" curs de 200
+                        } else if (level === 400) {
+                            placed400s.push({ id: coursesData[cid].full_name, index: index, termId: term.id });
+                        }
+                    }
+                });
+            });
+
+            // 3. Evaluăm încălcările de regulă
+            placed400s.forEach(c400 => {
+                // Eroare: Există cursuri 200 nici măcar programate pe grilă
+                if (unallocated200s.length > 0) {
+                    errors.push(`Rule Restriction: You must complete all 200-level engineering courses before taking 400-level. (<b>${c400.id}</b> is placed, but <b>${unallocated200s[0]}</b> is unallocated).`);
+                } 
+                // Eroare: Există un curs de 200 plasat în același termen sau DUPĂ cursul de 400
+                else if (c400.index <= max200Index && max200Index > 0) {
+                    let violating200Cid = currentSequence[max200Index].courses.find(cid => isTargetCourse(cid) && getLevel(cid) === 200);
+                    let violating200Name = coursesData[violating200Cid] ? coursesData[violating200Cid].full_name : violating200Cid;
+                    let term400Name = c400.termId.replace('_', ' ');
+                    let term200Name = currentSequence[max200Index].id.replace('_', ' ');
+                    
+                    errors.push(`Rule Restriction: You cannot take <b>${c400.id}</b> in ${term400Name} before completing all 200-level courses (<b>${violating200Name}</b> is placed in ${term200Name}).`);
+                }
+            });
+        }
+        // ---------------------------------------------------------------
+
         let list = document.getElementById('liveValidationList');
 
         let lastGpaScore = -1;

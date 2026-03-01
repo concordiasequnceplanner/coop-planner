@@ -307,6 +307,12 @@
             <button class="btn-danger" onclick="resetAllCourses()">Reset all unchecked to Unallocated</button>
         </div>
         <div class="tool-group"><select id="repeatCourseSelect" style="width: 250px; font-size: 11px;"><option value="" disabled selected>Select course to repeat...</option></select><button onclick="addRepeatCourse()">I need to repeat this course</button></div>
+        <div class="tool-group">
+            <span class="tool-label">Work Terms</span>
+            <button onclick="addExtraWT()" style="background:#8e44ad; color:white; border-color:#9b59b6; box-shadow: 0 2px 4px rgba(142, 68, 173, 0.3);">➕ ADD EXTRA WT</button>
+            <span style="font-size: 10px; color:#888; margin-left:10px;">*Creates the next WT dynamically</span>
+        </div>
+
 
         <div class="tool-group">
             <span class="tool-label">Global Default Courses</span>
@@ -392,16 +398,16 @@
                 <li><b>Co-op Coordinator:</b> <span id="coopCoordName" style="font-weight: bold;">Loading...</span> (<span id="coopCoordEmail">...</span>)</li>
             </div>
 
-            <button onclick="submitSequence()" style="background: #27ae60; color: white; border: none; padding: 12px 24px; font-size: 16px; font-weight: bold; border-radius: 5px; cursor: pointer; transition: background 0.3s;">
+            <button id="btnSubmit" onclick="submitSequence()" style="width: 100%; background: #27ae60; color: white; border: none; padding: 12px 24px; font-size: 16px; font-weight: bold; border-radius: 5px; cursor: pointer; transition: background 0.3s;">
                 📤 Submit to CO-OP Director
             </button>
+            <div id="submitCreditsInfo" style="text-align: center; font-size: 12px; color: #555; margin-top: 8px; font-weight: bold;"></div>
         </div>
         
         
         {% if is_power_user %}
-            <div style="margin-top: 20px; padding: 15px; background: #e8f6f3; border: 1px solid #a3e4d7; border-radius: 8px;">
-                <button onclick="processStatusAction('APPROVED')" id="btnApprove" style="display:none; width:100%; background:#27ae60; color:white; border:none; padding:12px; border-radius:4px; font-weight:bold; font-size:14px; cursor:pointer; box-shadow:0 4px 6px rgba(0,0,0,0.1);">✅ APPROVE SEQUENCE</button>
-            </div>
+           <button onclick="processStatusAction('APPROVED')" id="btnApprove" style="display:none; width:100%; background:#27ae60; color:white; border:none; padding:12px; border-radius:4px; font-weight:bold; font-size:14px; cursor:pointer; box-shadow:0 4px 6px rgba(0,0,0,0.1);">✅ APPROVE SEQUENCE</button>
+                <div id="approveCreditsInfo" style="text-align: center; font-size: 12px; color: #555; margin-top: 8px; font-weight: bold; display:none;"></div>
         {% endif %}
 
  
@@ -450,6 +456,7 @@
     let coursesData = {};
     let repeatedCoursesList = []; 
     let termAttributes = {};
+    let allProgramOptions = []; // NOU: Stocăm toate programele din Excel pentru a le putea filtra
 
     
     const programGpaThresholds = {{ program_gpa_thresholds_json | safe }}; 
@@ -463,6 +470,15 @@
     let defCrFW = 18, defCtFW = 5, defCrSum = 7, defCtSum = 2;
 
     document.addEventListener("DOMContentLoaded", () => {
+        // --- NOU: Salvăm toate opțiunile din dropdown în memorie ---
+        const pSelect = document.getElementById('programSelect');
+        if (pSelect) {
+            Array.from(pSelect.options).forEach(o => {
+                if (o.value) allProgramOptions.push({value: o.value, text: o.text});
+            });
+        }
+        // ------------------------------------------------------------
+        
         const currentYear = new Date().getFullYear();
         const startSelect = document.getElementById('startYear');
         
@@ -708,7 +724,7 @@
                     term_data: termAttributes 
                 })
             });
-            if(res.ok) alert("Sequence saved to Google Drive!");
+            if(res.ok) alert("Sequence saved as: " + name);
             else alert("Error saving sequence.");
         } catch(e) { console.error(e); alert("Save failed."); }
     }
@@ -764,7 +780,15 @@
         try {
             termAttributes = termData || {}; 
             if (programName) {
-                document.getElementById('programSelect').value = programName;
+                let progSelect = document.getElementById('programSelect');
+                // NOU: Ne asigurăm că programul există în dropdown înainte de a-l selecta (în caz că a fost ascuns)
+                if (!Array.from(progSelect.options).some(o => o.value === programName)) {
+                    let opt = document.createElement('option');
+                    opt.value = programName;
+                    opt.innerText = programName;
+                    progSelect.appendChild(opt);
+                }
+                progSelect.value = programName;
                 document.getElementById('workspace').style.visibility = 'visible';
                 document.getElementById('toolsMenu').classList.remove('collapsed');
                 await fetchCoursesForProgram(programName);
@@ -1159,6 +1183,58 @@
         }
     };
 
+
+    async function handleProgramChange(e) {
+        let progSelect = document.getElementById('programSelect');
+        // Dacă evenimentul nu vine cu semnalul "tine-l aprins", atunci îl aprindem noi acum.
+        let skipLoadingTrigger = e && e.detail && e.detail.keepLoadingScreenActive;
+        if (!skipLoadingTrigger) {
+            document.getElementById('loadingOverlay').style.display = 'flex'; 
+        }
+        
+        try {
+            updateRoutingInfo(); 
+            document.getElementById('workspace').style.visibility = 'visible'; 
+            document.getElementById('toolsMenu').classList.remove('collapsed');
+            
+            const isChecked = document.getElementById('coopRegistered').checked;
+            document.getElementById('coopDetailsGroup').style.opacity = isChecked ? '1' : '0.4';
+            document.getElementById('coopStartTerm').disabled = !isChecked; document.getElementById('coopStartYear').disabled = !isChecked;
+            
+            if (isChecked) {
+                updateCoopYears();
+                document.getElementById('coopStartYear').value = document.getElementById('startYear').value;
+                document.getElementById('coopStartTerm').value = "FALL";
+            }
+            updateAllSelectColors();
+            
+            buildGrid(); 
+            
+            const unalloc = document.getElementById('unallocatedZone');
+            unalloc.innerHTML = '';
+            
+            await fetchCoursesForProgram(progSelect.value); // Folosim progSelect.value aici!
+            Object.values(coursesData).forEach(c => { unalloc.appendChild(createCourseElement(c.id)); });
+
+            await loadTranscriptAndMapInstitute();
+
+            document.querySelectorAll('.course-box.wt').forEach(box => {
+                box.style.display = isChecked ? 'block' : 'none';
+            });
+
+            sortUnallocatedDOM(); 
+            populateRepeatSelect(); 
+            updateCredits(); 
+            checkWT(); 
+            enforceAndHighlightTerms(); 
+            runLiveCheck();
+        } catch (error) {
+            console.error("Eroare la incarcare:", error);
+        } finally {
+            document.getElementById('loadingOverlay').style.display = 'none';
+        }
+    }
+    
     async function triggerGridRebuild() { 
         if(document.getElementById('workspace').style.visibility === 'visible') { 
             document.getElementById('loadingOverlay').style.display = 'flex'; 
@@ -1273,6 +1349,60 @@
         document.getElementById('unallocatedZone').appendChild(createCourseElement(fakeId)); 
         sortUnallocatedDOM();
         alert(`Added ${newName}. It is now a pre-req for the original course and its dependents.`); 
+        runLiveCheck();
+    }
+
+
+    function addExtraWT() {
+        let wtNums = [];
+        Object.keys(coursesData).forEach(id => {
+            let match = id.match(/^WT(\d+)$/i);
+            if (match) wtNums.push(parseInt(match[1]));
+        });
+        
+        let maxWt = wtNums.length > 0 ? Math.max(...wtNums) : 0;
+        let newWtNum = maxWt + 1;
+        let newWtId = `WT${newWtNum}`;
+        
+        if (coursesData[newWtId]) {
+            alert(`${newWtId} already exists!`);
+            return;
+        }
+        
+        let prereq = maxWt > 0 ? `WT${maxWt}` : "None";
+        
+        // Creăm noul curs WT direct în memorie
+        coursesData[newWtId] = {
+            id: newWtId,
+            display: `${newWtId} (0 cr)`,
+            full_name: newWtId,
+            title: `Work Term ${newWtNum}`,
+            credit: 0,
+            type: "prgCORE", // Va fi socotit ca prgCORE așa cum ai cerut
+            is_wt: true,
+            is_ecp: false,
+            prereqs: prereq,
+            coreqs: "None",
+            is_prereq_for: "None",
+            is_coreq_for: "None",
+            terms: "ANY",
+            locked: false
+        };
+        
+        // Actualizăm WT-ul anterior pentru a indica faptul că este pre-req pentru acesta (pentru săgeți/highlight)
+        if (maxWt > 0 && coursesData[`WT${maxWt}`]) {
+            let prev = coursesData[`WT${maxWt}`];
+            if (!prev.is_prereq_for || prev.is_prereq_for === "None") {
+                prev.is_prereq_for = newWtId;
+            } else if (!prev.is_prereq_for.includes(newWtId)) {
+                prev.is_prereq_for += `, ${newWtId}`;
+            }
+        }
+        
+        // Îl aruncăm în unallocated zone
+        document.getElementById('unallocatedZone').appendChild(createCourseElement(newWtId));
+        sortUnallocatedDOM();
+        alert(`Added ${newWtId}. It has ${prereq} as a pre-requisite.`);
         runLiveCheck();
     }
 
@@ -1399,7 +1529,8 @@
             if (data.student_name) {
                 let displaySid = document.getElementById('displayViewingSid');
                 if (displaySid) {
-                    displaySid.innerText = currentSid + " - " + data.student_name;
+                    let discText = data.discipline ? `<br><span style="font-size:11px; font-weight:normal; color:#e67e22;">${data.discipline}</span>` : "";
+                    displaySid.innerHTML = currentSid + " - " + data.student_name + discText;
                 }
             }
 
@@ -1492,7 +1623,8 @@
                 coursesToProcess.forEach(item => {
                     let rawCid = item.course.toUpperCase();
                     
-                    if (rawCid.startsWith('CWTE10') || rawCid.startsWith('CWT10') || rawCid === 'WT1') rawCid = 'WT1';
+                    // --- NOU: Adăugat WILE600 și WILE601 la detecția pentru WT1 ---
+                    if (rawCid.startsWith('CWTE10') || rawCid.startsWith('CWT10') || rawCid.startsWith('WILE600') || rawCid.startsWith('WILE601') || rawCid === 'WT1') rawCid = 'WT1';
                     if (rawCid.startsWith('CWTE20') || rawCid.startsWith('CWT20') || rawCid.startsWith('ACCE10') || rawCid === 'WT2') rawCid = 'WT2';
                     if (rawCid.startsWith('CWTE30') || rawCid.startsWith('CWT30') || rawCid === 'WT3') rawCid = 'WT3';
                     
@@ -1508,7 +1640,7 @@
                         let formattedName = finalCid.replace(/^([A-Z]+)(\d+.*)$/, '$1 $2');
                         let isWt = finalCid.includes('WT');
 
-                        let inferredType = "EXTRA";
+                        let inferredType = "TRANSCRIPT";
                         if (cleanId.match(/^(ECON|PHIL|ENGL|HIST|POLI|RELI|SOCI|THEO|ANTH|PSYC|SPAN|FREN|MANA)/)) inferredType = "ECP";
                         else if (cleanId.match(/^(MATH|PHYS|CHEM|BIOL)/)) inferredType = "BASIC SCIENCE";
 
@@ -1644,8 +1776,8 @@
         else if(typeStr === "REPEAT") typeStr = "<b>REPEAT</b>"; 
         else if(typeStr.includes("TE")) typeStr = "TE"; 
         else if(typeStr.includes("GEN") || typeStr.includes("ELECTIVE") || typeStr === "ECP") typeStr = "ECP"; 
-        else if(typeStr === "EXTRA") typeStr = "EXTRA"; 
-        else typeStr = typeStr ? typeStr : "EXTRA"; 
+        else if(typeStr === "TRANSCRIPT") typeStr = "TRANSCRIPT"; // Modificat aici
+        else typeStr = typeStr ? typeStr : "TRANSCRIPT"; // Și aici
 
         const orderMap = { 'SUM': 1, 'FALL': 2, 'WIN': 3 }; 
         const colorMap = { 'SUM': 'tag-sum', 'FALL': 'tag-fall', 'WIN': 'tag-win' };
@@ -2054,8 +2186,29 @@
                 // --- NOU: Verificăm dacă primul WT de pe grilă este efectiv WT1 ---
                 let isFirstWtActuallyWT1 = currentSequence[firstWtIdx].courses.some(id => id.toUpperCase().includes('WT1'));
 
-                // Aplicăm regula de 2 semestre DOAR dacă e vorba de WT1
-                if (isFirstWtActuallyWT1 && studyTermsBefore < 2) {
+                // --- NOU: Verificăm dacă termenul acestui WT1 este în trecut ---
+                let pYearForWt = parseInt(document.getElementById('startYear').value);
+                let pTermForWt = document.getElementById('startTerm').value;
+                let baseYearForWt = pTermForWt === 'Winter' ? pYearForWt - 1 : pYearForWt;
+                let wtTermType = currentSequence[firstWtIdx].type; // SUM, FALL, WIN
+                let wtTermYear = (wtTermType === 'WIN') ? (baseYearForWt + currentSequence[firstWtIdx].year) : (baseYearForWt + currentSequence[firstWtIdx].year - 1);
+                
+                let now = new Date();
+                let cYr = now.getFullYear();
+                let cMo = now.getMonth();
+                let cDay = now.getDate();
+                
+                let isWtPast = false;
+                if (wtTermYear < cYr) {
+                    isWtPast = true;
+                } else if (wtTermYear === cYr) {
+                    if (wtTermType === 'WIN' && (cMo > 1 || (cMo === 1 && cDay > 1))) isWtPast = true;
+                    if (wtTermType === 'SUM' && (cMo > 4 || (cMo === 4 && cDay > 25))) isWtPast = true;
+                    if (wtTermType === 'FALL' && (cMo > 8 || (cMo === 8 && cDay > 20))) isWtPast = true;
+                }
+
+                // Aplicăm regula de 2 semestre DOAR dacă e WT1 ȘI NU e în trecut
+                if (isFirstWtActuallyWT1 && !isWtPast && studyTermsBefore < 2) {
                     errors.push("Invalid Sequence: There must be at least 2 study terms before your first Work Term.");
                 }
 
@@ -2072,8 +2225,8 @@
                             }
                         });
                     }
-                    // Aplicăm regula de 30 credite DOAR dacă e vorba de WT1
-                    if (isFirstWtActuallyWT1 && coreCrBefore < 30) {
+                    // Aplicăm regula de 30 credite DOAR dacă e vorba de WT1 ȘI NU e în trecut
+                    if (isFirstWtActuallyWT1 && !isWtPast && coreCrBefore < 30) {
                         let firstWtName = currentSequence[firstWtIdx].courses.find(id => id.includes('WT')) || "WT";
                         errors.push(`Requirement not met: Only ${coreCrBefore} credits of CORE/TE before ${firstWtName}. Programs with multiple Work Terms require at least 30 CR before the first WT.`);
                     }
@@ -2086,8 +2239,11 @@
                 let baseYear = pTerm === 'Winter' ? pYear - 1 : pYear;
 
                 let progName = document.getElementById('programSelect').value.toUpperCase().replace(/\s+/g, ' ').trim();
-                let credits_Ft = programFtCredits[progName] || 99;
-                if (credits_Ft === 0) credits_Ft = 99;
+                let credits_Ft = programFtCredits[progName];
+                // Dacă nu e setat în DB, deducem noi (9 pt GRAD, 12 pt UGRD)
+                if (!credits_Ft || credits_Ft === 0 || credits_Ft === 99) {
+                    credits_Ft = progName.includes('GRAD') ? 9 : 12;
+                }
 
                 for (let i = 1; i < lastWtIdx; i++) { 
                     let term = currentSequence[i];
@@ -2118,26 +2274,60 @@
                 }
             }
 
-            let wt1Pos = -1, wt2Pos = -1, wt3Pos = -1;
+            // NOU: Detectăm absolut TOATE WT-urile (indiferent câte se adaugă din buton)
+            let wtPositions = {};
             wtIndices.forEach(idx => {
                 let term = currentSequence[idx];
-                if (term.courses.some(c => c.includes('WT1'))) wt1Pos = idx;
-                if (term.courses.some(c => c.includes('WT2'))) wt2Pos = idx;
-                if (term.courses.some(c => c.includes('WT3'))) wt3Pos = idx;
+                term.courses.forEach(c => {
+                    let m = c.match(/^WT(\d+)$/i);
+                    if (m) {
+                        wtPositions[parseInt(m[1])] = idx;
+                    }
+                });
             });
-            
-            if (wt1Pos > -1 && wt2Pos > -1 && wt2Pos <= wt1Pos) errors.push("Invalid Sequence: WT2 must be placed AFTER WT1.");
-            if (wt2Pos > -1 && wt3Pos > -1 && wt3Pos <= wt2Pos) errors.push("Invalid Sequence: WT3 must be placed AFTER WT2.");
 
-            let finalWtPos = Math.max(wt1Pos, wt2Pos, wt3Pos);
-            if (finalWtPos > -1) {
-                let hasCoreAfter = false;
+            // Verificăm secvențialitatea (WTx+1 să fie după WTx)
+            let wtNums = Object.keys(wtPositions).map(Number).sort((a,b) => a-b);
+            for(let i = 0; i < wtNums.length - 1; i++) {
+                let curr = wtNums[i];
+                let next = wtNums[i+1];
+                if (wtPositions[next] <= wtPositions[curr]) {
+                    errors.push(`Invalid Sequence: WT${next} must be placed AFTER WT${curr}.`);
+                }
+            }
+
+            // Regula cu 1 CORE plasat după CEL MAI MARE WT existent pe grilă
+            // Regula cursului plasat după CEL MAI MARE WT existent pe grilă
+            if (wtNums.length > 0) {
+                let finalWtPos = Math.max(...Object.values(wtPositions));
+                let hasValidCourseAfter = false;
+                
+                let currentProg = document.getElementById('programSelect').value.toUpperCase();
+                let isGradProg = currentProg.includes('GRAD');
+
                 for(let i = finalWtPos + 1; i < currentSequence.length; i++) {
-                    if (currentSequence[i].courses.some(id => coursesData[id] && (coursesData[id].type || "").toUpperCase().includes('CORE'))) {
-                        hasCoreAfter = true; break;
+                    if (currentSequence[i].courses.some(id => {
+                        let c = coursesData[id];
+                        if (!c || c.is_wt || c.type === 'REPEAT') return false; // Ignorăm alte WT-uri sau cursuri picate
+                        
+                        if (isGradProg) {
+                            return true; // Pentru MASTER: Orice curs este acceptat
+                        } else {
+                            return (c.type || "").toUpperCase().includes('CORE'); // Pentru LICENȚĂ: Doar cursuri CORE
+                        }
+                    })) {
+                        hasValidCourseAfter = true; 
+                        break;
                     }
                 }
-                if (!hasCoreAfter) errors.push("You must have at least one CORE course placed AFTER your final Work Term.");
+                
+                if (!hasValidCourseAfter) {
+                    if (isGradProg) {
+                        errors.push("You must have at least one valid course placed AFTER your final Work Term.");
+                    } else {
+                        errors.push("You must have at least one CORE course placed AFTER your final Work Term.");
+                    }
+                }
             }
         }
 
@@ -2198,27 +2388,84 @@
                 justLabel.style.color = '#c0392b';
                 justLabel.innerHTML = '⚠️ <b>Warnings detected!</b> You must provide a justification below before submitting:';
                 
-                let currentText = justText.value.trim();
-                let myJustText = "MY JUSTIFICATION:\n";
+                let currentText = justText.value;
+                let headerText = "SYSTEM WARNINGS & JUSTIFICATIONS:\n\n";
                 
-                if (!currentText.includes(myJustText)) {
-                    let systemWarning = "SYSTEM WARNINGS:\n" + errors.map(e => "- " + e.replace(/<[^>]*>?/gm, '')).join('\n') + "\n\n";
-                    justText.value = systemWarning + myJustText;
-                    justText.dataset.originalText = systemWarning + myJustText;
-                }
+                // Extragem vechile justificări, asociate EXACT cu textul erorii
+                let answersMap = {};
+                let blocks = currentText.split(/(?=\d+\.\s)/);
+                blocks.forEach(block => {
+                    let m = block.match(/^\d+\.\s*([^\n]+)\nJustification:\s*([\s\S]*)/);
+                    if (m) {
+                        answersMap[m[1].trim()] = m[2].trim();
+                    }
+                });
+                
+                // Construim noul text intercalat
+                let newContent = headerText;
+                errors.forEach((e, i) => {
+                    let cleanErr = e.replace(/<[^>]*>?/gm, '').trim();
+                    let savedText = answersMap[cleanErr] ? answersMap[cleanErr] : "";
+                    newContent += `${i + 1}. ${cleanErr}\nJustification: ${savedText}\n\n`;
+                });
+                
+                justText.value = newContent;
+                justText.dataset.originalText = newContent;
+                
+                justText.style.height = 'auto';
+                justText.style.height = justText.scrollHeight + 'px';
+                
             } else {
                 justBox.style.borderLeftColor = '#27ae60';
                 justBox.style.backgroundColor = '#f9fff9';
                 justLabel.style.color = '#27ae60';
                 justLabel.innerHTML = '💬 Sequence looks good! Comments are optional:';
                 justText.dataset.originalText = "";
-                if (justText.value.includes("SYSTEM WARNINGS:")) {
+                if (justText.value.includes("SYSTEM WARNINGS & JUSTIFICATIONS:")) {
                     justText.value = "";
                 }
             }
         }
 
+        // --- NOU: Calculare și Afișare total credite CORE și Transcript sub butoane
+        let totalCoreCredits = 0;
+        let totalTranscriptCredits = 0;
         
+        let zonesToScan = ['zone_Y0_ANY']; // INCLUDEM ZONA DE TRANSCRIPT / ECP !!
+        for(let y=1; y<=7; y++) {
+            ['SUM', 'FALL', 'WIN'].forEach(t => zonesToScan.push(`zone_Y${y}_${t}`));
+        }
+        
+        zonesToScan.forEach(zId => {
+            let zone = document.getElementById(zId);
+            if (zone) {
+                Array.from(zone.children).forEach(el => {
+                    let c = coursesData[el.id];
+                    if (c && !c.is_wt && c.type !== 'REPEAT') {
+                        let crVal = parseFloat(c.credit) || 0;
+                        let cType = (c.type || '').toUpperCase();
+                        if (cType.includes('CORE')) {
+                            totalCoreCredits += crVal;
+                        }
+                        if (c.from_transcript) {
+                            totalTranscriptCredits += crVal;
+                        }
+                    }
+                });
+            }
+        });
+        
+        let trText = totalTranscriptCredits > 0 ? ` + ${totalTranscriptCredits} CR from transcript` : "";
+        let infoText = `(${totalCoreCredits} CR from all CORE combined${trText})`;
+        
+        let subInfo = document.getElementById('submitCreditsInfo');
+        if (subInfo) subInfo.innerHTML = infoText;
+        
+        let appInfo = document.getElementById('approveCreditsInfo');
+        if (appInfo) {
+            appInfo.innerHTML = infoText;
+            appInfo.style.display = document.getElementById('btnApprove').style.display;
+        }
     }
 
     async function submitSequence() {
@@ -2257,15 +2504,17 @@
                 return;
             }
 
+            // --- NOU: Validare pentru formatul intercalat ---
             let studentReply = justText;
-            if (justText.includes("MY JUSTIFICATION:")) {
-                studentReply = justText.split("MY JUSTIFICATION:")[1].trim();
-            } else {
-                studentReply = justText.trim();
-            }
+            
+            // Eliminăm tot textul "șablon" ca să vedem dacă studentul a scris efectiv ceva util
+            let cleanReply = studentReply.replace("SYSTEM WARNINGS & JUSTIFICATIONS:", "")
+                                         .replace(/\d+\.\s.*/g, "") // ștergem erorile
+                                         .replace(/Justification:/g, "") // ștergem cuvântul Justification
+                                         .trim();
 
-            if (studentReply.length < 5) {
-                alert("⚠️ Please provide a more detailed justification for the warnings before submitting.");
+            if (cleanReply.length < 5) {
+                alert("⚠️ Please provide a valid justification for the warnings before submitting (at least a few words).");
                 justTextElement.focus();
                 return;
             }
@@ -2663,8 +2912,8 @@
         await loadSequenceData(seqObj, termObj, settObj, fullData.program);
         document.getElementById('pendingModal').style.display = 'none';
         
-        document.getElementById('btnApprove').style.display = 'inline-block';
-        document.getElementById('btnRework').style.display = 'inline-block';
+        let appInfo = document.getElementById('approveCreditsInfo');
+        if (appInfo) appInfo.style.display = 'block';
         
         let justText = document.getElementById('justificationText');
         if(justText) {
@@ -2856,24 +3105,50 @@
             // Așteptăm să se termine și celelalte cereri
             await Promise.all([coopPromise, cgpaPromise]);
 
-            if (data.suggested_program) {
-                let progSelect = document.getElementById('programSelect');
-                let exists = Array.from(progSelect.options).some(o => o.value.toUpperCase().includes(data.suggested_program));
-                
-                if (exists) {
-                    let match = Array.from(progSelect.options).find(o => o.value.toUpperCase().includes(data.suggested_program));
-                    if (match && progSelect.value !== match.value) {
-                        progSelect.value = match.value;
-                        
-                        // NOU: Afișăm alerta dacă sunt mai multe programe
-                        if (data.multiple_programs) {
-                            alert("Atenție: Au fost detectate mai multe programe în istoric. Cel mai recent a fost selectat automat (" + match.value + ").");
-                        }
-                        
-                        await progSelect.onchange({ detail: { keepLoadingScreenActive: true } }); 
-                        return;
-                    }
+            // --- NOU: Afișăm numele și disciplina IMEDIAT, chiar dacă nu se auto-selectează programul ---
+            if (data.student_name) {
+                let displaySid = document.getElementById('displayViewingSid');
+                if (displaySid) {
+                    let discText = data.discipline ? `<br><span style="font-size:11px; font-weight:normal; color:#e67e22;">${data.discipline}</span>` : "";
+                    displaySid.innerHTML = currentSid + " - " + data.student_name + discText;
                 }
+            }
+            // ------------------------------------------------------------------------------------------
+
+            if (data.suggested_program) {
+                // --- NOU: Filtrăm dropdown-ul pentru a arăta DOAR programele corespunzătoare nivelului (GRAD/UGRD) ---
+            let progSelect = document.getElementById('programSelect');
+            if (progSelect && allProgramOptions.length > 0) {
+                progSelect.innerHTML = '<option value="">-- Select a Program --</option>';
+                
+                allProgramOptions.forEach(p => {
+                    let isOptGrad = p.value.toUpperCase().includes("GRAD");
+                    // Adăugăm opțiunea doar dacă nivelul ei se potrivește cu cel al studentului
+                    if ((data.is_grad && isOptGrad) || (!data.is_grad && !isOptGrad)) {
+                        let opt = document.createElement('option');
+                        opt.value = p.value;
+                        opt.innerText = p.text;
+                        progSelect.appendChild(opt);
+                    }
+                });
+            }
+            // --------------------------------------------------------------------------------------------------
+
+            if (data.suggested_program) {
+                // Acum că lista e filtrată, căutăm pur și simplu baza numelui (ex: "INDUSTRIAL")
+                let match = Array.from(progSelect.options).find(o => o.value.toUpperCase().includes(data.suggested_program));
+                
+                if (match && progSelect.value !== match.value) {
+                    progSelect.value = match.value;
+                    
+                    if (data.multiple_programs) {
+                        alert("Atenție: Au fost detectate mai multe programe în istoric. Cel mai recent a fost selectat automat (" + match.value + ").");
+                    }
+                    
+                    await handleProgramChange({ detail: { keepLoadingScreenActive: true } }); 
+                    return;
+                }
+            }
             }
         } catch(e) {
             console.error("Eroare autodetectare program:", e);

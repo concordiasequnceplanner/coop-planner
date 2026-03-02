@@ -435,6 +435,7 @@ def get_cgpa_timeline():
         print(f"DB Error CGPA: {e}")
         return jsonify({})
 
+
 @app.route("/api/admin_bulk_email", methods=["POST"])
 def admin_bulk_email():
     data = request.json
@@ -442,19 +443,46 @@ def admin_bulk_email():
     subject = data.get('subject', '')
     body = data.get('message', '')
     short_msg = data.get('short_msg', 'Admin Bulk Update')
-    admin_email = session.get('user_email', 'admin')
+    admin_email = session.get('user_email', 'coop_miae@concordia.ca')
 
     now_stamp = f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')} - {admin_email}]\n{short_msg}\n\n"
 
     try:
         with engine.begin() as conn:
             for sid in student_ids:
-                # 1. Obținem detaliile studentului (email, nume) - presupunem fn get_student_email
+                # 1. Obținem emailul studentului
                 email = get_student_email(sid)
                 
-                # 2. Trimitem emailul (Resend)
-                final_body = f"Hello,<br><br>{body.replace(chr(10), '<br>')}<br><br>MIAE CO-OP ADMIN<br><br><small><i>Note1: please reply to ALL<br>Note2: if this is an error, please contact MIAE CO-OP ADMIN (reply to all)</i></small>"
-                # send_email_logic(email, subject, final_body) # activeaza resend aici
+                # Extragem și Numele studentului pentru salutul personalizat
+                name_res = conn.execute(text("SELECT `Name` FROM `login vs id` WHERE `Student ID` = :sid LIMIT 1"), {"sid": sid}).fetchone()
+                student_name = str(name_res[0]).strip() if name_res and name_res[0] else "Student"
+                
+                # 2. Construim și Trimitem emailul (Resend)
+                final_body = f"""
+                <div style="font-family: Arial, sans-serif; color: #333; font-size: 14px;">
+                    <p>Hello {student_name},</p>
+                    <p>{body.replace(chr(10), '<br>')}</p>
+                    <br>
+                    <p>Best Regards,<br><b>MIAE CO-OP ADMIN</b></p>
+                    <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+                    <small style="color: #7f8c8d;">
+                        <i>Note 1: Please reply to ALL.</i><br>
+                        <i>Note 2: If this is an error, please contact MIAE CO-OP ADMIN (reply to all).</i>
+                    </small>
+                </div>
+                """
+                
+                try:
+                    resend.Emails.send({
+                        "from": "MIAE Planner <auth@concordiasequenceplanner.ca>",
+                        "to": [email],
+                        "cc": [admin_email],  # Primești și tu o copie pt siguranță
+                        "reply_to": admin_email,
+                        "subject": subject,
+                        "html": final_body
+                    })
+                except Exception as mail_err:
+                    print(f"Failed to send bulk email to {email}: {mail_err}")
                 
                 # 3. Adăugăm în comentarii baza de date
                 check = conn.execute(text("SELECT Public_comments FROM S_id_comments WHERE S_id = :sid"), {"sid": sid}).fetchone()

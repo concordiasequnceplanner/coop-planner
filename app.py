@@ -14,8 +14,8 @@ app = Flask(__name__)
 app.secret_key = "SVsecretKEY"
 resend.api_key = os.environ.get("RESEND_API_KEY")
 
-#debug_no_emails =  "SITE_ACTIVE" # then it works
-debug_no_emails = "DEBUG" # debug
+debug_no_emails =  "SITE_ACTIVE" # then it works
+#debug_no_emails = "DEBUG" # debug
 
 
 debug_email="sorin.voiculescu@concordia.ca"
@@ -446,7 +446,7 @@ def admin_bulk_email():
     short_msg = data.get('short_msg', 'Admin Bulk Update')
     admin_email = session.get('user_email', 'coop_miae@concordia.ca')
 
-    now_stamp = f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')} - {admin_email}]\n{short_msg}\n\n"
+    now_stamp = f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')} - {admin_email}]\nemail sent on: {short_msg}\n\n"
 
     try:
         with engine.begin() as conn:
@@ -485,7 +485,7 @@ def admin_bulk_email():
                         "cc": recipients.get("cc", []),
                         "bcc": recipients.get("bcc", []),
                         "reply_to": admin_email,
-                        "subject": subject,
+                        "subject": f"{subject} - {sid}",
                         "html": final_body
                     })
                 except Exception as mail_err:
@@ -937,7 +937,7 @@ def send_notes_email():
             "cc": recipients.get("cc", []),
             "bcc": recipients.get("bcc", []),
             "reply_to": admin_email,
-            "subject": "MIAE CO-OP - Important Notes regarding your sequence",
+            "subject": f"MIAE CO-OP - Important Notes regarding your sequence ({target_sid})",
             "html": html_body
         })
         return jsonify({"success": True})

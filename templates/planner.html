@@ -302,7 +302,7 @@
     <div class="tools-header" onclick="toggleTools()"><span>🛠️ Advanced Control Panel & Quick Actions</span><span>▼</span></div>
     <div class="tools-content">
         <div class="tool-group">
-            <button id="moveEcpBtn" style= "border-left-color: #f1c40f; background: #fffdf0; ">ALL ECP taken prior to Program</button>
+            
             <button onclick="lockAllPlacedCourses()" style="background:#27ae60; color:white; border-color:#2ecc71; padding: 6px 12px; border-radius: 3px; cursor: pointer; font-size: 12px; font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">✅ FIX in sequence all courses already placed</button>
             <button class="btn-danger" onclick="resetAllCourses()">Reset all unchecked to Unallocated</button>
         </div>
@@ -336,7 +336,15 @@
 </div>
 
 <div style="margin: 0 20px 15px 20px; display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
-    <button class="btn-primary" id="generateBtn" disabled>Generate Sequence</button>
+    <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 15px; margin-bottom: 15px;">
+        <button onclick="moveAllECP()" style="width: 100%; padding: 10px; background-color: #f7f4d0; color: rgb(0, 0, 0); border: none; border-radius: 4px; font-weight: bold; cursor: pointer; transition: 0.3s;">
+            CEGEP: all ECPs taken in Y0
+        </button>
+        
+        <button id="generateBtn" onclick="generateSequence()" style="width: 100%; padding: 10px; background-color: #27ae60; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; transition: 0.3s;">
+            Generate Sequence
+        </button>
+    </div>
     
     <div style="flex: 1; min-width: 300px;">
         <label style="font-size:11px; font-weight:bold; color:#27ae60;">💬 ADMIN comments (Visible to Student):</label>
@@ -386,6 +394,9 @@
 
             <div id="justificationBox" style="margin-bottom: 20px; background: #f9fff9; padding: 15px; border-left: 4px solid #27ae60; border-radius: 4px; transition: all 0.3s;">
                 <label id="justificationLabel" style="font-weight: bold; color: #27ae60; display: block; margin-bottom: 8px;">💬 Sequence looks good! Comments are optional:</label>
+                <div style="font-size: 13px; color: #555; font-style: italic; margin-top: 2px; margin-bottom: 10px; line-height: 1.4;">
+                    <span style="color: #c0392b; font-weight: bold;">Note:</span> Any modification made to the course grid will automatically reset this form. Please add your justifications only when the sequence is completely final and ready to be submitted.
+                </div>
                 
                 <textarea id="justificationText" 
                     oninput="this.style.height = ''; this.style.height = this.scrollHeight + 'px'" 
@@ -398,9 +409,26 @@
                 <li><b>Co-op Coordinator:</b> <span id="coopCoordName" style="font-weight: bold;">Loading...</span> (<span id="coopCoordEmail">...</span>)</li>
             </div>
 
+
+            <div id="cosReasonContainer" style="margin-bottom: 20px; background: #fff; padding: 15px; border: 1px solid #bdc3c7; border-radius: 4px;">
+                <label style="font-weight: bold; color: #c0392b; display: block; margin-bottom: 10px;">📋 You must select a valid reason for this modification before submitting:</label>
+                <div style="display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: #333;">
+                    <label><input type="radio" name="cosReason" value="1"> 1. I have not yet started / I was asked by COOP AD but there are no changes</label>
+                    <label><input type="radio" name="cosReason" value="2"> 2. I want to reduce summer load</label>
+                    <label><input type="radio" name="cosReason" value="3"> 3. I want to reduce overall load</label>
+                    <label><input type="radio" name="cosReason" value="4"> 4. Off sequence (e.g., must repeat course)</label>
+                    <label><input type="radio" name="cosReason" value="5"> 5. I couldn't find a place in one/several courses I had scheduled</label>
+                    <label><input type="radio" name="cosReason" value="6"> 6. I have / will change academic program (e.g., transfer)</label>
+                    <label><input type="radio" name="cosReason" value="7"> 7. I was not placed for the coming work term (did not find an internship)</label>
+                    <label><input type="radio" name="cosReason" value="8"> 8. My WT is or will be extended</label>
+                    <label><input type="radio" name="cosReason" value="9"> 9. Other personal reasons: see my comments above</label>
+                </div>
+            </div>
+
             <button id="btnSubmit" onclick="submitSequence()" style="width: 100%; background: #27ae60; color: white; border: none; padding: 12px 24px; font-size: 16px; font-weight: bold; border-radius: 5px; cursor: pointer; transition: background 0.3s;">
                 📤 Submit to CO-OP Director
             </button>
+
             <div id="submitCreditsInfo" style="text-align: center; font-size: 12px; color: #555; margin-top: 8px; font-weight: bold;"></div>
         </div>
         
@@ -786,6 +814,19 @@
                     studentCGPAData = {}; 
                 }
                 
+                // --- NOU: Bifăm motivul și încărcăm justificarea când deschizi din butonul Load ---
+                document.querySelectorAll('input[name="cosReason"]').forEach(rb => rb.checked = false);
+                if (selected.cos_reason) {
+                    let rb = document.querySelector(`input[name="cosReason"][value="${selected.cos_reason}"]`);
+                    if (rb) rb.checked = true;
+                }
+                
+                let justText = document.getElementById('justificationText');
+                if (justText) {
+                    justText.value = selected.justification || "";
+                }
+                // ----------------------------------------------------------------------------------
+
                 await loadSequenceData(selected.JSON_Data, selected.Term_Data, selected.Settings_Data, selected.Program);
                 
                 let appWrap = document.getElementById('approveWrapper');
@@ -2010,10 +2051,10 @@
     }
     
 
-    document.getElementById('moveEcpBtn').onclick = () => {
+    function moveAllECP() {
         const z0 = document.getElementById('zone_Y0_ANY'); Object.keys(coursesData).forEach(id => { if(coursesData[id].is_ecp) z0.appendChild(document.getElementById(id)); });
         updateCredits(); checkWT(); runLiveCheck();
-    };
+    }
 
     document.getElementById('generateBtn').onclick = async function() {
         this.innerText = "Processing sequence..."; 
@@ -2543,11 +2584,11 @@
             }
         }
 
-        // --- NOU: Calculare și Afișare total credite CORE și Transcript sub butoane
-        let totalCoreCredits = 0;
-        let totalTranscriptCredits = 0;
+        // --- NOU: Calculare și Afișare detaliată a creditelor (fără ECP, fără Unallocated)
+        let totalCredits = 0;
+        let breakdown = {};
         
-        let zonesToScan = ['zone_Y0_ANY']; // INCLUDEM ZONA DE TRANSCRIPT / ECP !!
+        let zonesToScan = ['zone_Y0_ANY']; // Includem zona Y0 (unde sunt scutirile și transcriptul)
         for(let y=1; y<=7; y++) {
             ['SUM', 'FALL', 'WIN'].forEach(t => zonesToScan.push(`zone_Y${y}_${t}`));
         }
@@ -2557,22 +2598,43 @@
             if (zone) {
                 Array.from(zone.children).forEach(el => {
                     let c = coursesData[el.id];
-                    if (c && !c.is_wt && c.type !== 'REPEAT') {
+                    if (c) {
+                        let typeStr = (c.type || "").toUpperCase();
+                        
+                        // Excludem WTs, REPEATs și ECP-urile/Electives
+                        if (c.is_wt || typeStr === "REPEAT") return;
+                        if (c.is_ecp || typeStr.includes("GEN") || typeStr.includes("ELECTIVE") || typeStr === "ECP") return;
+                        
                         let crVal = parseFloat(c.credit) || 0;
-                        let cType = (c.type || '').toUpperCase();
-                        if (cType.includes('CORE')) {
-                            totalCoreCredits += crVal;
-                        }
-                        if (c.from_transcript) {
-                            totalTranscriptCredits += crVal;
+                        if (crVal > 0) {
+                            // Formatăm frumos categoriile
+                            let displayType = typeStr;
+                            if (typeStr.includes("ENG") && typeStr.includes("CORE")) displayType = "engCORE"; 
+                            else if (typeStr.includes("PRG") && typeStr.includes("CORE")) displayType = "prgCORE"; 
+                            else if (typeStr.includes("TE")) displayType = "TE"; 
+                            else if (typeStr === "TRANSCRIPT") displayType = "Transcript";
+                            else displayType = typeStr ? typeStr : "Other";
+
+                            // Adunăm creditele în categorie
+                            breakdown[displayType] = (breakdown[displayType] || 0) + crVal;
+                            totalCredits += crVal;
                         }
                     }
                 });
             }
         });
         
-        let trText = totalTranscriptCredits > 0 ? ` + ${totalTranscriptCredits} CR from transcript` : "";
-        let infoText = `(${totalCoreCredits} CR from all CORE combined${trText})`;
+        let breakdownArr = [];
+        Object.keys(breakdown).forEach(k => {
+            breakdownArr.push(`${breakdown[k]} ${k}`);
+        });
+        
+        let infoText = "";
+        if (totalCredits > 0) {
+            infoText = `(Total ${totalCredits} CR = ${breakdownArr.join(' + ')})`;
+        } else {
+            infoText = `(0 CR placed on sequence)`;
+        }
         
         let subInfo = document.getElementById('submitCreditsInfo');
         if (subInfo) subInfo.innerHTML = infoText;
@@ -2592,9 +2654,19 @@
     }
 
     async function submitSequence() {
+        // --- NOU: Verificăm motivul obligatoriu ---
+        let reasonEl = document.querySelector('input[name="cosReason"]:checked');
+        if (!reasonEl) {
+            alert("❌ Please select a valid reason for your modification before submitting.");
+            document.getElementById('cosReasonContainer').scrollIntoView({ behavior: "smooth", block: "center" });
+            return;
+        }
+        let cosReasonVal = parseInt(reasonEl.value);
+        // ------------------------------------------
+
         const justTextElement = document.getElementById('justificationText');
         let justText = justTextElement.value;
-        
+
         const hasErrors = document.getElementById('justificationLabel').innerHTML.includes('Warning');
 
         let totalCoursesOnGrid = 0;
@@ -2773,7 +2845,8 @@
             student_comments: "",    
             wt_summary: wtSummary,       
             term_summary: termSummary,
-            validation_errors: valErrorHTMLs
+            validation_errors: valErrorHTMLs,
+            cos_reason: cosReasonVal // NOU: Adăugăm motivul numeric aici
         };
 
         try {
@@ -2997,6 +3070,14 @@
         windowLoadedSeqRowIndex = fullData.row_index;
         windowLoadedSeqEmail = fullData.email;
 
+        // --- NOU: Bifăm automat pe ecran motivul selectat de student ---
+        document.querySelectorAll('input[name="cosReason"]').forEach(rb => rb.checked = false);
+        if (fullData.cos_reason) {
+            let rb = document.querySelector(`input[name="cosReason"][value="${fullData.cos_reason}"]`);
+            if (rb) rb.checked = true;
+        }
+        // ---------------------------------------------------------------
+
         let displaySidEl = document.getElementById('displayViewingSid');
         if (displaySidEl) {
             let safeSidStr = fullData.student_id ? fullData.student_id.toString().split('-')[0].trim() : "";
@@ -3021,12 +3102,12 @@
             await fetchAndUpdateCoopData(safeSid); 
             await fetchCGPAData(safeSid); 
             fetchComments(safeSid);
-        } else {
+       } else {
             studentCoopData = {};
             studentCGPAData = {}; 
         }
 
-       await loadSequenceData(seqObj, termObj, settObj, fullData.program);
+        await loadSequenceData(seqObj, termObj, settObj, fullData.program);
         document.getElementById('pendingModal').style.display = 'none';
         
         // Aprindem corect panoul verde si butonul Rework

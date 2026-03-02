@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Admin Checks</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; background-color: #f8f9fa; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; background: white; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        th, td { border: 1px solid #dee2e6; padding: 8px; text-align: center; }
+        th { background: #2c3e50; color: white; position: sticky; top: 0; }
+        .spinner-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.8); z-index: 1000; justify-content: center; align-items: center; flex-direction: column; }
+        .loader { border: 8px solid #f3f3f3; border-top: 8px solid #3498db; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin-bottom: 15px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div class="spinner-overlay" id="loadingOverlay">
+        <div class="loader"></div>
+        <h3 style="color: #2c3e50;">⏳ Running query across database... Please wait.</h3>
+    </div>
+
+    <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">📋 Admin Automated Checks</h2>
+    
+    <div style="margin-bottom: 20px; background: #fff; padding: 15px; border-radius: 5px; border: 1px solid #dce4ec; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+        {% for chk in checks %}
+            <label style="display: block; margin-bottom: 10px; cursor: pointer; padding: 8px; border-radius: 4px; transition: 0.2s;" onmouseover="this.style.background='#f1f5f8'" onmouseout="this.style.background='transparent'">
+                <input type="radio" name="checkOption" value="{{ chk.id }}" data-msg="{{ chk.msg }}" data-short="{{ chk.short }}" data-what="{{ chk.what }}" onchange="loadCheckData()"> 
+                <strong>{{ chk.id }}.</strong> {{ chk.what }}
+            </label>
+        {% endfor %}
+    </div>
+
+    <table id="resultsTable" style="display: none;">
+        <thead>
+            <tr>
+                <th><input type="checkbox" id="checkAll" checked onclick="toggleAll(this)"></th>
+                <th>Name</th>
+                <th>Program</th>
+                <th>Email</th>
+                <th>Student ID</th>
+                <th>Last CGPA</th>
+                <th>CGPA Credits</th>
+                <th>Last GPA24</th>
+                <th>GPA24 Credits</th>
+                <th>Notes (Visible)</th>
+                <th>Notes (Invisible)</th>
+            </tr>
+        </thead>
+        <tbody id="studentsTableBody"></tbody>
+    </table>
+
+    <div style="display: flex; gap: 20px; margin-top: 20px;">
+        <div style="flex: 2;">
+            <label style="color:#2c3e50; font-weight:bold;">✉️ Message (Email Body):</label><br>
+            <textarea id="emailMessage" style="width: 100%; height: 150px; padding: 10px; border-radius: 4px; border: 1px solid #ccc; font-family: Arial;"></textarea>
+        </div>
+        <div style="flex: 1;">
+            <label style="color:#2c3e50; font-weight:bold;">💾 Short Message (Database Note):</label><br>
+            <input type="text" id="shortMessage" style="width: 100%; padding: 10px; margin-bottom: 15px; border-radius: 4px; border: 1px solid #ccc;">
+            
+            <button onclick="sendBulkEmails()" style="width: 100%; padding: 15px; background: #27ae60; color: white; border: none; border-radius: 4px; font-size: 16px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                📤 SEND EMAILS TO SELECTED
+            </button>
+        </div>
+    </div>
+
+    <script>
+        function toggleAll(source) {
+            let checkboxes = document.getElementsByName('studentCheck');
+            for(let i=0; i<checkboxes.length; i++) checkboxes[i].checked = source.checked;
+        }
+
+        async function loadCheckData() {
+            let selected = document.querySelector('input[name="checkOption"]:checked');
+            if(!selected) return;
+            
+            document.getElementById('emailMessage').value = selected.getAttribute('data-msg');
+            document.getElementById('shortMessage').value = selected.getAttribute('data-short');
+
+            document.getElementById('loadingOverlay').style.display = 'flex';
+            document.getElementById('resultsTable').style.display = 'none';
+
+            try {
+                let res = await fetch('/api/admin_run_check', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ check_id: selected.value })
+                });
+                let currentStudents = await res.json();
+                
+                let tbody = document.getElementById('studentsTableBody');
+                tbody.innerHTML = '';
+                currentStudents.forEach(s => {
+                    let tr = `<tr>
+                        <td style="text-align:center;"><input type="checkbox" name="studentCheck" value="${s.id}" checked></td>
+                        <td style="font-weight:bold; color:#2980b9;">${s.name}</td>
+                        <td style="font-size:11px;">${s.program}</td>
+                        <td style="font-size:12px;">${s.email}</td>
+                        <td>${s.id}</td>
+                        <td style="font-weight:bold; color:#c0392b;">${s.cgpa}</td>
+                        <td>${s.cgpa_cr}</td>
+                        <td style="font-weight:bold; color:#e67e22;">${s.gpa24}</td>
+                        <td>${s.gpa24_cr}</td>
+                        <td><div style="max-height: 50px; overflow-y: auto; font-size:11px; text-align:left; background:#f9fff9; padding:4px;">${s.notes_vis}</div></td>
+                        <td><div style="max-height: 50px; overflow-y: auto; font-size:11px; text-align:left; background:#fdf2f2; padding:4px;">${s.notes_invis}</div></td>
+                    </tr>`;
+                    tbody.innerHTML += tr;
+                });
+                
+                document.getElementById('resultsTable').style.display = 'table';
+            } catch(e) {
+                alert("Error loading data.");
+            } finally {
+                document.getElementById('loadingOverlay').style.display = 'none';
+            }
+        }
+
+        async function sendBulkEmails() {
+            let selected = document.querySelector('input[name="checkOption"]:checked');
+            if(!selected) return alert("Select a check first!");
+
+            let sids = Array.from(document.querySelectorAll('input[name="studentCheck"]:checked')).map(cb => cb.value);
+            if(sids.length === 0) return alert("No students selected!");
+
+            let body = document.getElementById('emailMessage').value;
+            let short = document.getElementById('shortMessage').value;
+            let subject = selected.getAttribute('data-what');
+
+            if(confirm(`Send email to ${sids.length} students?`)) {
+                document.getElementById('loadingOverlay').style.display = 'flex';
+                try {
+                    let res = await fetch('/api/admin_bulk_email', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ student_ids: sids, message: body, short_msg: short, subject: subject })
+                    });
+                    if(res.ok) alert("✅ Emails sent and database updated successfully!");
+                    else alert("❌ Error sending emails.");
+                } catch(e) {
+                    alert("Connection error.");
+                } finally {
+                    document.getElementById('loadingOverlay').style.display = 'none';
+                    loadCheckData(); 
+                }
+            }
+        }
+    </script>
+</body>
+</html>

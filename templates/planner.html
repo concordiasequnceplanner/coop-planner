@@ -6,8 +6,9 @@
     
     <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 20px; background: #fff; border-bottom: 1px solid #eee;">
         
-        <div style="font-size: 15px; font-weight: bold; color: #e67e22; background: #fff3e0; padding: 6px 15px; border-radius: 20px; border: 1px solid #ffe0b2;">
-            👁️ Viewing: <span id="displayViewingSid" data-sid="{{ viewing_sid }}" data-name="{{ viewing_name }}">{{ viewing_sid }}{% if viewing_name %} - {{ viewing_name }}{% endif %}</span>
+        <div style="font-size: 14px; font-weight: bold; color: #e67e22; background: #fff3e0; padding: 6px 15px; border-radius: 10px; border: 1px solid #ffe0b2;">
+            👁️ Viewing: <span id="displayViewingSid" data-sid="{{ viewing_sid }}" data-name="{{ viewing_name }}">{{ viewing_sid }} - {{ viewing_name }}</span>
+            <div id="displayViewingExtra" style="font-size: 11px; font-weight: normal; color: #d35400; margin-top: 2px;"></div>
         </div>
 
         <div style="display: flex; align-items: center; gap: 20px;">
@@ -33,7 +34,10 @@
                 <input type="text" id="adminSidInput" placeholder="Student ID..." style="border: 1px solid #cbd5e0; border-radius: 15px; padding: 4px 10px; font-size: 12px; width: 110px; outline: none;" value="{{ viewing_sid if viewing_sid != session.get('student_id', '') else '' }}">
                 <button onclick="adminSwitchStudent()" style="background: #3498db; color: white; border: none; padding: 4px 12px; border-radius: 15px; cursor: pointer; font-size: 11px; font-weight: bold;">Switch</button>
             </div>
+
+            <a href="/admin_checks" target="_blank" style="background: #8e44ad; color: white; border: none; padding: 6px 15px; border-radius: 15px; font-size: 12px; font-weight: bold; text-decoration: none; box-shadow: 0 2px 4px rgba(0,0,0,0.1); transition: 0.3s;">📋 Admin Checks</a>
             {% endif %}
+
 
             <span style="color: #2c3e50; font-size: 13px;">Logged in as: <b>{{ session.get('user_email') }}</b></span>
 
@@ -349,6 +353,7 @@
     <div style="flex: 1; min-width: 300px;">
         <label style="font-size:11px; font-weight:bold; color:#27ae60;">💬 ADMIN comments (Visible to Student):</label>
         <textarea id="publicComments" 
+            ondblclick="insertAdminStamp(this)"
             oninput="this.style.height = ''; this.style.height = this.scrollHeight + 'px'" 
             {% if is_power_user %}
                 onblur="autoSaveComments(this)"
@@ -395,9 +400,12 @@
             <div id="justificationBox" style="margin-bottom: 20px; background: #f9fff9; padding: 15px; border-left: 4px solid #27ae60; border-radius: 4px; transition: all 0.3s;">
                 <label id="justificationLabel" style="font-weight: bold; color: #27ae60; display: block; margin-bottom: 8px;">💬 Sequence looks good! Comments are optional:</label>
                 <div style="font-size: 13px; color: #555; font-style: italic; margin-top: 2px; margin-bottom: 10px; line-height: 1.4;">
-                    <span style="color: #c0392b; font-weight: bold;">Note:</span> Any modification made to the course grid will automatically reset this form. Please add your justifications only when the sequence is completely final and ready to be submitted.
+                    <span style="color: #c0392b; font-weight: bold;">Note:</span> Any modification made to the course grid will automatically reset this form. Please add your justifications only when the sequence is completely final and ready to be submitted. 
+                    <br>
+                    <span style="color: #2d2bc0; font-weight: bold;" >MIAE student coming from CEGEP? :</span> Click the button "CEGEP: all ECPs taken in Y0" to automatically move all ECP courses to the Year 0 zone.                   
                 </div>
-                
+
+   
                 <textarea id="justificationText" 
                     oninput="this.style.height = ''; this.style.height = this.scrollHeight + 'px'" 
                     style="width: 100%; min-height: 80px; padding: 10px; border: 1px solid #bdc3c7; border-radius: 4px; font-family: inherit; resize: none; overflow: hidden;" 
@@ -1603,15 +1611,28 @@
             }
 
             let displaySid = document.getElementById('displayViewingSid');
+            let displayExtra = document.getElementById('displayViewingExtra');
             if (displaySid) {
                 let currentName = displaySid.getAttribute('data-name');
-                // Adaugă numele doar dacă e gol (protejăm numele de la Login/View)
                 if (!currentName && data.student_name) {
                     displaySid.setAttribute('data-name', data.student_name);
                     currentName = data.student_name;
                 }
-                let discText = data.discipline ? `<br><span style="font-size:11px; font-weight:normal; color:#e67e22;">${data.discipline}</span>` : "";
-                displaySid.innerHTML = currentSid + (currentName ? " - " + currentName : "") + discText;
+                displaySid.innerHTML = currentSid + (currentName ? " - " + currentName : "");
+                
+                // Setăm email-ul și disciplina DEDESUBT
+                if (displayExtra) {
+                    let emailText = "";
+                    if (data.student_email) {
+                        {% if is_power_user %}
+                        emailText = `<span style="cursor:pointer; color:#0277bd; text-decoration:underline;" title="Click to send visible notes to student" onclick="sendNotesEmail('${data.student_email}', '${currentName}', '${currentSid}')">✉️ ${data.student_email}</span>`;
+                        {% else %}
+                        emailText = `${data.student_email}`;
+                        {% endif %}
+                    }
+                    let discText = data.discipline ? `<br><span style="color:#2c3e50; font-weight:bold;">${data.discipline}</span>` : "";
+                    displayExtra.innerHTML = emailText + discText;
+                }
             }
 
 
@@ -2543,7 +2564,7 @@
                 justBox.style.borderLeftColor = '#c0392b';
                 justBox.style.backgroundColor = '#fdf2f2';
                 justLabel.style.color = '#c0392b';
-                justLabel.innerHTML = '⚠️ <b>Warnings detected!</b> You must provide a justification below before submitting:';
+                justLabel.innerHTML = '⚠️ <b>Warnings detected!</b> You must provide a justification below before submitting :';
                 
                 let currentText = justText.value;
                 let headerText = "SYSTEM WARNINGS & JUSTIFICATIONS:\n\n";
@@ -3322,15 +3343,28 @@
 
             // --- NOU: Afișăm numele și disciplina IMEDIAT, chiar dacă nu se auto-selectează programul ---
             let displaySid = document.getElementById('displayViewingSid');
+            let displayExtra = document.getElementById('displayViewingExtra');
             if (displaySid) {
                 let currentName = displaySid.getAttribute('data-name');
-                // Adaugă numele doar dacă e gol (protejăm numele de la Login/View)
                 if (!currentName && data.student_name) {
                     displaySid.setAttribute('data-name', data.student_name);
                     currentName = data.student_name;
                 }
-                let discText = data.discipline ? `<br><span style="font-size:11px; font-weight:normal; color:#e67e22;">${data.discipline}</span>` : "";
-                displaySid.innerHTML = currentSid + (currentName ? " - " + currentName : "") + discText;
+                displaySid.innerHTML = currentSid + (currentName ? " - " + currentName : "");
+                
+                // Setăm email-ul și disciplina DEDESUBT
+                if (displayExtra) {
+                    let emailText = "";
+                    if (data.student_email) {
+                        {% if is_power_user %}
+                        emailText = `<span style="cursor:pointer; color:#0277bd; text-decoration:underline;" title="Click to send visible notes to student" onclick="sendNotesEmail('${data.student_email}', '${currentName}', '${currentSid}')">✉️ ${data.student_email}</span>`;
+                        {% else %}
+                        emailText = `${data.student_email}`;
+                        {% endif %}
+                    };
+                    let discText = data.discipline ? `<br><span style="color:#2c3e50; font-weight:bold;">${data.discipline}</span>` : "";
+                    displayExtra.innerHTML = emailText + discText;
+                }
             }
             // ------------------------------------------------------------------------------------------
 
@@ -3471,6 +3505,65 @@
         }
         return activeWarnings; // Returnăm lista de erori generate
     }
+
+    function insertAdminStamp(el) {
+        if (el.readOnly) return; // Dacă nu e power user, nu face nimic
+        const now = new Date();
+        const stamp = `[${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')} - {{ session.get('user_email') }}]\n`;
+        el.value = stamp + el.value;
+        el.style.height = 'auto'; 
+        el.style.height = el.scrollHeight + 'px'; // Ajustăm înălțimea automat
+        autoSaveComments(el); // Salvăm automat
+    }
+
+    {% if is_power_user %}
+    async function sendNotesEmail(studentEmail, studentName, studentId) {
+        let notesEl = document.getElementById('publicComments');
+        let notes = notesEl ? notesEl.value.trim() : "";
+        
+        if (!notes) {
+            alert("⚠️ Nu există niciun text în căsuța 'ADMIN comments (Visible to Student)' pe care să-l trimitem!");
+            return;
+        }
+
+        if (confirm(`Trimitem email cu "notes vizibil" către studentul ${studentName} (${studentEmail})?`)) {
+            document.getElementById('loadingOverlay').style.display = 'flex';
+            try {
+                let res = await fetch('/api/send_notes_email', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        student_email: studentEmail,
+                        student_name: studentName,
+                        notes: notes
+                    })
+                });
+                
+                if (res.ok) {
+                    alert("✅ Email trimis cu succes!");
+                    
+                    // --- NOU: Adăugăm data și ora la începutul căsuței și salvăm automat ---
+                    let now = new Date();
+                    let stamp = `[Email sent to student on: ${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}]\n`;
+                    
+                    notesEl.value = stamp + notesEl.value; // Adaugă textul la început
+                    notesEl.style.height = 'auto';
+                    notesEl.style.height = notesEl.scrollHeight + 'px'; // Ajustează înălțimea căsuței
+                    
+                    autoSaveComments(notesEl); // Salvează modificarea în baza de date
+                    // ------------------------------------------------------------------------
+                } else {
+                    alert("❌ Eroare la trimiterea emailului. Te rugăm să încerci din nou.");
+                }
+            } catch(e) {
+                console.error(e);
+                alert("❌ Eroare de conexiune la server.");
+            } finally {
+                document.getElementById('loadingOverlay').style.display = 'none';
+            }
+        }
+    }
+    {% endif %}
 
     autoDetectProgram();
 

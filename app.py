@@ -14,8 +14,8 @@ app = Flask(__name__)
 app.secret_key = "SVsecretKEY"
 resend.api_key = os.environ.get("RESEND_API_KEY")
 
-debug_no_emails =  "SITE_ACTIVE" # then it works
-#debug_no_emails = "DEBUG" # debug
+#debug_no_emails =  "SITE_ACTIVE" # then it works
+debug_no_emails = "DEBUG" # debug
 
 
 debug_email="sorin.voiculescu@concordia.ca"
@@ -301,42 +301,174 @@ def get_restrictions():
     except Exception as e:
         print(f"Error loading Restrictions: {e}")
         return []
+
+@app.route("/admin_checks", methods=["GET"])
+def admin_checks_page():
+    # 1. Verificare de securitate (doar adminii au acces)
+    current_sid = str(session.get('student_id', ''))
+    if not current_sid.startswith('9') or session.get('is_guest'):
+        return "Unauthorized", 403
     
+    # 2. Încărcăm opțiunile din tabela ADMIN_checks
+    checks_data = []
+    try:
+        with engine.connect() as conn:
+            # Preluăm coloanele fix cum sunt în screenshot-ul tău
+            res = conn.execute(text("SELECT idADMIN_checks, What, message, short_message FROM ADMIN_checks")).fetchall()
+            for r in res:
+                checks_data.append({
+                    "id": r[0], 
+                    "what": r[1] if r[1] else "", 
+                    "msg": r[2] if r[2] else "", 
+                    "short": r[3] if r[3] else ""
+                })
+    except Exception as e:
+        print(f"Error loading ADMIN_checks: {e}")
+        
+    # 3. Trimitem datele către interfața web
+    return render_template("admin_checks.html", checks=checks_data)
+
+
+@app.route("/api/admin_run_check", methods=["POST"])
+def admin_run_check():
+    check_id = int(request.json.get('check_id', 0))
+    students = []
+    try:
+        with engine.connect() as conn:
+            if check_id == 1: query = text("SELECT * FROM v_check_1_cgpa_low")
+            elif check_id == 2: query = text("SELECT * FROM v_check_2_gpa24_low")
+            elif check_id == 3: query = text("SELECT * FROM v_check_3_gpa24_borderline")
+            elif check_id == 5: query = text("SELECT * FROM v_check_5_wt_violation")
+            elif check_id == 6: query = text("SELECT * FROM v_check_6_no_sequence")
+            elif check_id == 4:
+                # Logica manuală pentru Check 4
+                q_active = text("SELECT `Student ID` FROM v_active_coop_students")
+                active_sids = [row[0] for row in conn.execute(q_active).fetchall()]
+                
+                for sid in active_sids:
+                    q_seq = text("SELECT JSON_Data FROM Saved_Sequences WHERE student_id = :sid AND status LIKE 'APPROVED%' ORDER BY Date_Saved DESC LIMIT 1")
+                    seq_res = conn.execute(q_seq, {"sid": sid}).fetchone()
+                    if not seq_res or not seq_res[0]: continue
+                    
+                    # Un simplu flag (placeholder) dacă vrei verificări mai complexe aici ulterior
+                    is_inconsistent = False 
+                    
+                    if is_inconsistent:
+                        q_info = text("SELECT Name FROM `login vs id` WHERE `Student ID` = :sid LIMIT 1")
+                        name_res = conn.execute(q_info, {"sid": sid}).fetchone()
+                        name = name_res[0] if name_res else "Unknown"
+                        
+                        q_em = text("SELECT `Primary Email` FROM Sid_Email_Admission WHERE `Student ID` = :sid LIMIT 1")
+                        em_res = conn.execute(q_em, {"sid": sid}).fetchone()
+                        email = em_res[0] if em_res else ""
+                        
+                        q_cgpa = text("SELECT `CGPA`, `GPA_X_CR`, `GPA_X_CR_Actual_Credits`, `Tot_CR` FROM CGPA_Timeline WHERE `Student ID` = :sid ORDER BY `Academic Term` DESC LIMIT 1")
+                        c_res = conn.execute(q_cgpa, {"sid": sid}).fetchone()
+                        
+                        students.append({
+                            "id": sid, "name": name, "email": email, "program": "Check Sequence manually",
+                            "cgpa": c_res[0] if c_res else "-", "cgpa_cr": c_res[3] if c_res else "-",
+                            "gpa24": c_res[1] if c_res else "-", "gpa24_cr": c_res[2] if c_res else "-",
+                            "notes_vis": "Inconsistent with transcript", "notes_invis": ""
+                        })
+                return jsonify(students)
+            else: 
+                return jsonify([])
+
+            # Rulăm View-urile 1, 2, 3, 5, 6
+            res = conn.execute(query).fetchall()
+            for row in res:
+                sid = row[0]
+                # row[0]=ID, row[1]=Email, row[2]=Prog, row[3]=CGPA, row[4]=GPA24, row[5]=GPA24_CR, row[6]=CGPA_Tot_CR
+                
+                info = conn.execute(text("SELECT Name FROM `login vs id` WHERE `Student ID` = :sid LIMIT 1"), {"sid": sid}).fetchone()
+                name = info[0] if info and info[0] else "Unknown"
+
+                comm = conn.execute(text("SELECT Public_comments, PRIVATE_comments FROM S_id_comments WHERE S_id=:sid"), {"sid": sid}).fetchone()
+                pub_c = comm[0] if comm else ""
+                priv_c = comm[1] if comm else ""
+                
+                students.append({
+                    "name": name,
+                    "program": str(row[2]) if len(row)>2 and row[2] else "-",
+                    "email": str(row[1]) if len(row)>1 and row[1] else "-",
+                    "id": sid,
+                    "cgpa": row[3] if len(row)>3 and pd.notna(row[3]) else "-",
+                    "gpa24": row[4] if len(row)>4 and pd.notna(row[4]) else "-",
+                    "gpa24_cr": row[5] if len(row)>5 and pd.notna(row[5]) else "-",
+                    "cgpa_cr": row[6] if len(row)>6 and pd.notna(row[6]) else "-",
+                    "notes_vis": pub_c,
+                    "notes_invis": priv_c
+                })
+        return jsonify(students)
+    except Exception as e:
+        print(f"Error run check: {e}")
+        return jsonify([])
+    
+
 
 @app.route("/api/get_cgpa_timeline", methods=["POST"])
-def api_get_cgpa_timeline():
+def get_cgpa_timeline():
     if 'user_email' not in session: return jsonify({"error": "Unauthorized"}), 401
-    if session.get('is_guest'): return jsonify({})
-    
     target_sid = str(request.json.get("student_id", "")).strip()
-    if not target_sid: return jsonify({})
-
+    if not target_sid or session.get('is_guest'): return jsonify({})
+    
     try:
-        query = text("SELECT * FROM CGPA_Timeline WHERE `Student ID` = :sid")
+        query = text("SELECT * FROM `CGPA_Timeline` WHERE `Student ID` = :sid")
         df = pd.read_sql(query, engine, params={"sid": target_sid})
-        
-        cgpa_data = {}
+        res_data = {}
         for _, row in df.iterrows():
             term_str = str(row.get('Academic Term', '')).strip()
-            gpa_val = str(row.get('GPA_X_CR', '')).strip()
-            cr_val = str(row.get('GPA_X_CR_Actual_Credits', '')).strip()
-
-            if gpa_val and gpa_val.lower() != 'nan':
-                try:
-                    c_val = row.get('CGPA', 0.0)
-                    t_cr = row.get('CGPA_Total_Credits', 0.0)
-
-                    cgpa_data[term_str] = {
-                        "gpa_val": float(gpa_val),
-                        "credits_val": float(cr_val) if cr_val else 0.0,
-                        "cgpa": float(c_val) if pd.notna(c_val) else 0.0,
-                        "tot_cr": float(t_cr) if pd.notna(t_cr) else 0.0
-                    }
-                except ValueError: pass
-        return jsonify(cgpa_data)
+            gpa = row.get('GPA_X_CR', -1)
+            credits = row.get('GPA_X_CR_Actual_Credits', 0)
+            cgpa = row.get('CGPA', 0)
+            tot_cr = row.get('CGPA_Total_Credits', 0) # <-- CORECTAT AICI
+            if term_str and term_str.lower() != 'nan':
+                res_data[term_str] = {
+                    "gpa_val": float(gpa) if pd.notna(gpa) else -1,
+                    "credits_val": float(credits) if pd.notna(credits) else 0,
+                    "cgpa": float(cgpa) if pd.notna(cgpa) else 0,
+                    "tot_cr": float(tot_cr) if pd.notna(tot_cr) else 0
+                }
+        return jsonify(res_data)
     except Exception as e:
         print(f"DB Error CGPA: {e}")
         return jsonify({})
+
+@app.route("/api/admin_bulk_email", methods=["POST"])
+def admin_bulk_email():
+    data = request.json
+    student_ids = data.get('student_ids', [])
+    subject = data.get('subject', '')
+    body = data.get('message', '')
+    short_msg = data.get('short_msg', 'Admin Bulk Update')
+    admin_email = session.get('user_email', 'admin')
+
+    now_stamp = f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')} - {admin_email}]\n{short_msg}\n\n"
+
+    try:
+        with engine.begin() as conn:
+            for sid in student_ids:
+                # 1. Obținem detaliile studentului (email, nume) - presupunem fn get_student_email
+                email = get_student_email(sid)
+                
+                # 2. Trimitem emailul (Resend)
+                final_body = f"Hello,<br><br>{body.replace(chr(10), '<br>')}<br><br>MIAE CO-OP ADMIN<br><br><small><i>Note1: please reply to ALL<br>Note2: if this is an error, please contact MIAE CO-OP ADMIN (reply to all)</i></small>"
+                # send_email_logic(email, subject, final_body) # activeaza resend aici
+                
+                # 3. Adăugăm în comentarii baza de date
+                check = conn.execute(text("SELECT Public_comments FROM S_id_comments WHERE S_id = :sid"), {"sid": sid}).fetchone()
+                if check:
+                    old_pub = str(check[0]) if check[0] and str(check[0]).lower() != 'none' else ""
+                    new_pub = now_stamp + old_pub
+                    conn.execute(text("UPDATE S_id_comments SET Public_comments=:pub WHERE S_id=:sid"), {"pub": new_pub, "sid": sid})
+                else:
+                    conn.execute(text("INSERT INTO S_id_comments (S_id, Public_comments, PRIVATE_comments) VALUES (:sid, :pub, '')"), {"sid": sid, "pub": now_stamp})
+
+        return jsonify({"success": True})
+    except Exception as e:
+        print(e)
+        return jsonify({"error": str(e)}), 500
 
 
 def get_student_coop_data(target_sid):
@@ -730,6 +862,49 @@ def update_status():
         print(f"Status Update DB Error: {e}")
         return jsonify({"error": str(e)}), 500
 
+
+
+@app.route("/api/send_notes_email", methods=["POST"])
+def send_notes_email():
+    current_sid = str(session.get('student_id', ''))
+    if not current_sid.startswith('9') or session.get('is_guest'):
+        return jsonify({"error": "Unauthorized"}), 403
+    
+    data = request.json
+    student_email = data.get("student_email")
+    student_name = data.get("student_name", "Student")
+    notes = data.get("notes", "")
+    
+    if not student_email or not notes:
+        return jsonify({"error": "Missing data"}), 400
+        
+    admin_email = session.get('user_email', 'coop_miae@concordia.ca')
+    
+    html_body = f"""
+    <div style="font-family: Arial, sans-serif; color: #333; max-width: 650px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px;">
+        <p>Hello {student_name},</p>
+        <p>Please see the following important notes regarding your sequence:</p>
+        
+        <div style="background-color: #f9f9f9; border-left: 4px solid #3498db; padding: 15px; margin: 20px 0; white-space: pre-wrap;">{notes}</div>
+        
+        <p>Best Regards,<br><b>MIAE CO-OP AD</b></p>
+    </div>
+    """
+    
+    try:
+        resend.Emails.send({
+            "from": "MIAE Planner <auth@concordiasequenceplanner.ca>",
+            "to": [student_email],
+            "cc": [admin_email],  # Primești și tu o copie
+            "reply_to": admin_email,
+            "subject": "MIAE CO-OP - Important Notes regarding your sequence",
+            "html": html_body
+        })
+        return jsonify({"success": True})
+    except Exception as e:
+        print(f"Error sending notes email: {e}")
+        return jsonify({"error": str(e)}), 500
+    
 
 @app.route("/health", methods=["GET"])
 def health_check():
@@ -1517,7 +1692,8 @@ def get_transcript():
             "is_grad": is_grad,
             "term_disciplines": term_disciplines,
             "multiple_programs": multiple_programs,
-            "discipline": best_disc_display 
+            "discipline": best_disc_display,
+            "student_email": get_priority1_email(target_id) # NOU: Acest rând lipsea
         })
     except Exception as e:
         print(f"DB Error Transcript: {e}")

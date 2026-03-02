@@ -373,9 +373,12 @@ def get_student_coop_data(target_sid):
                 tw_lower = tw_ok.lower()
                 is_cutoff = False
                 
+                # --- NOU: Ignorăm mesajele despre "reduced course load" pentru a nu tăia termenii CO-OP viitori ---
                 if tw_lower and tw_lower != 'nan' and tw_lower != 'ok' and tw_lower != 'none':
-                    is_cutoff = True
-                    if score < cutoff_score: cutoff_score = score 
+                    if 'withdr'  in tw_lower:
+                        is_cutoff = True
+                        if score < cutoff_score: cutoff_score = score
+
 
                 ws_raw = str(row.get('WS', '')).replace('_NF', ' not found')
                 if ws_raw.lower() == 'nan': ws_raw = ""
@@ -459,6 +462,14 @@ def get_comments():
 
 @app.route("/update_status", methods=["POST"])
 def update_status():
+    # --- BLINDAJUL DE SECURITATE ---
+    current_sid = str(session.get('student_id', ''))
+    is_guest = session.get('is_guest', False)
+    
+    if not (current_sid.startswith('9') and not is_guest):
+        return jsonify({"error": "Unauthorized access. Only admins can do this."}), 403
+    # -------------------------------
+
     if not str(session.get('student_id', '')).startswith('9'): 
         return jsonify({"error": "Unauthorized"}), 403
         

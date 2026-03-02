@@ -3520,6 +3520,7 @@
     async function sendNotesEmail(studentEmail, studentName, studentId) {
         let notesEl = document.getElementById('publicComments');
         let notes = notesEl ? notesEl.value.trim() : "";
+        let program = document.getElementById('programSelect') ? document.getElementById('programSelect').value : "";
         
         if (!notes) {
             alert("⚠️ Nu există niciun text în căsuța 'ADMIN comments (Visible to Student)' pe care să-l trimitem!");
@@ -3535,6 +3536,8 @@
                     body: JSON.stringify({
                         student_email: studentEmail,
                         student_name: studentName,
+                        student_id: studentId,   // <-- NOU
+                        program: program,        // <-- NOU
                         notes: notes
                     })
                 });
@@ -3542,16 +3545,14 @@
                 if (res.ok) {
                     alert("✅ Email trimis cu succes!");
                     
-                    // --- NOU: Adăugăm data și ora la începutul căsuței și salvăm automat ---
                     let now = new Date();
                     let stamp = `[Email sent to student on: ${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}]\n`;
                     
-                    notesEl.value = stamp + notesEl.value; // Adaugă textul la început
+                    notesEl.value = stamp + notesEl.value; 
                     notesEl.style.height = 'auto';
-                    notesEl.style.height = notesEl.scrollHeight + 'px'; // Ajustează înălțimea căsuței
+                    notesEl.style.height = notesEl.scrollHeight + 'px'; 
                     
-                    autoSaveComments(notesEl); // Salvează modificarea în baza de date
-                    // ------------------------------------------------------------------------
+                    autoSaveComments(notesEl); 
                 } else {
                     alert("❌ Eroare la trimiterea emailului. Te rugăm să încerci din nou.");
                 }

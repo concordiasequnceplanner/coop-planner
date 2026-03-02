@@ -1074,7 +1074,8 @@ def get_pending_approvals():
                     "student_id": str(r.get('student_id', '')),
                     "student_name": r.get('student_id_name', ''),
                     "status": r.get('status', ''),
-                    "justification": r.get('student_comments', '')
+                    "justification": r.get('student_comments', ''),
+                    "cos_reason": int(float(r.get('cos_reason', 0))) if pd.notna(r.get('cos_reason')) else 0 # <-- NOU
                 })
     except Exception as e:
         print(f"Pending List DB Error: {e}")
@@ -1096,6 +1097,8 @@ def save_sequence():
         
         status = data.get('status', 'SAVED DRAFT') 
         justification = data.get('justification', '')
+
+        cos_reason = int(data.get('cos_reason', 0)) # NOU: Preluăm motivul
         
         current_user_id = str(session.get('student_id', ''))
         is_guest = session.get('is_guest', False)
@@ -1131,15 +1134,16 @@ def save_sequence():
         with engine.begin() as conn:
             query = text("""
                 INSERT INTO Saved_Sequences 
-                (Student_Email, Sequence_Name, Program, JSON_Data, Date_Saved, Term_Json_data, sequence_Json_data, status, student_comments, student_id, student_id_name)
-                VALUES (:em, :name, :prog, :jdata, :dsaved, :tdata, :sdata, :stat, :scomm, :sid, :sidname)
+                (Student_Email, Sequence_Name, Program, JSON_Data, Date_Saved, Term_Json_data, sequence_Json_data, status, student_comments, student_id, student_id_name, cos_reason)
+                VALUES (:em, :name, :prog, :jdata, :dsaved, :tdata, :sdata, :stat, :scomm, :sid, :sidname, :cosr)
             """)
             conn.execute(query, {
                 "em": email_to_save, "name": name, "prog": program, "jdata": seq_json, "dsaved": timestamp, 
                 "tdata": term_json, "sdata": settings_json, "stat": status, "scomm": justification, 
-                "sid": target_id, "sidname": current_name
+                "sid": target_id, "sidname": current_name, "cosr": cos_reason
             })
-        
+
+
         if status == "PENDING APPROVAL":
             # --- NOU: Extragem DOAR partea de după MY JUSTIFICATION: ---
             student_answer_clean = justification
@@ -1291,6 +1295,20 @@ def save_sequence():
                     for err_html in val_errors:
                         val_errors_html += f"<li style='margin-bottom: 4px;'>{err_html}</li>"
                 val_errors_html += "</ul>"
+                
+                # NOU: Traducem ID-ul în text pentru E-mail
+                reasons_map = {
+                    1: "1. I have not yet started / I was asked by COOP AD but there are no changes",
+                    2: "2. I want to reduce summer load",
+                    3: "3. I want to reduce overall load",
+                    4: "4. Off sequence (e.g., must repeat course)",
+                    5: "5. I couldn't find a place in one/several courses I had scheduled",
+                    6: "6. I have / will change academic program (e.g. transfer)",
+                    7: "7. I was not placed for the coming work term (did not find an internship)",
+                    8: "8. My WT is or will be extended",
+                    9: "9. Other personal reasons: see my comments above"
+                }
+                reason_text = reasons_map.get(cos_reason, "Not specified")
 
                 html_body = f"""
                 <div style="font-family: Arial, sans-serif; color: #333; max-width: 750px; margin: 0 auto; border: 1px solid #e0e0e0; padding: 20px; border-radius: 8px;">
@@ -1299,6 +1317,7 @@ def save_sequence():
                     <p><b>Student Name:</b> {current_name}</p>
                     <p><b>Student ID:</b> {target_id}</p>
                     <p><b>Program:</b> {program}</p>
+                    <p><b>Reason for change:</b> <span style="color: #c0392b; font-weight: bold;">{reason_text}</span></p>
                     
                     <div style="background-color: #f0f7ff; border-left: 4px solid #3498db; padding: 10px; margin: 15px 0;">
                         {wt_html}
@@ -1377,8 +1396,11 @@ def load_sequences():
                     "Settings_Data": safe_json(r.get('sequence_Json_data')),
                     "Status": r.get('status', ''),
                     "Student_ID": str(r.get('student_id', '')),
-                    "Student_Name": r.get('student_id_name', '')
+                    "Student_Name": r.get('student_id_name', ''),
+                    "cos_reason": int(float(r.get('cos_reason', 0))) if pd.notna(r.get('cos_reason')) else 0,
+                    "justification": r.get('student_comments', '')
                 })
+
         return jsonify({"sequences": my_recs}) 
     except Exception as e:
         print(f"Load Error DB: {e}")
@@ -1657,8 +1679,18 @@ def generate():
         if rep_id in all_courses_dict and rep_id not in taken_courses: remaining.add(rep_id)
 
     unallocated_wts = [c for c in unallocated_ids if 'WT' in c.upper()]
-    if unallocated_wts:
-        return jsonify({"error": "Please place all Work Terms (WT) on the grid before generating."})
+    unallocated_ecps = [c for c in unallocated_ids if c in all_courses_dict and any(x in str(all_courses_dict[c].get('CORE_TE', '')).upper() for x in ['ECP', 'GEN', 'ELECTIVE'])]
+    
+    if unallocated_wts or unallocated_ecps:
+        missing_items = []
+        if unallocated_wts: missing_items.append("Work Terms (WT)")
+        if unallocated_ecps: missing_items.append("ECP courses")
+        
+        msg = f"Please place all {' and '.join(missing_items)} on the grid before generating."
+        if unallocated_ecps:
+            msg += "\n\n💡 Friendly tip: Any ECPs you have already completed, or those that are exempted/not needed, can be comfortably placed in the Y0 zone!"
+            
+        return jsonify({"error": msg})
         
     all_wts_in_prog = sorted([c for c in all_courses_dict.keys() if 'WT' in c.upper()])
     

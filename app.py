@@ -152,7 +152,7 @@ def send_otp_email(recipient, otp):
             "html": f"<h2>Concordia MIAE</h2><p>Your login access code is: <strong style='font-size: 24px;'>{otp}</strong></p><p>This code is valid for 30 minutes.</p>",
             "reply_to": "coop_miae@concordia.ca"
         })
-        return True, "The email has been sent"
+        return True, "An email has been sent"
     except Exception as e:
         print(f"Resend Error: {e}")
         return False, str(e)
@@ -312,7 +312,7 @@ def api_get_cgpa_timeline():
     if not target_sid: return jsonify({})
 
     try:
-        query = text("SELECT * FROM `CGPA_Timeline` WHERE `Student ID` = :sid")
+        query = text("SELECT * FROM CGPA_Timeline WHERE `Student ID` = :sid")
         df = pd.read_sql(query, engine, params={"sid": target_sid})
         
         cgpa_data = {}
@@ -754,7 +754,19 @@ def index():
     current_sid = str(session.get('student_id', ''))
     is_guest = session.get('is_guest', False)
     is_power_user = current_sid.startswith('9') and not is_guest
-    viewing_sid = session.get('admin_view_sid', current_sid) if not is_guest else f"{current_sid} - GUEST"
+    viewing_sid = session.get('admin_view_sid', current_sid) if not is_guest else current_sid
+    
+    viewing_name = session.get('student_name', '')
+    if is_guest:
+        viewing_name = session.get('student_name', 'Guest')
+    elif is_power_user and viewing_sid != current_sid:
+        try:
+            with engine.connect() as conn:
+                res_name = conn.execute(text("SELECT `Name` FROM `login vs id` WHERE `Student ID` = :sid LIMIT 1"), {"sid": viewing_sid}).fetchone()
+                if res_name and res_name[0]: viewing_name = str(res_name[0]).strip()
+                else: viewing_name = "Unknown Student"
+        except: pass
+        
     coop_data = get_student_coop_data(viewing_sid) if not is_guest else {"found": False}
     
     pending_list = []
@@ -795,7 +807,8 @@ def index():
                            is_power_user=is_power_user, viewing_sid=viewing_sid, pending_list=pending_list,
                            program_ft_credits_json=json.dumps(ft_credits_dict),
                            program_gpa_thresholds_json=json.dumps(gpa_thresholds_dict),
-                           restrictions_json=json.dumps(restrictions_list))
+                           restrictions_json=json.dumps(restrictions_list),
+                           viewing_name=viewing_name)
 
 
 
@@ -863,6 +876,7 @@ def handle_otp_logic(email, sid, is_guest=False, guest_name=''):
         print(f"DB Error OTP: {e}")
 
 
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
@@ -924,10 +938,16 @@ def login():
                     
                     return render_template("login.html", ask_guest_info=True, email=email, error=error_msg)
 
-            session['user_email'] = email
+            # ==============================================================
+            # MODIFICAREA AICI: Sincronizarea numelor variabilelor de sesiune
+            # ==============================================================
+            session['email'] = email              # Schimbat din 'user_email'
             session['student_id'] = guest_sid
+            session['student_name'] = guest_name  # Schimbat din 'guest_name'
             session['is_guest'] = True
-            session['guest_name'] = guest_name
+            session['authenticated'] = True       # Permitem accesul mai departe
+            session['is_power_user'] = False      # Un guest NU poate fi admin niciodată
+            # ==============================================================
             
             return redirect(url_for('index'))
 
@@ -966,11 +986,35 @@ def verify():
                     return render_template("verify.html", error="Code expired! Please request a new one.", message=msg)
                 
                 if user_otp == stored_otp:
-                    conn.execute(text("UPDATE logins SET used = 1 WHERE email = :email AND login_code = :code"), {"email": email, "code": stored_otp})
-                    session['user_email'] = email
-                    session['student_id'] = session.get('temp_sid', '')
-                    session['is_guest'] = session.get('temp_is_guest', False)
-                    session['guest_name'] = session.get('temp_guest_name', '')
+                    #conn.execute(text("UPDATE logins SET used = 1 WHERE email = :email AND login_code = :code"), {"email": email, "code": stored_otp})
+                    
+                    # --- NOU: Extragem Student ID și Name din noul View ---
+                    is_guest_temp = session.get('temp_is_guest', False)
+                    
+                    if not is_guest_temp:
+                        # Dacă e student oficial, luăm Numele și ID-ul din View!
+                        query_view = text("SELECT `Student ID`, `Name` FROM `login vs id` WHERE `email` = :em LIMIT 1")
+                        user_data = conn.execute(query_view, {"em": email}).fetchone()
+                        
+                        if user_data and user_data[0]:
+                            session['student_id'] = str(user_data[0]).strip()
+                            session['student_name'] = str(user_data[1]).strip() if user_data[1] else ""
+                            session['is_guest'] = False
+                        else:
+                            session['student_id'] = session.get('temp_sid', '')
+                            session['student_name'] = ""
+                            session['is_guest'] = False
+                    else:
+                        # Dacă e Guest, folosim datele temporare din formular
+                        session['student_id'] = session.get('temp_sid', '')
+                        session['student_name'] = session.get('temp_guest_name', '')
+                        session['is_guest'] = True
+                    
+                    session['email'] = email
+                    session['user_email'] = email # Păstrat pt compatibilitate
+                    session['authenticated'] = True
+                    session['is_power_user'] = session['student_id'].startswith('9') and not session['is_guest']
+                    
                     session.pop('otp_message', None) 
                     return redirect(url_for('index'))
                 else:
@@ -1056,19 +1100,31 @@ def save_sequence():
         current_user_id = str(session.get('student_id', ''))
         is_guest = session.get('is_guest', False)
         is_power_user = current_user_id.startswith('9') and not is_guest
-        student_name_ui = data.get('student_name', '').strip()
+        current_user_id = str(session.get('student_id', ''))
+        is_guest = session.get('is_guest', False)
+        is_power_user = current_user_id.startswith('9') and not is_guest
         
-        if is_guest:
-            current_name = f"GUEST - {session.get('guest_name', '')}"
+        # --- NOU: Preluăm datele PERFECTE de salvare direct din Sesiune/View ---
+        if target_id == current_user_id:
+            # Studentul salvează propria secvență (datele vin curat din login)
+            current_name = f"GUEST - {session.get('student_name', '')}" if is_guest else session.get('student_name', 'Unknown')
+            email_to_save = session.get('email', session.get('user_email'))
         else:
-            current_name = student_name_ui if student_name_ui else "Official Student"
-        
-        email_to_save = session['user_email']
-        
-        if is_power_user and target_id != current_user_id:
+            # Adminul salvează pentru un student -> Extragem Numele exact din VIEW!
             email_to_save = get_student_email(target_id, fallback_email=session['user_email'])
-            power_user_name = session.get('guest_name', 'Coordinator') if is_guest else session.get('user_email').split('@')[0]
-            current_name = "ADMIN (PowerUser)"
+            current_name = "ADMIN (PowerUser)" 
+            try:
+                with engine.connect() as conn:
+                    query_admin_view = text("SELECT `Name`, `email` FROM `login vs id` WHERE `Student ID` = :sid LIMIT 1")
+                    adm_data = conn.execute(query_admin_view, {"sid": target_id}).fetchone()
+                    if adm_data:
+                        current_name = str(adm_data[0]).strip() if adm_data[0] else current_name
+                        email_to_save = str(adm_data[1]).strip() if adm_data[1] else email_to_save
+            except Exception as e:
+                print(f"Eroare extragere view pentru admin: {e}")
+        # -------------------------------------------------------------------------
+        
+       
         
         timestamp = str(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         
@@ -1294,12 +1350,15 @@ def load_sequences():
         target_email = session['user_email'].lower().strip()
         
         with engine.connect() as conn:
+            # --- NOU: Ignorăm email-ul complet și încărcăm STRICT după Student ID ---
             if is_power_user and viewing_sid and viewing_sid != "ADMIN":
-                query = text("SELECT * FROM Saved_Sequences WHERE student_id = :val ORDER BY Date_Saved DESC")
-                df = pd.read_sql(query, conn, params={"val": viewing_sid})
+                target_to_load = viewing_sid
             else:
-                query = text("SELECT * FROM Saved_Sequences WHERE LOWER(Student_Email) = :val ORDER BY Date_Saved DESC")
-                df = pd.read_sql(query, conn, params={"val": target_email})
+                target_to_load = current_sid 
+                
+            query = text("SELECT * FROM Saved_Sequences WHERE student_id = :val ORDER BY Date_Saved DESC")
+            df = pd.read_sql(query, conn, params={"val": target_to_load})
+            # ------------------------------------------------------------------------
                 
             my_recs = []
             for _, r in df.iterrows():
@@ -1337,7 +1396,7 @@ def get_transcript():
         return jsonify({"transcript": [], "student_name": "", "suggested_program": ""})
 
     try:
-        query = text("SELECT * FROM `Transcripts` WHERE `Student ID` = :sid")
+        query = text("SELECT * FROM Transcripts WHERE `Student ID` = :sid")
         df = pd.read_sql(query, engine, params={"sid": target_id})
         
         if df.empty:

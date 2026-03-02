@@ -7,7 +7,7 @@
     <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 20px; background: #fff; border-bottom: 1px solid #eee;">
         
         <div style="font-size: 15px; font-weight: bold; color: #e67e22; background: #fff3e0; padding: 6px 15px; border-radius: 20px; border: 1px solid #ffe0b2;">
-            👁️ Viewing: <span id="displayViewingSid">{{ viewing_sid if viewing_sid else session.get('student_id', '') }}</span>
+            👁️ Viewing: <span id="displayViewingSid" data-sid="{{ viewing_sid if viewing_sid else session.get('student_id', '') }}" data-name="">{{ viewing_sid if viewing_sid else session.get('student_id', '') }}</span>
         </div>
 
         <div style="display: flex; align-items: center; gap: 20px;">
@@ -406,8 +406,10 @@
         
         
         {% if is_power_user %}
-           <button onclick="processStatusAction('APPROVED')" id="btnApprove" style="display:none; width:100%; background:#27ae60; color:white; border:none; padding:12px; border-radius:4px; font-weight:bold; font-size:14px; cursor:pointer; box-shadow:0 4px 6px rgba(0,0,0,0.1);">✅ APPROVE SEQUENCE</button>
-                <div id="approveCreditsInfo" style="text-align: center; font-size: 12px; color: #555; margin-top: 8px; font-weight: bold; display:none;"></div>
+            <div id="approveWrapper" style="display:none; margin-top: 20px; padding: 15px; background: #e8f6f3; border: 1px solid #a3e4d7; border-radius: 8px; text-align: center;">
+                <button onclick="processStatusAction('APPROVED')" id="btnApprove" style="width:100%; background:#27ae60; color:white; border:none; padding:12px; border-radius:4px; font-weight:bold; font-size:14px; cursor:pointer; box-shadow:0 4px 6px rgba(0,0,0,0.1);">✅ APPROVE SEQUENCE</button>
+                <div id="approveCreditsInfo" style="margin-top: 8px; font-size: 12px; color: #2c3e50; font-weight: bold;"></div>
+            </div>
         {% endif %}
 
  
@@ -458,7 +460,19 @@
     let termAttributes = {};
     let allProgramOptions = []; // NOU: Stocăm toate programele din Excel pentru a le putea filtra
 
-    
+    function getSafeStudentData() {
+        let el = document.getElementById('displayViewingSid');
+        if (!el) return { sid: "", name: "" };
+        let sid = el.getAttribute('data-sid') || "";
+        let name = el.getAttribute('data-name') || "";
+        
+        // Fallback de siguranță în caz că atributele nu s-au încărcat încă
+        if (!sid) sid = el.innerText.split('-')[0].trim();
+        if (!name && el.innerText.includes('-')) name = el.innerText.split('-')[1].split('\n')[0].trim();
+        return { sid: sid, name: name };
+    }
+
+
     const programGpaThresholds = {{ program_gpa_thresholds_json | safe }}; 
     const serverRestrictions = {{ restrictions_json | safe }}; // NOU: Regulile incarcate de la server
     let studentCGPAData = {}; 
@@ -551,7 +565,7 @@
 
             let currentSid = "";
             let displayViewingSid = document.getElementById('displayViewingSid');
-            if (displayViewingSid) currentSid = displayViewingSid.innerText.split('-')[0].trim();
+            currentSid = getSafeStudentData().sid;
 
             let payload = {
                 name: "Auto-Saved on LogOff",
@@ -708,9 +722,7 @@
 
         let currentSid = "";
         let displayViewingSid = document.getElementById('displayViewingSid');
-        if (displayViewingSid) {
-            currentSid = displayViewingSid.innerText.split('-')[0].trim();
-        }
+        currentSid = getSafeStudentData().sid;
 
         try {
             const res = await fetch('/save_sequence', {
@@ -769,6 +781,23 @@
                 }
                 
                 await loadSequenceData(selected.JSON_Data, selected.Term_Data, selected.Settings_Data, selected.Program);
+                
+                let appWrap = document.getElementById('approveWrapper');
+                let btnRew = document.getElementById('btnRework');
+                
+                if (selected.Status === 'PENDING APPROVAL') {
+                    if (appWrap) appWrap.style.display = 'block'; // Aprindem tot chenarul verde!
+                    if (btnRew) btnRew.style.display = 'inline-block';
+                    
+                    // Setăm variabilele globale
+                    windowLoadedSeqTimestamp = selected.Date_Saved;
+                    windowLoadedSeqTitle = selected.Sequence_Name;
+                    windowLoadedSeqRowIndex = selected.Row_Index || null;
+                    windowLoadedSeqEmail = selected.Student_Email || "";
+                } else {
+                    if (appWrap) appWrap.style.display = 'none';
+                    if (btnRew) btnRew.style.display = 'none';
+                }
             }
         } else {
             alert("No saved sequences found.");
@@ -1529,6 +1558,7 @@
             if (data.student_name) {
                 let displaySid = document.getElementById('displayViewingSid');
                 if (displaySid) {
+                    displaySid.setAttribute('data-name', data.student_name); // Salvăm numele corect
                     let discText = data.discipline ? `<br><span style="font-size:11px; font-weight:normal; color:#e67e22;">${data.discipline}</span>` : "";
                     displaySid.innerHTML = currentSid + " - " + data.student_name + discText;
                 }
@@ -2540,7 +2570,6 @@
         let appInfo = document.getElementById('approveCreditsInfo');
         if (appInfo) {
             appInfo.innerHTML = infoText;
-            appInfo.style.display = document.getElementById('btnApprove').style.display;
         }
 
 
@@ -2713,14 +2742,8 @@
             }
         }
 
-        let currentSid = "";
-        let studentName = "";
-        let displayViewingSid = document.getElementById('displayViewingSid');
-        if (displayViewingSid) {
-            let parts = displayViewingSid.innerText.split('-');
-            currentSid = parts[0].trim();
-            if (parts.length > 1) studentName = parts[1].trim();
-        }
+        let currentSid = getSafeStudentData().sid;
+        let studentName = getSafeStudentData().name;
 
         let valErrorHTMLs = Array.from(document.querySelectorAll('#liveValidationList li')).map(li => li.innerHTML);
 
@@ -2765,14 +2788,8 @@
     }
 
     async function processStatusAction(status) {
-        let currentSid = "";
-        let studentName = "";
-        let displayViewingSid = document.getElementById('displayViewingSid');
-        if (displayViewingSid) {
-            let parts = displayViewingSid.innerText.split('-');
-            currentSid = parts[0].trim();
-            if (parts.length > 1) studentName = parts[1].trim();
-        }
+        let currentSid = getSafeStudentData().sid;
+        let studentName = getSafeStudentData().name;
 
         const program = document.getElementById('programSelect').value;
         const pubComment = document.getElementById('publicComments').value;
@@ -2993,13 +3010,18 @@
             studentCGPAData = {}; 
         }
 
-        await loadSequenceData(seqObj, termObj, settObj, fullData.program);
+       await loadSequenceData(seqObj, termObj, settObj, fullData.program);
         document.getElementById('pendingModal').style.display = 'none';
         
-        let appInfo = document.getElementById('approveCreditsInfo');
-        if (appInfo) appInfo.style.display = 'block';
+        // Aprindem corect panoul verde si butonul Rework
+        let appWrap = document.getElementById('approveWrapper');
+        if (appWrap) appWrap.style.display = 'block';
+        
+        let btnRew = document.getElementById('btnRework');
+        if (btnRew) btnRew.style.display = 'inline-block';
         
         let justText = document.getElementById('justificationText');
+
         if(justText) {
             justText.value = fullData.justification || "";
             if(fullData.justification) {
@@ -3143,7 +3165,7 @@
     async function autoSaveComments(element) {
         let currentSid = "";
         let displayViewingSid = document.getElementById('displayViewingSid');
-        if (displayViewingSid) currentSid = displayViewingSid.innerText.split('-')[0].trim();
+        currentSid = getSafeStudentData().sid;
         if (!currentSid || currentSid === "ADMIN") return;
 
         let pubEl = document.getElementById('publicComments');
@@ -3205,6 +3227,7 @@
             if (data.student_name) {
                 let displaySid = document.getElementById('displayViewingSid');
                 if (displaySid) {
+                    displaySid.setAttribute('data-name', data.student_name); // Salvăm numele corect
                     let discText = data.discipline ? `<br><span style="font-size:11px; font-weight:normal; color:#e67e22;">${data.discipline}</span>` : "";
                     displaySid.innerHTML = currentSid + " - " + data.student_name + discText;
                 }

@@ -436,6 +436,7 @@ def get_cgpa_timeline():
         return jsonify({})
 
 
+
 @app.route("/api/admin_bulk_email", methods=["POST"])
 def admin_bulk_email():
     data = request.json
@@ -450,14 +451,19 @@ def admin_bulk_email():
     try:
         with engine.begin() as conn:
             for sid in student_ids:
-                # 1. Obținem emailul studentului
                 email = get_student_email(sid)
                 
-                # Extragem și Numele studentului pentru salutul personalizat
                 name_res = conn.execute(text("SELECT `Name` FROM `login vs id` WHERE `Student ID` = :sid LIMIT 1"), {"sid": sid}).fetchone()
                 student_name = str(name_res[0]).strip() if name_res and name_res[0] else "Student"
                 
-                # 2. Construim și Trimitem emailul (Resend)
+                # --- NOU: Extragem Programul ca să rutăm corect la coordonator ---
+                prog_res = conn.execute(text("SELECT PROG_LINK FROM Transcripts WHERE `Student ID` = :sid ORDER BY `Academic Term` DESC LIMIT 1"), {"sid": sid}).fetchone()
+                program = str(prog_res[0]).strip() if prog_res and prog_res[0] else ""
+
+                # --- NOU: Apelăm logica oficială de rutare ---
+                priority1_email = get_priority1_email(sid)
+                recipients = get_email_recipients(program, sid, email, priority1_email, "REWORK")
+                
                 final_body = f"""
                 <div style="font-family: Arial, sans-serif; color: #333; font-size: 14px;">
                     <p>Hello {student_name},</p>
@@ -475,8 +481,9 @@ def admin_bulk_email():
                 try:
                     resend.Emails.send({
                         "from": "MIAE Planner <auth@concordiasequenceplanner.ca>",
-                        "to": [email],
-                        "cc": [admin_email],  # Primești și tu o copie pt siguranță
+                        "to": recipients.get("to", []),
+                        "cc": recipients.get("cc", []),
+                        "bcc": recipients.get("bcc", []),
                         "reply_to": admin_email,
                         "subject": subject,
                         "html": final_body
@@ -484,7 +491,6 @@ def admin_bulk_email():
                 except Exception as mail_err:
                     print(f"Failed to send bulk email to {email}: {mail_err}")
                 
-                # 3. Adăugăm în comentarii baza de date
                 check = conn.execute(text("SELECT Public_comments FROM S_id_comments WHERE S_id = :sid"), {"sid": sid}).fetchone()
                 if check:
                     old_pub = str(check[0]) if check[0] and str(check[0]).lower() != 'none' else ""
@@ -891,7 +897,6 @@ def update_status():
         return jsonify({"error": str(e)}), 500
 
 
-
 @app.route("/api/send_notes_email", methods=["POST"])
 def send_notes_email():
     current_sid = str(session.get('student_id', ''))
@@ -901,12 +906,18 @@ def send_notes_email():
     data = request.json
     student_email = data.get("student_email")
     student_name = data.get("student_name", "Student")
+    target_sid = data.get("student_id", "")
+    program = data.get("program", "")
     notes = data.get("notes", "")
     
     if not student_email or not notes:
         return jsonify({"error": "Missing data"}), 400
         
     admin_email = session.get('user_email', 'coop_miae@concordia.ca')
+    
+    # --- NOU: Apelăm logica oficială de rutare (TO = Student, CC = Admin, Sabrina, Coord) ---
+    priority1_email = get_priority1_email(target_sid)
+    recipients = get_email_recipients(program, target_sid, student_email, priority1_email, "REWORK")
     
     html_body = f"""
     <div style="font-family: Arial, sans-serif; color: #333; max-width: 650px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px;">
@@ -922,8 +933,9 @@ def send_notes_email():
     try:
         resend.Emails.send({
             "from": "MIAE Planner <auth@concordiasequenceplanner.ca>",
-            "to": [student_email],
-            "cc": [admin_email],  # Primești și tu o copie
+            "to": recipients.get("to", []),
+            "cc": recipients.get("cc", []),
+            "bcc": recipients.get("bcc", []),
             "reply_to": admin_email,
             "subject": "MIAE CO-OP - Important Notes regarding your sequence",
             "html": html_body

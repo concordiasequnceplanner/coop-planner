@@ -7,7 +7,7 @@
     <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 20px; background: #fff; border-bottom: 1px solid #eee;">
         
         <div style="font-size: 15px; font-weight: bold; color: #e67e22; background: #fff3e0; padding: 6px 15px; border-radius: 20px; border: 1px solid #ffe0b2;">
-            👁️ Viewing: <span id="displayViewingSid" data-sid="{{ viewing_sid if viewing_sid else session.get('student_id', '') }}" data-name="">{{ viewing_sid if viewing_sid else session.get('student_id', '') }}</span>
+            👁️ Viewing: <span id="displayViewingSid" data-sid="{{ viewing_sid }}" data-name="{{ viewing_name }}">{{ viewing_sid }}{% if viewing_name %} - {{ viewing_name }}{% endif %}</span>
         </div>
 
         <div style="display: flex; align-items: center; gap: 20px;">
@@ -766,7 +766,13 @@
                 
                 let displaySidEl = document.getElementById('displayViewingSid');
                 if (displaySidEl && selected.Student_ID) {
-                    displaySidEl.innerText = selected.Student_Name ? `${selected.Student_ID} - ${selected.Student_Name}` : selected.Student_ID;
+                    let safeSidStr = selected.Student_ID.toString().split('-')[0].trim();
+                    
+                    // ACTUALIZĂM SEIFUL ASCUNS
+                    displaySidEl.setAttribute('data-sid', safeSidStr);
+                    displaySidEl.setAttribute('data-name', selected.Student_Name || "");
+                    
+                    displaySidEl.innerText = selected.Student_Name ? `${safeSidStr} - ${selected.Student_Name}` : selected.Student_ID;
                 }
                 
                 let currentSid = selected.Student_ID || (displaySidEl ? displaySidEl.innerText.split('-')[0].trim() : "");
@@ -1555,14 +1561,18 @@
                 });
             }
 
-            if (data.student_name) {
-                let displaySid = document.getElementById('displayViewingSid');
-                if (displaySid) {
-                    displaySid.setAttribute('data-name', data.student_name); // Salvăm numele corect
-                    let discText = data.discipline ? `<br><span style="font-size:11px; font-weight:normal; color:#e67e22;">${data.discipline}</span>` : "";
-                    displaySid.innerHTML = currentSid + " - " + data.student_name + discText;
+            let displaySid = document.getElementById('displayViewingSid');
+            if (displaySid) {
+                let currentName = displaySid.getAttribute('data-name');
+                // Adaugă numele doar dacă e gol (protejăm numele de la Login/View)
+                if (!currentName && data.student_name) {
+                    displaySid.setAttribute('data-name', data.student_name);
+                    currentName = data.student_name;
                 }
+                let discText = data.discipline ? `<br><span style="font-size:11px; font-weight:normal; color:#e67e22;">${data.discipline}</span>` : "";
+                displaySid.innerHTML = currentSid + (currentName ? " - " + currentName : "") + discText;
             }
+
 
             if (!data.transcript) return;
             
@@ -2989,7 +2999,13 @@
 
         let displaySidEl = document.getElementById('displayViewingSid');
         if (displaySidEl) {
-            displaySidEl.innerText = fullData.student_name ? `${fullData.student_id} - ${fullData.student_name}` : fullData.student_id;
+            let safeSidStr = fullData.student_id ? fullData.student_id.toString().split('-')[0].trim() : "";
+            
+            // ACTUALIZĂM SEIFUL ASCUNS CA SĂ NU MAI FIE SUPRASCRIS
+            displaySidEl.setAttribute('data-sid', safeSidStr);
+            displaySidEl.setAttribute('data-name', fullData.student_name || "");
+            
+            displaySidEl.innerText = fullData.student_name ? `${safeSidStr} - ${fullData.student_name}` : safeSidStr;
         }
         
         // --- NOU: Actualizăm și căsuța de Admin Input pentru a nu se încurca ---
@@ -3224,13 +3240,16 @@
             await Promise.all([coopPromise, cgpaPromise]);
 
             // --- NOU: Afișăm numele și disciplina IMEDIAT, chiar dacă nu se auto-selectează programul ---
-            if (data.student_name) {
-                let displaySid = document.getElementById('displayViewingSid');
-                if (displaySid) {
-                    displaySid.setAttribute('data-name', data.student_name); // Salvăm numele corect
-                    let discText = data.discipline ? `<br><span style="font-size:11px; font-weight:normal; color:#e67e22;">${data.discipline}</span>` : "";
-                    displaySid.innerHTML = currentSid + " - " + data.student_name + discText;
+            let displaySid = document.getElementById('displayViewingSid');
+            if (displaySid) {
+                let currentName = displaySid.getAttribute('data-name');
+                // Adaugă numele doar dacă e gol (protejăm numele de la Login/View)
+                if (!currentName && data.student_name) {
+                    displaySid.setAttribute('data-name', data.student_name);
+                    currentName = data.student_name;
                 }
+                let discText = data.discipline ? `<br><span style="font-size:11px; font-weight:normal; color:#e67e22;">${data.discipline}</span>` : "";
+                displaySid.innerHTML = currentSid + (currentName ? " - " + currentName : "") + discText;
             }
             // ------------------------------------------------------------------------------------------
 

@@ -328,6 +328,8 @@ def admin_checks_page():
     # 3. Trimitem datele către interfața web
     return render_template("admin_checks.html", checks=checks_data)
 
+
+
 @app.route("/api/admin_run_check", methods=["POST"])
 def admin_run_check():
     check_id = int(request.json.get('check_id', 0))
@@ -336,7 +338,6 @@ def admin_run_check():
         with engine.connect() as conn:
             # =========================================================
             # OPTIMIZARE: Încărcăm totul în memorie (Python Dictionaries)
-            # Facem 2 interogări în loc de sute!
             # =========================================================
             names_res = conn.execute(text("SELECT `Student ID`, `Name` FROM `login vs id`")).fetchall()
             names_dict = {str(r[0]).strip(): r[1] for r in names_res if r[0]}
@@ -344,20 +345,133 @@ def admin_run_check():
             comm_res = conn.execute(text("SELECT `S_id`, `Public_comments`, `PRIVATE_comments` FROM `S_id_comments`")).fetchall()
             comm_dict = {str(r[0]).strip(): (r[1], r[2]) for r in comm_res if r[0]}
 
-            if check_id == 1: query = text("SELECT * FROM v_check_1_cgpa_low")
-            elif check_id == 2: query = text("SELECT * FROM v_check_2_gpa24_low")
-            elif check_id == 3: query = text("SELECT * FROM v_check_3_gpa24_borderline")
+            # --- Logica Absoluta de Timp & Formatare ---
+            from collections import defaultdict
+            import re
+            coop_query = text("""
+                SELECT `Student ID`, `Term`, `Term number Sx or Wx`
+                FROM `coop`
+                WHERE `Term number Sx or Wx` LIKE 'W-%'
+                AND LOWER(IFNULL(`Transferred Withdrawn OK`, '')) NOT LIKE '%withdr%'
+                AND (
+                    CAST(LEFT(TRIM(`Term`), 4) AS UNSIGNED) * 10 + 
+                    CASE WHEN `Term` LIKE '%Winter%' THEN 1 WHEN `Term` LIKE '%Summer%' THEN 2 WHEN `Term` LIKE '%Fall%' THEN 3 ELSE 0 END
+                ) >= (
+                    YEAR(CURRENT_DATE()) * 10 + 
+                    CASE 
+                        WHEN MONTH(CURRENT_DATE()) BETWEEN 1 AND 4 THEN 1
+                        WHEN MONTH(CURRENT_DATE()) BETWEEN 5 AND 8 THEN 2
+                        ELSE 3
+                    END
+                )
+            """)
+            coop_res = conn.execute(coop_query).fetchall()
+            coop_dict = defaultdict(list)
+            for r in coop_res:
+                s_id = str(r[0]).strip()
+                term_name = str(r[1]).strip()
+                wt_lbl = str(r[2]).strip()
+                
+                # REPARATIE: Extragem exact formatul "YYYY-YYYY Sezon" (ex: 2026-2027 Summer)
+                match_dual = re.search(r'(\d{4})-(\d{4})\s+(Winter|Summer|Fall)', term_name, re.IGNORECASE)
+                match_single = re.search(r'(\d{4})\s+(Winter|Summer|Fall)', term_name, re.IGNORECASE)
+                
+                score = 0
+                if match_dual:
+                    y1 = int(match_dual.group(1))
+                    y2 = int(match_dual.group(2))
+                    season = match_dual.group(3).capitalize()
+                    aca_year = f"{y1}-{y2}"
+                    
+                    if season == 'Summer':
+                        score = y1 * 10 + 2
+                    elif season == 'Fall':
+                        score = y1 * 10 + 3
+                    else: # Winter
+                        score = y2 * 10 + 1
+                        
+                    num_part = wt_lbl.replace('W', '')
+                    display_str = f"<b>{aca_year} {num_part} {season}</b>"
+                    
+                elif match_single:
+                    y = int(match_single.group(1))
+                    season = match_single.group(2).capitalize()
+                    
+                    if season == 'Winter':
+                        score = y * 10 + 1
+                        aca_year = f"{y-1}-{y}"
+                    elif season == 'Summer':
+                        score = y * 10 + 2
+                        aca_year = f"{y}-{y+1}"
+                    else: # Fall
+                        score = y * 10 + 3
+                        aca_year = f"{y}-{y+1}"
+                        
+                    num_part = wt_lbl.replace('W', 'WT ')
+                    display_str = f"<b>{aca_year} {season} {num_part} </b>"
+                else:
+                    display_str = f"<b>{wt_lbl}</b>: {term_name}"
+                    
+                # Salvam ca Tuple (ScorMatematic, Text) pentru a le putea sorta usor
+                coop_dict[s_id].append((score, display_str))
+            # =========================================================
+
+            if check_id == 1: query = text("SELECT * FROM v_check_1_cgpa_low where CGPA > 0 order by `c`.`CGPA_Total_Credits` desc ")
+            elif check_id == 2: query = text("SELECT * FROM v_check_2_gpa24_low where CGPA > 0  order by `c`.`CGPA_Total_Credits` desc " )
+            elif check_id == 3: query = text("SELECT * FROM v_check_3_gpa24_borderline where CGPA > 0  order by `c`.`CGPA_Total_Credits` desc ")
             elif check_id == 5: query = text("SELECT * FROM v_check_5_wt_violation")
             elif check_id == 6: query = text("SELECT * FROM v_check_6_no_sequence")
             elif check_id == 4:
                 q_active = text("SELECT `Student ID` FROM v_active_coop_students")
                 active_sids = [row[0] for row in conn.execute(q_active).fetchall()]
                 for sid in active_sids:
-                    q_seq = text("SELECT JSON_Data FROM Saved_Sequences WHERE student_id = :sid AND status LIKE 'APPROVED%' ORDER BY Date_Saved DESC LIMIT 1")
+                    q_seq = text("SELECT JSON_Data, sequence_Json_data FROM Saved_Sequences WHERE student_id = :sid AND status LIKE 'APPROVED%' ORDER BY Date_Saved DESC LIMIT 1")
                     seq_res = conn.execute(q_seq, {"sid": sid}).fetchone()
                     if not seq_res or not seq_res[0]: continue
                     
-                    is_inconsistent = False # Aici poți adăuga logica ta pe viitor
+                    is_inconsistent = False 
+                    
+                    try:
+                        seq_dict = json.loads(seq_res[0])
+                        sett_dict = json.loads(seq_res[1]) if seq_res[1] and str(seq_res[1]).lower() != 'none' else {}
+                        placed_dict = seq_dict.get('placed', seq_dict)
+                        
+                        q_trans = text("SELECT COURSE, GRADE FROM Transcripts WHERE `Student ID` = :sid")
+                        t_res = conn.execute(q_trans, {"sid": sid}).fetchall()
+                        passed_courses = []
+                        for r in t_res:
+                            c_name = str(r[0]).replace(" ", "").upper()
+                            grade = str(r[1]).strip().upper()
+                            if grade not in ['F', 'FNS', 'R', 'NR', 'DISC', 'DEF', 'DNC']:
+                                passed_courses.append(c_name)
+                        
+                        now = datetime.datetime.now()
+                        curr_score = now.year * 10 + (1 if now.month <= 4 else (2 if now.month <= 8 else 3))
+                        
+                        s_year = int(sett_dict.get('startYear', now.year))
+                        s_term = sett_dict.get('startTerm', 'Fall')
+                        base_y = s_year - 1 if s_term == 'Winter' else s_year
+                        
+                        for term_key, courses in placed_dict.items():
+                            if not courses or "Y0" in term_key: continue
+                            
+                            parts = term_key.split('_')
+                            if len(parts) >= 2:
+                                y_val = int(parts[0].replace('Y', ''))
+                                t_val = parts[1] 
+                                
+                                term_real_year = base_y + y_val if t_val == 'WIN' else base_y + y_val - 1
+                                t_score = term_real_year * 10 + (1 if t_val == 'WIN' else (2 if 'SUM' in t_val else 3))
+                                
+                                if t_score < curr_score:
+                                    for c in courses:
+                                        c_clean = c.replace(" ", "").upper()
+                                        if 'WT' not in c_clean and c_clean not in passed_courses:
+                                            is_inconsistent = True
+                                            break
+                            if is_inconsistent: break
+                    except Exception as e:
+                        pass 
                     
                     if is_inconsistent:
                         sid_str = str(sid).strip()
@@ -370,29 +484,34 @@ def admin_run_check():
                         q_cgpa = text("SELECT `CGPA`, `GPA_X_CR`, `GPA_X_CR_Actual_Credits`, `CGPA_Total_Credits` FROM CGPA_Timeline WHERE `Student ID` = :sid ORDER BY `Academic Term` DESC LIMIT 1")
                         c_res = conn.execute(q_cgpa, {"sid": sid}).fetchone()
                         
+                        sorted_wts = sorted(coop_dict.get(sid_str, []), key=lambda x: x[0])
+                        wt_info = "<br>".join([x[1] for x in sorted_wts]) if sorted_wts else "-"
+
                         students.append({
                             "id": sid, "name": name, "email": email, "program": "Check Sequence manually",
                             "cgpa": c_res[0] if c_res else "-", "cgpa_cr": c_res[3] if c_res else "-",
                             "gpa24": c_res[1] if c_res else "-", "gpa24_cr": c_res[2] if c_res else "-",
-                            "notes_vis": "Inconsistent with transcript", "notes_invis": ""
+                            "wts": wt_info,
+                            "notes_vis": "Sequence inconsistent with transcript (missing/failed past courses).", "notes_invis": ""
                         })
                 return jsonify(students)
             else: 
                 return jsonify([])
 
             # Rulăm View-urile SQL
-            print(query)
             res = conn.execute(query).fetchall()
-            print(res)
             for row in res:
                 sid = row[0]
                 sid_str = str(sid).strip()
                 
-                # Extragem instant din dicționarele încărcate în memorie!
                 name = names_dict.get(sid_str, "Unknown")
                 comm = comm_dict.get(sid_str, ("", ""))
                 pub_c = comm[0] if comm[0] else ""
                 priv_c = comm[1] if comm[1] else ""
+                
+                # Sortează lista după Scorul Matematic (Cronologic)
+                sorted_wts = sorted(coop_dict.get(sid_str, []), key=lambda x: x[0])
+                wt_info = "<br>".join([x[1] for x in sorted_wts]) if sorted_wts else "-"
                 
                 students.append({
                     "name": name,
@@ -403,6 +522,7 @@ def admin_run_check():
                     "gpa24": row[4] if len(row)>4 and pd.notna(row[4]) else "-",
                     "gpa24_cr": row[5] if len(row)>5 and pd.notna(row[5]) else "-",
                     "cgpa_cr": row[6] if len(row)>6 and pd.notna(row[6]) else "-",
+                    "wts": wt_info,
                     "notes_vis": pub_c,
                     "notes_invis": priv_c
                 })
@@ -410,7 +530,6 @@ def admin_run_check():
     except Exception as e:
         print(f"Error run check: {e}")
         return jsonify([])
-
 
 @app.route("/api/get_cgpa_timeline", methods=["POST"])
 def get_cgpa_timeline():

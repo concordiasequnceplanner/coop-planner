@@ -41,26 +41,33 @@
                 <th>CGPA Credits</th>
                 <th>Last GPA24</th>
                 <th>GPA24 Credits</th>
-                <th>Notes (Visible)</th>
+                <th>Scheduled WTs</th> <th>Notes (Visible)</th>
                 <th>Notes (Invisible)</th>
             </tr>
         </thead>
         <tbody id="studentsTableBody"></tbody>
     </table>
 
-    <div style="display: flex; gap: 20px; margin-top: 20px;">
-        <div style="flex: 2;">
+    <div style="margin-top: 20px; background: #fff; padding: 20px; border-radius: 8px; border: 1px solid #dce4ec; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
+        <div style="display: flex; gap: 20px; margin-bottom: 15px;">
+            <div style="flex: 1;">
+                <label style="color:#2c3e50; font-weight:bold;">🏷️ Email Title (Subject):</label><br>
+                <input type="text" id="emailTitle" style="width: 100%; padding: 10px; margin-top: 5px; border-radius: 4px; border: 1px solid #ccc; box-sizing: border-box; font-weight: bold; color: #912338;">
+            </div>
+            <div style="flex: 1;">
+                <label style="color:#2c3e50; font-weight:bold;">💾 Short Message (Database Note):</label><br>
+                <input type="text" id="shortMessage" style="width: 100%; padding: 10px; margin-top: 5px; border-radius: 4px; border: 1px solid #ccc; box-sizing: border-box;">
+            </div>
+        </div>
+
+        <div style="margin-bottom: 20px;">
             <label style="color:#2c3e50; font-weight:bold;">✉️ Message (Email Body):</label><br>
-            <textarea id="emailMessage" style="width: 100%; height: 150px; padding: 10px; border-radius: 4px; border: 1px solid #ccc; font-family: Arial;"></textarea>
+            <textarea id="emailMessage" style="width: 100%; height: 180px; padding: 10px; margin-top: 5px; border-radius: 4px; border: 1px solid #ccc; font-family: Arial; box-sizing: border-box; resize: vertical;"></textarea>
         </div>
-        <div style="flex: 1;">
-            <label style="color:#2c3e50; font-weight:bold;">💾 Short Message (Database Note):</label><br>
-            <input type="text" id="shortMessage" style="width: 100%; padding: 10px; margin-bottom: 15px; border-radius: 4px; border: 1px solid #ccc;">
-            
-            <button onclick="sendBulkEmails()" style="width: 100%; padding: 15px; background: #27ae60; color: white; border: none; border-radius: 4px; font-size: 16px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-                📤 SEND EMAILS TO SELECTED
-            </button>
-        </div>
+
+        <button onclick="sendBulkEmails()" style="width: 100%; padding: 15px; background: #27ae60; color: white; border: none; border-radius: 4px; font-size: 16px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1); transition: background 0.3s;" onmouseover="this.style.background='#219a52'" onmouseout="this.style.background='#27ae60'">
+            📤 SEND EMAILS TO SELECTED
+        </button>
     </div>
 
     <script>
@@ -73,6 +80,8 @@
             let selected = document.querySelector('input[name="checkOption"]:checked');
             if(!selected) return;
             
+            // Setam textele editabile
+            document.getElementById('emailTitle').value = selected.getAttribute('data-what'); // NOU: Preia titlul
             document.getElementById('emailMessage').value = selected.getAttribute('data-msg');
             document.getElementById('shortMessage').value = selected.getAttribute('data-short');
 
@@ -100,7 +109,7 @@
                         <td>${s.cgpa_cr}</td>
                         <td style="font-weight:bold; color:#e67e22;">${s.gpa24}</td>
                         <td>${s.gpa24_cr}</td>
-                        <td><div style="max-height: 50px; overflow-y: auto; font-size:11px; text-align:left; background:#f9fff9; padding:4px;">${s.notes_vis}</div></td>
+                        <td style="font-size:11px; white-space:nowrap; text-align:left;">${s.wts}</td> <td><div style="max-height: 50px; overflow-y: auto; font-size:11px; text-align:left; background:#f9fff9; padding:4px;">${s.notes_vis}</div></td>
                         <td><div style="max-height: 50px; overflow-y: auto; font-size:11px; text-align:left; background:#fdf2f2; padding:4px;">${s.notes_invis}</div></td>
                     </tr>`;
                     tbody.innerHTML += tr;
@@ -108,7 +117,7 @@
                 
                 document.getElementById('resultsTable').style.display = 'table';
             } catch(e) {
-                alert("Error loading data.");
+                alert("Error loading data: " + e);
             } finally {
                 document.getElementById('loadingOverlay').style.display = 'none';
             }
@@ -123,7 +132,7 @@
 
             let body = document.getElementById('emailMessage').value;
             let short = document.getElementById('shortMessage').value;
-            let subject = selected.getAttribute('data-what');
+            let subject = document.getElementById('emailTitle').value; // NOU: Ia subiectul din caseta editabilă
 
             if(confirm(`Send email to ${sids.length} students?`)) {
                 document.getElementById('loadingOverlay').style.display = 'flex';

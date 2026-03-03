@@ -363,6 +363,27 @@
     </div>
     
     {% if is_power_user %}
+    <div style="display: flex; flex-direction: column; justify-content: flex-end; gap: 8px; max-width: 220px;">
+        <button onclick="insertCannedComment(1)" style="background: #f39c12; color: white; border: none; padding: 6px; border-radius: 4px; font-size: 10px; font-weight: bold; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.1); transition: 0.2s;" onmouseover="this.style.background='#e67e22'" onmouseout="this.style.background='#f39c12'">
+            ⚠️ Cannot go on WT - academic
+        </button>
+        <button onclick="insertCannedComment(2)" style="background: #d35400; color: white; border: none; padding: 6px; border-radius: 4px; font-size: 10px; font-weight: bold; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.1); transition: 0.2s;" onmouseover="this.style.background='#bf4a00'" onmouseout="this.style.background='#d35400'">
+            ⚠️ If no internship found must reschedule
+        </button>
+    </div>
+
+    <div style="flex: 1; min-width: 300px;">
+        <label style="font-size:11px; font-weight:bold; color:#c0392b;">🔒 PRIVATE Comments (Admin Only):</label>
+        <textarea id="privateComments" 
+            oninput="this.style.height = ''; this.style.height = this.scrollHeight + 'px'" 
+            onblur="autoSaveComments(this)"
+            style="width: 100%; min-height: 40px; padding: 8px; border: 1px solid #e74c3c; border-radius: 4px; font-family: inherit; resize: none; overflow: hidden; background: #fdedec; transition: background 0.3s;"></textarea>
+    </div>
+    
+    <button onclick="processStatusAction('REWORK')" id="btnRework" style="display:none; background:#f39c12; color:white; border:none; padding:10px 20px; border-radius:4px; font-weight:bold; cursor:pointer; box-shadow:0 2px 4px rgba(0,0,0,0.1);">🔄 REWORK</button>
+    {% endif %}
+    
+    {% if is_power_user %}
     <div style="flex: 1; min-width: 300px;">
         <label style="font-size:11px; font-weight:bold; color:#c0392b;">🔒 PRIVATE Comments (Admin Only):</label>
         <textarea id="privateComments" 
@@ -3395,7 +3416,7 @@
                     progSelect.value = match.value;
                     
                     if (data.multiple_programs) {
-                        alert("Atenție: Au fost detectate mai multe programe în istoric. Cel mai recent a fost selectat automat (" + match.value + ").");
+                        alert("Latest program has been selected: (" + match.value + ").");
                     }
                     
                     await handleProgramChange({ detail: { keepLoadingScreenActive: true } }); 
@@ -3517,17 +3538,42 @@
     }
 
     {% if is_power_user %}
+    function insertCannedComment(type) {
+        let el = document.getElementById('publicComments');
+        if (!el) return;
+        
+        let msg = "";
+        if (type === 1) {
+            msg = "cannot go on next scheduled WT, must re-sequence. Student's status in CO-OP Program will be re-evaluated every term upon academic performance.";
+        } else if (type === 2) {
+            msg = "if next term WT is already secured, the next one cannot be placed in the following 2 terms, and will be approved pending academic performance improvement. If next term WT is not already secured, it must be re-scheduled at earliest in 2 terms later and will be approved pending academic performance improvement. In either cases, a change of sequence is requested. Student's status in CO-OP Program will be re-evaluated every term upon academic performance.";
+        }
+
+        const now = new Date();
+        const stamp = `[${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')} - {{ session.get('user_email') }}]\n`;
+        
+        // Adăugăm mesajul la început, urmat de vechiul conținut
+        el.value = stamp + msg + "\n\n" + el.value;
+        
+        // Ajustăm înălțimea căsuței și salvăm automat în baza de date
+        el.style.height = 'auto'; 
+        el.style.height = el.scrollHeight + 'px';
+        autoSaveComments(el);
+    }
+    {% endif %}
+
+    {% if is_power_user %}
     async function sendNotesEmail(studentEmail, studentName, studentId) {
         let notesEl = document.getElementById('publicComments');
         let notes = notesEl ? notesEl.value.trim() : "";
         let program = document.getElementById('programSelect') ? document.getElementById('programSelect').value : "";
         
         if (!notes) {
-            alert("⚠️ Nu există niciun text în căsuța 'ADMIN comments (Visible to Student)' pe care să-l trimitem!");
+            alert("⚠️ There is no text in visble notes to email !");
             return;
         }
 
-        if (confirm(`Trimitem email cu "notes vizibil" către studentul ${studentName} (${studentEmail})?`)) {
+        if (confirm(`Send email with "visble notes" to student ${studentName} (${studentEmail})?`)) {
             document.getElementById('loadingOverlay').style.display = 'flex';
             try {
                 let res = await fetch('/api/send_notes_email', {
@@ -3543,7 +3589,7 @@
                 });
                 
                 if (res.ok) {
-                    alert("✅ Email trimis cu succes!");
+                    alert("✅ Email sent!");
                     
                     let now = new Date();
                     let stamp = `[Email sent to student on: ${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}]\n`;
@@ -3554,11 +3600,11 @@
                     
                     autoSaveComments(notesEl); 
                 } else {
-                    alert("❌ Eroare la trimiterea emailului. Te rugăm să încerci din nou.");
+                    alert("❌ Error in sending, try again or contact admin.");
                 }
             } catch(e) {
                 console.error(e);
-                alert("❌ Eroare de conexiune la server.");
+                alert("❌ Connection error.");
             } finally {
                 document.getElementById('loadingOverlay').style.display = 'none';
             }

@@ -608,7 +608,7 @@ def admin_bulk_email():
                         "to": recipients.get("to", []),
                         "cc": recipients.get("cc", []),
                         "bcc": recipients.get("bcc", []),
-                        "reply_to": admin_email,
+                        "reply_to": "coop_miae@concordia.ca",
                         "subject": f"{subject} - {sid}",
                         "html": final_body
                     })
@@ -1060,7 +1060,7 @@ def send_notes_email():
             "to": recipients.get("to", []),
             "cc": recipients.get("cc", []),
             "bcc": recipients.get("bcc", []),
-            "reply_to": admin_email,
+            "reply_to": "coop_miae@concordia.ca",
             "subject": f"MIAE CO-OP - Important Notes regarding your sequence ({target_sid})",
             "html": html_body
         })

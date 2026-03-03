@@ -328,41 +328,46 @@ def admin_checks_page():
     # 3. Trimitem datele către interfața web
     return render_template("admin_checks.html", checks=checks_data)
 
-
 @app.route("/api/admin_run_check", methods=["POST"])
 def admin_run_check():
     check_id = int(request.json.get('check_id', 0))
     students = []
     try:
         with engine.connect() as conn:
+            # =========================================================
+            # OPTIMIZARE: Încărcăm totul în memorie (Python Dictionaries)
+            # Facem 2 interogări în loc de sute!
+            # =========================================================
+            names_res = conn.execute(text("SELECT `Student ID`, `Name` FROM `login vs id`")).fetchall()
+            names_dict = {str(r[0]).strip(): r[1] for r in names_res if r[0]}
+            
+            comm_res = conn.execute(text("SELECT `S_id`, `Public_comments`, `PRIVATE_comments` FROM `S_id_comments`")).fetchall()
+            comm_dict = {str(r[0]).strip(): (r[1], r[2]) for r in comm_res if r[0]}
+
             if check_id == 1: query = text("SELECT * FROM v_check_1_cgpa_low")
             elif check_id == 2: query = text("SELECT * FROM v_check_2_gpa24_low")
             elif check_id == 3: query = text("SELECT * FROM v_check_3_gpa24_borderline")
             elif check_id == 5: query = text("SELECT * FROM v_check_5_wt_violation")
             elif check_id == 6: query = text("SELECT * FROM v_check_6_no_sequence")
             elif check_id == 4:
-                # Logica manuală pentru Check 4
                 q_active = text("SELECT `Student ID` FROM v_active_coop_students")
                 active_sids = [row[0] for row in conn.execute(q_active).fetchall()]
-                
                 for sid in active_sids:
                     q_seq = text("SELECT JSON_Data FROM Saved_Sequences WHERE student_id = :sid AND status LIKE 'APPROVED%' ORDER BY Date_Saved DESC LIMIT 1")
                     seq_res = conn.execute(q_seq, {"sid": sid}).fetchone()
                     if not seq_res or not seq_res[0]: continue
                     
-                    # Un simplu flag (placeholder) dacă vrei verificări mai complexe aici ulterior
-                    is_inconsistent = False 
+                    is_inconsistent = False # Aici poți adăuga logica ta pe viitor
                     
                     if is_inconsistent:
-                        q_info = text("SELECT Name FROM `login vs id` WHERE `Student ID` = :sid LIMIT 1")
-                        name_res = conn.execute(q_info, {"sid": sid}).fetchone()
-                        name = name_res[0] if name_res else "Unknown"
+                        sid_str = str(sid).strip()
+                        name = names_dict.get(sid_str, "Unknown")
                         
                         q_em = text("SELECT `Primary Email` FROM Sid_Email_Admission WHERE `Student ID` = :sid LIMIT 1")
                         em_res = conn.execute(q_em, {"sid": sid}).fetchone()
                         email = em_res[0] if em_res else ""
                         
-                        q_cgpa = text("SELECT `CGPA`, `GPA_X_CR`, `GPA_X_CR_Actual_Credits`, `Tot_CR` FROM CGPA_Timeline WHERE `Student ID` = :sid ORDER BY `Academic Term` DESC LIMIT 1")
+                        q_cgpa = text("SELECT `CGPA`, `GPA_X_CR`, `GPA_X_CR_Actual_Credits`, `CGPA_Total_Credits` FROM CGPA_Timeline WHERE `Student ID` = :sid ORDER BY `Academic Term` DESC LIMIT 1")
                         c_res = conn.execute(q_cgpa, {"sid": sid}).fetchone()
                         
                         students.append({
@@ -375,18 +380,19 @@ def admin_run_check():
             else: 
                 return jsonify([])
 
-            # Rulăm View-urile 1, 2, 3, 5, 6
+            # Rulăm View-urile SQL
+            print(query)
             res = conn.execute(query).fetchall()
+            print(res)
             for row in res:
                 sid = row[0]
-                # row[0]=ID, row[1]=Email, row[2]=Prog, row[3]=CGPA, row[4]=GPA24, row[5]=GPA24_CR, row[6]=CGPA_Tot_CR
+                sid_str = str(sid).strip()
                 
-                info = conn.execute(text("SELECT Name FROM `login vs id` WHERE `Student ID` = :sid LIMIT 1"), {"sid": sid}).fetchone()
-                name = info[0] if info and info[0] else "Unknown"
-
-                comm = conn.execute(text("SELECT Public_comments, PRIVATE_comments FROM S_id_comments WHERE S_id=:sid"), {"sid": sid}).fetchone()
-                pub_c = comm[0] if comm else ""
-                priv_c = comm[1] if comm else ""
+                # Extragem instant din dicționarele încărcate în memorie!
+                name = names_dict.get(sid_str, "Unknown")
+                comm = comm_dict.get(sid_str, ("", ""))
+                pub_c = comm[0] if comm[0] else ""
+                priv_c = comm[1] if comm[1] else ""
                 
                 students.append({
                     "name": name,
@@ -404,7 +410,6 @@ def admin_run_check():
     except Exception as e:
         print(f"Error run check: {e}")
         return jsonify([])
-    
 
 
 @app.route("/api/get_cgpa_timeline", methods=["POST"])

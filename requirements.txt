@@ -1,7 +1,10 @@
-Flask
-gunicorn
-pandas
-PyMySQL
-SQLAlchemy
-resend
-openpyxl
+Flask==3.0.0
+gspread==5.12.0
+oauth2client==4.1.3
+pandas==2.1.4
+openpyxl==3.1.2
+resend==0.7.1
+
+gunicorn==21.2.0
+sqlalchemy==2.0.47
+pymysql==1.1.2

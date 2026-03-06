@@ -4,4 +4,3 @@ pymysql
 pandas
 resend
 openpyxl
-html

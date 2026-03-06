@@ -1,6 +1,7 @@
-flask
-sqlalchemy
-pymysql
+Flask
+gunicorn
 pandas
+PyMySQL
+SQLAlchemy
 resend
 openpyxl

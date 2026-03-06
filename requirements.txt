@@ -4,7 +4,6 @@ pymysql
 pandas
 resend
 openpyxl
-os
 re
 json
 datetime

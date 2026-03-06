@@ -4,7 +4,6 @@ pymysql
 pandas
 resend
 openpyxl
-re
 json
 datetime
 random

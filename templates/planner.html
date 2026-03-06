@@ -49,25 +49,6 @@
 
         <div class="header-divider"></div>
 
-        {% if is_power_user %}
-        <!-- Admin view — power users only -->
-        <div class="header-section" style="gap:4px;">
-            <input id="adminSidInput" placeholder="Load Student ID" value="{{ viewing_sid if viewing_sid != student_id else '' }}"
-                   style="padding:6px 10px; border:1px solid #cbd5e0; border-radius:4px; font-size:13px; width:140px;">
-            <div style="display:flex; gap:4px;">
-                <button onclick="window.adminResetView()" title="Back to your own SID"
-                        style="background:#95a5a6; color:#fff; border:none; padding:6px 10px; border-radius:4px; font-size:12px; font-weight:700; cursor:pointer; flex:1;">
-                    Self
-                </button>
-                <button onclick="window.adminSwitchStudent()"
-                        style="background:#3498db; color:#fff; border:none; padding:6px 10px; border-radius:4px; font-size:12px; font-weight:700; cursor:pointer; flex:1;">
-                    Switch
-                </button>
-            </div>
-        </div>
-        <div class="header-divider"></div>
-        {% endif %}
-
         <!-- Save / Load -->
         <div style="display:flex; gap:4px; align-items:center;">
             <button onclick="window.saveDraft()"
@@ -86,6 +67,19 @@
                 </button>
                 <div id="pendingMenuDropdown" style="display:none;position:absolute;top:100%;right:0;background:#fff;border:1px solid #ddd;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.15);min-width:300px;max-height:350px;overflow-y:auto;z-index:9999;"></div>
             </div>
+            <!-- Admin SID input — inline after Pending -->
+            <div style="display:flex; gap:4px; align-items:center; margin-left:4px;">
+                <input id="adminSidInput" placeholder="Student ID" value="{{ viewing_sid if viewing_sid != student_id else '' }}"
+                       style="padding:6px 8px; border:1px solid #cbd5e0; border-radius:4px; font-size:13px; width:110px;">
+                <button onclick="window.adminResetView()" title="Back to your own SID"
+                        style="background:#95a5a6; color:#fff; border:none; padding:6px 8px; border-radius:4px; font-size:12px; font-weight:700; cursor:pointer;">
+                    Self
+                </button>
+                <button onclick="window.adminSwitchStudent()"
+                        style="background:#3498db; color:#fff; border:none; padding:6px 8px; border-radius:4px; font-size:12px; font-weight:700; cursor:pointer;">
+                    Switch
+                </button>
+            </div>
             {% endif %}
         </div>
 
@@ -94,10 +88,11 @@
             <div style="display:flex; flex-direction:column; align-items:flex-end; gap:2px;">
                 {% if is_power_user and viewing_sid != student_id %}
                 <span style="font-size:12px;"><b style="color:#e74c3c;">ADMIN</b> viewing <b>{{ viewing_sid }}</b>{% if viewing_name %} — {{ viewing_name }}{% endif %}</span>
+                <span style="font-size:11px;color:#888;"><span id="headerProgram"></span>{% if student_email %}&nbsp;<a id="adminEmailLink" href="#" onclick="window.adminOpenMailto(event)" title="Send message to student" style="color:#2980b9;text-decoration:underline dotted;">{{ student_email }}</a>{% endif %}</span>
                 {% else %}
                 <span style="font-size:12px;"><b>{{ viewing_sid }}</b>{% if student_email %} — {{ student_email }}{% endif %}</span>
-                {% endif %}
                 <span id="headerProgram" style="font-size:11px;color:#888;"></span>
+                {% endif %}
                 <span style="font-size:11px;color:#aaa;">Logged in as: <b>{{ student_id }}</b>{% if student_name %} ({{ student_name }}){% endif %}</span>
             </div>
             <a href="/logout" class="logout-link" style="margin-left:8px;">Logout</a>

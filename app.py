@@ -283,9 +283,28 @@ def build_terms_html(term_summary):
     terms_html += "</tbody></table>"
     return terms_html
 
+REASON_LABELS = {
+    1: "I have not yet started / I was asked by COOP AD but there are no changes",
+    2: "I want to reduce summer load",
+    3: "I want to reduce overall load",
+    4: "Off sequence (e.g., must repeat course)",
+    5: "I couldn't find a place in one/several courses I had scheduled",
+    6: "I have / will change academic program (e.g., transfer)",
+    7: "I was not placed for the coming work term (did not find an internship)",
+    8: "My WT is or will be extended",
+    9: "Other personal reasons: see my comments",
+}
+
 def render_sequence_email(mode, student_email, student_name, target_sid, program,
                           terms_html="", comments_html="", wt_html="", wt_status_msg="",
-                          signer="Coordinator"):
+                          signer="Coordinator", reason_code=0):
+    reason_text = REASON_LABELS.get(int(reason_code or 0), "")
+    reason_html = (
+        f'<p><b>Reason for change:</b> {escape(str(reason_code))})'
+        f' {escape(reason_text)}</p>'
+        if reason_text else ""
+    )
+
     if mode == "PENDING":
         return f"""
         <div style="font-family:Arial,sans-serif;color:#333;max-width:750px;margin:0 auto;border:1px solid #e0e0e0;padding:20px;border-radius:8px;">
@@ -294,6 +313,7 @@ def render_sequence_email(mode, student_email, student_name, target_sid, program
             <p><b>Student Name:</b> {escape(student_name or '')}</p>
             <p><b>Student ID:</b> {escape(target_sid or '')}</p>
             <p><b>Program:</b> {escape(program or '')}</p>
+            {reason_html}
 
             <h3 style="margin-top:20px;">Submitted Sequence</h3>
             {terms_html}
@@ -316,6 +336,7 @@ def render_sequence_email(mode, student_email, student_name, target_sid, program
             <p><b>Student Name:</b> {escape(student_name or '')}</p>
             <p><b>Student ID:</b> {escape(target_sid or '')}</p>
             <p><b>Program:</b> {escape(program or '')}</p>
+            {reason_html}
 
             <div style="background:#f0f7ff;border-left:4px solid #3498db;padding:10px;margin:15px 0;">
                 {wt_html}
@@ -905,6 +926,7 @@ def api_sequence_save():
                     target_sid=target_sid,
                     program=program,
                     terms_html=terms_html,
+                    reason_code=reason_code,
                 )
 
                 # Send to admin BCC, student gets a copy
@@ -1128,6 +1150,19 @@ def api_admin_approve():
                 )
 
         # 3. Send email
+        # Read reason_code from the saved sequence record
+        approve_reason_code = 0
+        try:
+            with engine.connect() as conn:
+                rc_row = conn.execute(
+                    text("SELECT cos_reason FROM Saved_Sequences WHERE student_id = :sid AND Date_Saved = :ts"),
+                    {"sid": target_sid, "ts": timestamp},
+                ).fetchone()
+                if rc_row:
+                    approve_reason_code = int(rc_row[0] or 0)
+        except Exception:
+            pass
+
         student_email = _get_student_email_db(target_sid)
         power_user_email = session.get("pre_auth_email") or session.get("user_email") or ""
         power_user_name = power_user_email.split("@")[0] if power_user_email else "Coordinator"
@@ -1193,6 +1228,7 @@ def api_admin_approve():
                 wt_html=wt_html,
                 wt_status_msg=wt_status_msg,
                 signer=power_user_name,
+                reason_code=approve_reason_code,
             )
         else:  # REWORK
             subject = f"REWORK for {student_name} ({target_sid}) - {program}"
@@ -1241,6 +1277,60 @@ def api_admin_approve():
     except Exception as e:
         print(f"❌ Approve route error: {e}")
         return jsonify({"ok": False, "error": "Database error"}), 500
+
+
+@app.route("/api/admin/send_message", methods=["POST"])
+def api_admin_send_message():
+    if not _require_login():
+        return jsonify({"ok": False, "error": "Unauthorized"}), 401
+    if not _is_power_user():
+        return jsonify({"ok": False, "error": "Unauthorized"}), 403
+
+    data = request.get_json(silent=True) or {}
+    target_sid   = str(data.get("student_id")   or _viewing_sid()).strip()
+    student_name = str(data.get("student_name") or "").strip()
+    program      = str(data.get("program")      or "").strip()
+    message_body = str(data.get("message")      or "").strip()
+
+    try:
+        student_email   = _get_student_email_db(target_sid)
+        priority1_email = _get_priority1_email_db(target_sid)
+
+        recipients = get_email_recipients(
+            program=program,
+            target_sid=target_sid,
+            submitter_email=student_email,
+            priority1_email=priority1_email,
+            action_type="REWORK",
+            wts_changed=False,
+        )
+
+        subject   = f"Message from MIAE CO-OP AD to {student_name} {target_sid}"
+        body_html = escape(message_body).replace("\n", "<br>")
+
+        html_body = f"""
+        <div style="font-family:Arial,sans-serif;color:#333;max-width:750px;margin:0 auto;border:1px solid #e0e0e0;padding:20px;border-radius:8px;">
+            <h2 style="color:#912338;border-bottom:2px solid #912338;padding-bottom:10px;">Message from MIAE CO-OP AD</h2>
+            <p><b>To:</b> {escape(student_name)} ({escape(target_sid)})</p>
+            <p><b>Program:</b> {escape(program)}</p>
+            <div style="margin:15px 0;line-height:1.7;white-space:pre-wrap;">{body_html}</div>
+            <p style="margin-top:30px;">Best Regards,<br><b>MIAE CO-OP AD</b></p>
+        </div>
+        """
+
+        send_email(
+            to=recipients["to"],
+            cc=recipients["cc"],
+            bcc=recipients["bcc"],
+            subject=subject,
+            content=html_body,
+            reply_to="coop_miae@concordia.ca",
+            is_html=True,
+        )
+        return jsonify({"ok": True})
+    except Exception as e:
+        print(f"❌ send_message error: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 if __name__ == "__main__":

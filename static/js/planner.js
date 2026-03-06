@@ -733,6 +733,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 const isBlue  = !!td.querySelector('.coop-study-header');
                 const zKey    = _sk(zone.id);
+                // cap non-blue terms past the last placed WT (blue study terms always checked)
+                if (!isBlue && lastWtKey && zKey > lastWtKey) return;
                 const inRange = firstCoopKey && lastWtKey && zKey >= firstCoopKey && zKey <= lastWtKey;
                 if (!isBlue && !inRange) return; // must be blue or within co-op range
 
@@ -1719,6 +1721,23 @@ window.adminResetView = async function() {
     }
 };
 
+window.adminOpenMailto = function(evt) {
+    if (evt) evt.preventDefault();
+    const cfg         = window.APP_CONFIG || {};
+    const studentId   = cfg.viewingSid || '';
+    const studentName = cfg.studentName || studentId;
+    const studentEmail = cfg.studentEmail || '';
+    const publicNotes  = document.getElementById('publicNotes')?.value?.trim() || '';
+
+    const subject = `Message from MIAE CO-OP AD to ${studentName} ${studentId}`;
+    const body    = publicNotes
+        ? `${publicNotes}\n\nBest Regards,\nMIAE CO-OP AD`
+        : `Best Regards,\nMIAE CO-OP AD`;
+
+    const mailto = `mailto:${encodeURIComponent(studentEmail)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    window.location.href = mailto;
+};
+
 // =========================================================
 // CONTROL PANEL — set global limits
 // =========================================================
@@ -2552,7 +2571,7 @@ window.validateGrid = function() {
     });
 
     // Collect all issues across all boxes; apply badges at end
-    const allIssues = []; // { courseId, msg, sev }
+    let allIssues = []; // { courseId, msg, sev }
     const boxIssues = new Map(); // box element → [{msg, sev}]
 
     function flagBox(box, issues) {
@@ -2699,14 +2718,13 @@ window.validateGrid = function() {
     // Check 7 + 8: WT ordering — WT2 requires WT1 before, WT3 requires WT2 before
     if (document.getElementById('coopRegistered')?.checked) {
         // Collect WT positions: { WT1: { ord, el: box }, WT2: ..., WT3: ... }
+        // Includes both planned and already-taken WT courses (from grid zones and zone_Y0)
         const wtPos = {};
-        allZones.forEach(({ ord, el }) => {
+        function _detectWtInEl(el, ord) {
             Array.from(el.children).forEach(box => {
                 if (!box.classList.contains('wt')) return;
-                // Skip taken WT courses for position tracking
                 const cid = (box.dataset.courseId || '').toUpperCase();
                 const did = (box.dataset.displayId || '').toUpperCase();
-                // Determine WT number from displayId, courseId, or alias
                 let wtNum = null;
                 const mDid = did.match(/WT(\d)/);
                 const mCid = cid.match(/WT(\d)/);
@@ -2727,10 +2745,14 @@ window.validateGrid = function() {
                     if (!wtPos[key] || ord < wtPos[key].ord) wtPos[key] = { ord, el: box };
                 }
             });
-        });
+        }
+        allZones.forEach(({ ord, el }) => _detectWtInEl(el, ord));
+        // Also scan zone_Y0: taken WTs from before the grid start year land here
+        const _y0El = document.getElementById('zone_Y0');
+        if (_y0El) _detectWtInEl(_y0El, -1);
 
-        // WT1 checks — study terms + credits
-        if (wtPos.WT1) {
+        // WT1 checks — study terms + credits (skip if WT1 is before grid start, i.e. in zone_Y0)
+        if (wtPos.WT1 && wtPos.WT1.ord > -1) {
             let studyTermsBefore = 0, coreCrBefore = 0;
             allZones.forEach(({ ord, el }) => {
                 if (ord >= wtPos.WT1.ord) return;
@@ -2765,8 +2787,8 @@ window.validateGrid = function() {
                 flagBox(wtPos.WT3.el, [{ msg: 'WT3 must be in a later term than WT2', sev: 'error' }]);
         }
 
-        // Check 9: After WT3 there must be ≥1 CORE/PRG/ECP course
-        if (wtPos.WT3) {
+        // Check 9: After WT3 there must be ≥1 CORE/PRG/ECP course (skip if WT3 is before grid start)
+        if (wtPos.WT3 && wtPos.WT3.ord > -1) {
             let coreAfterWT3 = 0;
             const teAfterWT3 = [];
             let totalPlannedCr = 0;
@@ -2804,6 +2826,25 @@ window.validateGrid = function() {
                     msg += ` — TE after WT3: ${teAfterWT3.join(', ')} — Total planned: ${totalPlannedCr}cr (TE electives count toward 120cr)`;
                 }
                 flagBox(wtPos.WT3.el, [{ msg, sev: 'error' }]);
+            }
+        }
+
+        // Check: WT1, WT2, WT3 in 3 consecutive terms / all in Summer
+        if (wtPos.WT1 && wtPos.WT2 && wtPos.WT3) {
+            const lastWtEl = wtPos.WT3.el;
+
+            const ords = [wtPos.WT1.ord, wtPos.WT2.ord, wtPos.WT3.ord].sort((a, b) => a - b);
+            if (ords[1] - ords[0] === 1 && ords[2] - ords[1] === 1) {
+                const msg = 'WT1, WT2 and WT3 are in 3 consecutive terms — not permitted';
+                allIssues.push({ courseId: 'WT3', msg, sev: 'error' });
+                flagBox(lastWtEl, [{ msg, sev: 'error' }]);
+            }
+
+            const wtZones = [wtPos.WT1, wtPos.WT2, wtPos.WT3].map(w => w.el?.parentElement?.id || '');
+            if (wtZones.every(zid => zid.endsWith('_Summer'))) {
+                const msg = 'WT1, WT2 and WT3 are all placed in Summer terms — not permitted';
+                allIssues.push({ courseId: 'WT3', msg, sev: 'error' });
+                flagBox(lastWtEl, [{ msg, sev: 'error' }]);
             }
         }
     }
@@ -2950,6 +2991,7 @@ window.validateGrid = function() {
         });
     })();
 
+
     // Credits_FT check: co-op study terms (blue) that are Fall/Winter must meet minimum credits
     (function() {
         const progNamesDb  = window.APP_CONFIG?.programNamesDb || [];
@@ -2999,6 +3041,8 @@ window.validateGrid = function() {
 
             const isBlue  = !!td.querySelector('.coop-study-header');
             const zKey    = zoneSortKey(zid);
+            // cap non-blue terms past the last placed WT (blue study terms always checked)
+            if (!isBlue && lastWtKey && zKey > lastWtKey) return;
             const inRange = firstCoopKey && lastWtKey && zKey >= firstCoopKey && zKey <= lastWtKey;
             if (!isBlue && !inRange) return;
 
@@ -3048,6 +3092,14 @@ window.validateGrid = function() {
         const errCount  = allIssues.filter(i => i.sev === 'error').length;
         const warnCount = allIssues.filter(i => i.sev === 'warning').length;
         const fyi       = allIssues.filter(i => i.sev === 'fyi').length;
+        // Final dedup: same message text should appear only once in the issues list
+        const _seenMsgs = new Set();
+        allIssues = allIssues.filter(i => {
+            const key = `${i.sev}|${i.courseId}|${i.msg}`;
+            if (_seenMsgs.has(key)) return false;
+            _seenMsgs.add(key);
+            return true;
+        });
         window.latestIssues = allIssues;
 
         if (allIssues.length === 0) {

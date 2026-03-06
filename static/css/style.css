@@ -665,17 +665,18 @@ td { border: 1px solid #dee2e6; vertical-align: top; padding: 0; background-colo
    ERROR PANEL
    ========================================================= */
 .ep-box {
-    border: 1px solid #e0e0e0;
+    border: 2px solid #e74c3c;
     border-radius: 6px;
-    margin-top: 8px;
+    margin-top: 10px;
     overflow: hidden;
     font-size: 11px;
 }
 
 .ep-header {
-    background: #fdf3f4;
-    padding: 6px 10px;
+    background: #fbe8ea;
+    padding: 9px 12px;
     font-weight: bold;
+    font-size: 12px;
     cursor: pointer;
     display: flex;
     justify-content: space-between;
@@ -683,8 +684,9 @@ td { border: 1px solid #dee2e6; vertical-align: top; padding: 0; background-colo
     color: #c0392b;
     user-select: none;
     border-bottom: 1px solid #e0e0e0;
+    border-left: 4px solid #e74c3c;
 }
-.ep-header:hover { background: #fbe8ea; }
+.ep-header:hover { background: #f5c6cb; }
 
 .ep-body { display: none; max-height: none; overflow-y: auto; background: #fff; }
 .ep-body.ep-open { display: block; }

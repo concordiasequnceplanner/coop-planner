@@ -357,7 +357,9 @@ def mask_email(email: str) -> str:
 def favicon():
     return ("", 204)
 
-
+@app.route("/health")
+def health():
+    return "ok", 200
 # =========================================================
 # AUTH ROUTES
 # =========================================================

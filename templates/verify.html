@@ -2,75 +2,31 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Verify Code - MIAE Planner</title>
-    <style>
-        body { font-family: Arial, sans-serif; background-color: #f4f4f4; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-        .login-box { background: white; padding: 40px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 100%; max-width: 450px; text-align: center; }
-        h2 { color: #912338; margin-bottom: 15px; }
-        input[type="text"] { width: 100%; padding: 12px; margin: 10px 0 20px 0; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-size: 18px; text-align: center; letter-spacing: 2px;}
-        button { width: 100%; padding: 12px; background-color: #912338; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: bold; transition: background-color 0.3s;}
-        button:hover { background-color: #7a1d2f; }
-        .error { color: #d9534f; margin-bottom: 15px; font-size: 14px; background-color: #fdf7f7; padding: 10px; border-left: 4px solid #d9534f; }
-        .info-box { background-color: #eaf2f8; color: #2980b9; padding: 15px; border-radius: 5px; font-size: 14px; margin-bottom: 20px; text-align: left; line-height: 1.5;}
-    </style>
+    <title>MIAE Academic Planner - Verify</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
-<body>
-    <div class="login-box">
-        <h2>Enter Access Code</h2>
-        
-        {% if error %}
-            <div class="error">{{ error }}</div>
-        {% endif %}
-        
+<body class="auth-body">
+    <div class="login-card">
         {% if message %}
-            <div class="info-box">
-                {{ message }}
-            </div>
+        <div class="info-message">{{ message }}</div>
         {% endif %}
-        
-        <form method="POST">
-            <input type="text" name="otp" id="otp_input" list="past_otps" required autocomplete="off" placeholder="Enter 6-digit code">
-        
-            <datalist id="past_otps"></datalist>
 
-            <button type="submit" class="btn">Verify & Login</button>
-  
+        <h2>Enter Access Code</h2>
+        <p>A 6-digit code has been sent to<br><strong>{{ email }}</strong></p>
+
+        {% if error %}
+        <div class="error">{{ error }}</div>
+        {% endif %}
+
+        <form method="POST" action="/verify">
+            <input type="hidden" name="email" value="{{ email }}">
+            <input type="text" class="otp-input" name="code" placeholder="------" required pattern="\d{6}" maxlength="6" autocomplete="off" autofocus>
+            <button type="submit">Verify Code</button>
         </form>
-        
-        <div style="margin-top: 20px;">
-            <a href="/login" style="color: #666; font-size: 13px; text-decoration: none;">← Cancel and go back</a>
+
+        <div style="text-align: center; margin-top: 20px;">
+            <a href="/login" class="back-link-inline">&larr; Back to Login / Use different email</a>
         </div>
     </div>
-
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            const datalist = document.getElementById('past_otps');
-            const inputField = document.getElementById('otp_input');
-            const form = inputField.closest('form');
-            
-            // Citim codurile salvate anterior (dacă există)
-            let savedOtps = JSON.parse(localStorage.getItem('saved_otps') || '[]');
-            
-            // Le adăugăm ca opțiuni de auto-complete
-            savedOtps.forEach(code => {
-                let option = document.createElement('option');
-                option.value = code;
-                datalist.appendChild(option);
-            });
-
-            // Când se trimite formularul, salvăm codul nou
-            if (form) {
-                form.addEventListener('submit', function() {
-                    let val = inputField.value.trim();
-                    if (val && !savedOtps.includes(val)) {
-                        savedOtps.unshift(val); // Îl punem primul în listă
-                        if (savedOtps.length > 5) savedOtps.pop(); // Păstrăm doar ultimele 5 ca să nu se facă spam
-                        localStorage.setItem('saved_otps', JSON.stringify(savedOtps));
-                    }
-                });
-            }
-        });
-    </script>
 </body>
 </html>

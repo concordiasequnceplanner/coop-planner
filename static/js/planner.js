@@ -345,7 +345,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // =========================================================
     // GENERARE HTML CURS
     // =========================================================
-    function generateCourseHTML(cId, credits, dbCourse, isTaken) {
+    function generateCourseHTML(cId, credits, dbCourse, isTaken, grade) {
         let title      = dbCourse.TITLE || '';
         let type       = getCourseType(dbCourse);
         let termBadges = getTermsBadges(dbCourse);
@@ -360,10 +360,32 @@ document.addEventListener("DOMContentLoaded", () => {
             ? `<input type="checkbox" class="c-checkbox" checked disabled>`
             : `<input type="checkbox" class="c-checkbox" onclick="window.toggleCoursePin(this)">`;
 
+        // Add grade badge for taken courses (only for power users)
+        let gradeBadge = '';
+        const isPowerUser = window.APP_CONFIG?.isPowerUser || false;
+        if (isTaken && grade && isPowerUser) {
+            // Determine grade class based on letter grade
+            let gradeClass = 'grade-other';
+            const gradeUpper = grade.toUpperCase();
+            if (gradeUpper.startsWith('A')) {
+                gradeClass = 'grade-a';
+            } else if (gradeUpper.startsWith('B')) {
+                gradeClass = 'grade-b';
+            } else if (gradeUpper.startsWith('C') || gradeUpper.startsWith('D')) {
+                gradeClass = 'grade-cd';
+            } else if (gradeUpper.startsWith('F') || gradeUpper.startsWith('R')) {
+                gradeClass = 'grade-fail';
+            } else if (gradeUpper === 'DISC') {
+                gradeClass = 'grade-disc';
+            }
+            gradeBadge = `<span class="grade-badge ${gradeClass}">${grade}</span>`;
+        }
+
         return `
             ${checkbox}
             <div class="c-headline">
                 <span class="c-code">${cId} (${credits}cr)</span>
+                ${gradeBadge}
                 <span class="c-title">${title}</span>
             </div>
             <div class="c-meta">
@@ -552,7 +574,7 @@ document.addEventListener("DOMContentLoaded", () => {
             div.ondragstart    = window.drag;
             div.innerHTML      = generateCourseHTML(
                 isCvteWt ? `${displayId} (${c.id})` : c.id,
-                isWt ? 0 : c.credit, dbCourse, true);
+                isWt ? 0 : c.credit, dbCourse, true, c.grade);
             div.onclick        = () => window.showCourseInfo(displayId);
 
             let cYearBase = parseInt(c.year.split('-')[0]);
@@ -1006,11 +1028,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 btnSubmit.style.opacity = '0.45';
                 btnSubmit.style.cursor = 'not-allowed';
             }
-            // Show approve/rework wrapper
-            const aw = document.getElementById('approveWrapper');
-            if (aw) aw.style.display = '';
-            const abw = document.getElementById('approveButtonWrapper');
-            if (abw) abw.style.display = '';
+            // Approve/rework buttons are now always visible for power users
         }, 500);
     }
 
@@ -1663,6 +1681,8 @@ window.insertCannedComment = function(type) {
         msg = "Due to low academic performance, student cannot go on next scheduled WT; must re-sequence. This places the student on Probation (still with CO-OP, but no work terms; this has no impact on MIAE Program and course registration). Student's status in CO-OP Program will be re-evaluated every term upon academic performance.";
     } else if (type === 2) {
         msg = "Due to low academic performance, apply one of the two: if next term WT is already secured, the one after (next next one) cannot be placed in the subsequent 2 terms, and will be approved pending academic performance improvement. If next term WT is not already secured, it must be re-scheduled at earliest 2 terms later and will be approved pending academic performance improvement. In either case, a change of sequence is requested. This places the student on Probation (still with CO-OP, but no work term; this has no impact on MIAE Program and course registration). Student's status in CO-OP Program will be re-evaluated every term upon academic performance.";
+    } else if (type === 3) {
+        msg = "Hello,\n\nI am sorry you are in this situation. As a reminder, the minimum CGPA requirement for all undergraduate Engineering and Computer Science programs is outlined here: https://www.concordia.ca/academics/co-op/internships.html (select your program)\n\nTechnically, students with a CGPA below the minimum should be withdrawn immediately; also, we cannot authorize a work term if a student hasn't demonstrated the minimum required engineering knowledge. This fundamental knowledge is directly measured by your GPA (at least 0.2 above the withdrawal GPA), and a low GPA indicates that this requirement has not yet been met.\n\nWhile we are willing to offer a second chance to improve student's academic standing, we are facing a procedural issue: final grades generally come in after the search term starts, and we cannot allow a search term prior to the posting of the grades. This explains the decision we had to take to postpone your internship by 2 terms.\n\nAs soon as your grades are in and your CGPA shows a major improvement, we will remove the restriction.\n\nI am confident this unpleasant situation is only a temporary one, and that your grades next term will make past term become forgotten history.\n\nRegards,";
     }
     
     // Format: [date time, email]: message\n\nold text
@@ -1838,10 +1858,7 @@ window.processApproval = async function(action) {
             alert(`${action} successfully.`);
             sessionStorage.removeItem('_pendingLoad');
             sessionStorage.removeItem('_pendingSeqId');
-            const aw = document.getElementById('approveWrapper');
-            if (aw) aw.style.display = 'none';
-            const abw = document.getElementById('approveButtonWrapper');
-            if (abw) abw.style.display = 'none';
+            // Approve/rework buttons remain visible for power users
         } else {
             hideSpinner();
             alert(`Failed: ${res.error || 'Unknown error'}`);
@@ -2466,26 +2483,26 @@ window._autoPlaceLegacyImpl = function() {
 window.autoPlace = function() {
     const unallocZone = document.getElementById('zone_Unallocated');
     if (!unallocZone) return;
-    showSpinner('Auto-placing courses…');
+    showSpinner('Auto-placing courses (graph search)…');
     setTimeout(() => { window._autoPlaceImpl(); }, 0);
 };
 window._autoPlaceImpl = function() {
     const unallocZone = document.getElementById('zone_Unallocated');
     if (!unallocZone) { hideSpinner(); return; }
 
-    // 0) Move all non-taken, non-pinned, non-past courses back to Unallocated (so we start clean)
+    // ─── 0) Reset: move all non-taken, non-pinned, non-past courses back to Unallocated ───
     document.querySelectorAll('.drop-zone').forEach(zone => {
         if (zone.id === 'zone_Unallocated' || zone.id === 'zone_Y0') return;
         if (isAutoPlaceBlocked(zone)) return;
         Array.from(zone.children).forEach(child => {
             if (!child.classList.contains('course-box')) return;
             if (child.classList.contains('course-taken')) return;
-            if (child.dataset.pinned === 'true') return; // pinned stays fixed
+            if (child.dataset.pinned === 'true') return;
             unallocZone.appendChild(child);
         });
     });
 
-    // 1) Build list of future zones
+    // ─── 1) Build list of future zones (chronological) ───
     const zones = [];
     document.querySelectorAll('.drop-zone').forEach(z => {
         if (z.id === 'zone_Unallocated' || z.id === 'zone_Y0') return;
@@ -2500,7 +2517,7 @@ window._autoPlaceImpl = function() {
         return;
     }
 
-    // 2) Zone capacity helpers (credits + count), respecting per-term overrides & WT rules
+    // ─── 2) Zone capacity helpers ───
     function getZoneLimits(zoneEl) {
         const isSummer  = zoneEl.dataset.isSummer === 'true';
         const hardMaxCr = parseFloat(zoneEl.dataset.hardMaxCr || (isSummer ? 16 : 18));
@@ -2511,69 +2528,20 @@ window._autoPlaceImpl = function() {
         };
     }
 
-    // Initialize zone state from fixed boxes (taken + pinned + WT)
-    const zoneState = {};
-    zones.forEach(z => {
-        const lim = getZoneLimits(z.el);
-        zoneState[z.id] = { curCr: 0, curCnt: 0, hasWT: false, wtCnt: 0, regularCnt: 0, lim };
-        Array.from(z.el.children).forEach(box => {
-            if (!box.classList.contains('course-box')) return;
-            const cr = parseFloat(box.dataset.credit || 0);
-            zoneState[z.id].curCr += cr;
-            zoneState[z.id].curCnt += 1;
-            if (box.classList.contains('wt')) {
-                zoneState[z.id].hasWT = true;
-                zoneState[z.id].wtCnt += 1;
-            } else {
-                zoneState[z.id].regularCnt += 1;
-            }
-        });
-    });
-
-    function canFitInZone(box, zid) {
-        const st = zoneState[zid];
-        if (!st) return false;
-        const cr = parseFloat(box.dataset.credit || 0);
-
-        // Hard WT constraint: if term has a WT, allow at most 1 regular course alongside it
-        if (st.hasWT && !box.classList.contains('wt')) {
-            if (st.regularCnt >= 1) return false;
-        }
-
-        // Standard limits
-        if (st.curCnt + 1 > st.lim.maxCnt) return false;
-        if (st.curCr + cr > st.lim.maxCr + 0.01) return false;
-        return true;
-    }
-
-    function applyToZone(box, zid) {
-        const st = zoneState[zid];
-        const cr = parseFloat(box.dataset.credit || 0);
-        st.curCr += cr;
-        st.curCnt += 1;
-        if (box.classList.contains('wt')) {
-            st.hasWT = true;
-            st.wtCnt += 1;
-        } else {
-            st.regularCnt += 1;
-        }
-    }
-
-
-    // 3) Build fixed assignments snapshot (taken + pinned + WT)
-    const fixed = new Map(); // displayId -> { zid, ord }
+    // ─── 3) Fixed assignments (taken + pinned + WT already on grid) ───
+    const fixedMap = new Map(); // displayId -> { zid, ord }
     document.querySelectorAll('.drop-zone').forEach(zone => {
         if (zone.id === 'zone_Unallocated') return;
         Array.from(zone.children).forEach(box => {
             if (!box.classList.contains('course-box')) return;
             if (box.classList.contains('course-taken') || box.dataset.pinned === 'true' || box.classList.contains('wt')) {
                 const did = getBoxDisplayId(box);
-                fixed.set(did, { zid: zone.id, ord: getTermOrdFromZoneId(zone.id) });
+                fixedMap.set(did, { zid: zone.id, ord: getTermOrdFromZoneId(zone.id) });
             }
         });
     });
 
-    // 4) Courses to place (exclude WT; exclude taken; exclude pinned; exclude TE and OTHER)
+    // ─── 4) Courses to place (same filters as before) ───
     const boxesToPlace = Array.from(unallocZone.querySelectorAll('.course-box'))
         .filter(b => !b.classList.contains('course-taken'))
         .filter(b => !b.classList.contains('wt'))
@@ -2581,9 +2549,9 @@ window._autoPlaceImpl = function() {
         .filter(b => {
             const cid = (b.dataset.courseId || '').toUpperCase();
             const db = lookupCourse(cid);
-            if (!db || db._unknown) return false; // OTHER / unknown
+            if (!db || db._unknown) return false;
             const t = String(db['CORE_TE'] || '').toUpperCase();
-            return !t.includes('TE') || t.includes('CORE'); // exclude pure TE (but keep CORE-TE if any)
+            return !t.includes('TE') || t.includes('CORE');
         });
 
     if (!boxesToPlace.length) {
@@ -2592,21 +2560,21 @@ window._autoPlaceImpl = function() {
         return;
     }
 
-    // 5) Requirement resolver + scoring
-    const allCourseIds = new Set([...fixed.keys(), ...boxesToPlace.map(getBoxDisplayId)]);
+    const byDisplayId = new Map(boxesToPlace.map(b => [getBoxDisplayId(b), b]));
+    const allCourseIds = new Set([...fixedMap.keys(), ...boxesToPlace.map(getBoxDisplayId)]);
 
+    // ─── 5) Build prereq DAG among placeable courses ───
+    function getReqSegments(dbField) {
+        return String(dbField || '').split(/[;,]/).map(s => s.trim()).filter(Boolean);
+    }
     function resolveCandidates(reqId) {
         const r = normDisplayId(reqId);
         const out = [];
         if (allCourseIds.has(r)) out.push(r);
         const base = r.replace(/[AB]$/, '');
-        // If exact not found, allow base match to any existing course id
         if (out.length === 0) {
-            allCourseIds.forEach(id => {
-                if (id.replace(/[AB]$/, '') === base) out.push(id);
-            });
+            allCourseIds.forEach(id => { if (id.replace(/[AB]$/, '') === base) out.push(id); });
         }
-        // Special: if base refers to 490 and suffix missing, prefer 490A first then 490B
         if (/490$/.test(base)) {
             out.sort((a, b) => {
                 const aW = a.endsWith('490A') ? 0 : a.endsWith('490B') ? 1 : 2;
@@ -2617,23 +2585,16 @@ window._autoPlaceImpl = function() {
         return [...new Set(out)];
     }
 
-    function getReqSegments(dbField) {
-        return String(dbField || '').split(/[;,]/).map(s => s.trim()).filter(Boolean);
-    }
+    // Forward edges: prereq → Set(dependent)
+    const fwdEdges = new Map();
+    // Backward edges: course → Set(its prereqs) — only among placeable courses
+    const bwdEdges = new Map();
 
-    // Build prereq edges among placeable courses (displayId based)
-    const prereqEdges = new Map(); // prereq -> Set(course)
-    const indeg = new Map();       // course -> count
-    const byDisplayId = new Map(boxesToPlace.map(b => [getBoxDisplayId(b), b]));
-    boxesToPlace.forEach(b => indeg.set(getBoxDisplayId(b), 0));
-
-    function addEdge(a, b) {
-        if (!prereqEdges.has(a)) prereqEdges.set(a, new Set());
-        if (!prereqEdges.get(a).has(b)) {
-            prereqEdges.get(a).add(b);
-            indeg.set(b, (indeg.get(b) || 0) + 1);
-        }
-    }
+    boxesToPlace.forEach(b => {
+        const did = getBoxDisplayId(b);
+        if (!fwdEdges.has(did)) fwdEdges.set(did, new Set());
+        if (!bwdEdges.has(did)) bwdEdges.set(did, new Set());
+    });
 
     boxesToPlace.forEach(box => {
         const did = getBoxDisplayId(box);
@@ -2642,104 +2603,88 @@ window._autoPlaceImpl = function() {
         getReqSegments(db['PRE-REQUISITE']).forEach(seg => {
             const ids = parseReqIdsPreserve(seg).flatMap(resolveCandidates);
             ids.forEach(pid => {
-                if (byDisplayId.has(pid)) addEdge(pid, did);
+                if (byDisplayId.has(pid) && pid !== did) {
+                    if (!fwdEdges.has(pid)) fwdEdges.set(pid, new Set());
+                    fwdEdges.get(pid).add(did);
+                    bwdEdges.get(did).add(pid);
+                }
             });
         });
     });
 
-    // Scoring: score = (min(nr_tot, 5) + l_max) * tt
-    // prereqEdges maps from → Set(to): "from" is prereq of "to" (forward edges)
+    // ─── 6) Compute longest backward chain and forward chain for each course ───
+    const backLenMemo = new Map();
+    function backLen(id, seen = new Set()) {
+        if (backLenMemo.has(id)) return backLenMemo.get(id);
+        if (seen.has(id)) return 0;
+        seen.add(id);
+        let mx = 0;
+        (bwdEdges.get(id) || new Set()).forEach(pred => {
+            if (byDisplayId.has(pred)) {
+                const l = 1 + backLen(pred, new Set(seen));
+                if (l > mx) mx = l;
+            }
+        });
+        // Also count prereqs that are already fixed (taken/pinned) — each adds 0 but allows chain to start
+        backLenMemo.set(id, mx);
+        return mx;
+    }
 
-    // l_max: longest forward path length from this course
     const fwdLenMemo = new Map();
     function fwdLen(id, seen = new Set()) {
         if (fwdLenMemo.has(id)) return fwdLenMemo.get(id);
         if (seen.has(id)) return 0;
         seen.add(id);
-        let max = 0;
-        (prereqEdges.get(id) || new Set()).forEach(succ => {
-            const l = 1 + fwdLen(succ, new Set(seen));
-            if (l > max) max = l;
-        });
-        fwdLenMemo.set(id, max);
-        return max;
-    }
-
-    // nr_tot: unique courses reachable forward (transitively)
-    const fwdReachMemo = new Map();
-    function fwdReach(id, seen = new Set()) {
-        if (fwdReachMemo.has(id)) return fwdReachMemo.get(id);
-        if (seen.has(id)) return new Set();
-        seen.add(id);
-        const all = new Set();
-        (prereqEdges.get(id) || new Set()).forEach(succ => {
-            all.add(succ);
-            fwdReach(succ, new Set(seen)).forEach(x => all.add(x));
-        });
-        fwdReachMemo.set(id, all);
-        return all;
-    }
-
-    // tt: term flexibility — offered in 3 terms→1, 2 terms→1.5, 1 term→2
-    function getCourseTT(box) {
-        const base = (box.dataset.courseId || '').toUpperCase();
-        const db = lookupCourse(base) || {};
-        const hasAnyX = ['SUM 1','SUM 2','FALL','WIN'].some(k => String(db[k]||'').toUpperCase() === 'X');
-        if (!hasAnyX) return 1; // ANY (no restriction)
-        const n = (['SUM 1','SUM 2'].some(k => String(db[k]||'').toUpperCase() === 'X') ? 1 : 0)
-                + (String(db['FALL']||'').toUpperCase() === 'X' ? 1 : 0)
-                + (String(db['WIN'] ||'').toUpperCase() === 'X' ? 1 : 0);
-        return n <= 1 ? 2 : n === 2 ? 1.5 : 1;
-    }
-
-    const score = new Map();
-    boxesToPlace.forEach(b => {
-        const id    = getBoxDisplayId(b);
-        const lMax  = fwdLen(id);
-        const nrTot = fwdReach(id).size;
-        const tt    = getCourseTT(b);
-        score.set(id, (Math.min(nrTot, 5) + lMax) * tt);
-    });
-
-    // Topological order with priority by score (higher first)
-    const queue = [];
-    indeg.forEach((d, id) => { if (d === 0) queue.push(id); });
-    queue.sort((a, b) => (score.get(b) - score.get(a)) || a.localeCompare(b));
-
-    const orderedIds = [];
-    const indeg2 = new Map(indeg);
-    const q = [...queue];
-    while (q.length) {
-        const id = q.shift();
-        orderedIds.push(id);
-        (prereqEdges.get(id) || new Set()).forEach(n => {
-            indeg2.set(n, indeg2.get(n) - 1);
-            if (indeg2.get(n) === 0) {
-                q.push(n);
-                q.sort((a, b) => (score.get(b) - score.get(a)) || a.localeCompare(b));
+        let mx = 0;
+        (fwdEdges.get(id) || new Set()).forEach(succ => {
+            if (byDisplayId.has(succ)) {
+                const l = 1 + fwdLen(succ, new Set(seen));
+                if (l > mx) mx = l;
             }
         });
-    }
-    // If cycles or disconnected, append remaining by score
-    if (orderedIds.length < boxesToPlace.length) {
-        const remaining = boxesToPlace.map(getBoxDisplayId).filter(id => !orderedIds.includes(id));
-        remaining.sort((a, b) => (score.get(b) - score.get(a)) || a.localeCompare(b));
-        orderedIds.push(...remaining);
+        fwdLenMemo.set(id, mx);
+        return mx;
     }
 
-    // 6) Candidate zones per course (earliest first)
+    // Compute chain lengths
+    const chainInfo = new Map();
+    boxesToPlace.forEach(b => {
+        const id = getBoxDisplayId(b);
+        chainInfo.set(id, { back: backLen(id), fwd: fwdLen(id) });
+    });
+
+    // ─── 7) Standard sequence lookup (for scoring) ───
+    const sequencesDb = window.APP_CONFIG.sequencesDb || [];
+    const progSel     = document.getElementById('programSelect');
+    const progKey     = progSel ? getProgramKey(progSel.value) : null;
+    const sYearStr    = document.getElementById('startYear').value;
+    const baseYear    = parseInt(sYearStr.split('-')[0]);
+
+    // Map: courseId -> standard zone ord
+    const stdOrdMap = new Map();
+    if (sequencesDb.length && progKey) {
+        sequencesDb.filter(s => s.PROGRAM_KEY === progKey).forEach(entry => {
+            const cid = String(entry.COURSE).replace(/\s/g, '').toUpperCase();
+            const pos = String(entry.POSITION).trim();
+            const zid = positionToZoneId(pos, baseYear);
+            if (zid) stdOrdMap.set(cid, getTermOrdFromZoneId(zid));
+        });
+    }
+
+    // ─── 8) Offering check ───
     function isOfferedInSeason(db, season) {
         const hasAnyX = ['SUM 1','SUM 2','FALL','WIN'].some(k => String(db[k] || '').toUpperCase() === 'X');
-        if (!hasAnyX) return true; // ANY
+        if (!hasAnyX) return true;
         if (season === 'Summer') return ['SUM 1','SUM 2'].some(k => String(db[k] || '').toUpperCase() === 'X');
         if (season === 'Fall')   return String(db['FALL'] || '').toUpperCase() === 'X';
         if (season === 'Winter') return String(db['WIN']  || '').toUpperCase() === 'X';
         return true;
     }
 
-    const candidates = new Map(); // displayId -> [{zid, ord}]
-    orderedIds.forEach(id => {
+    // Build candidate zones per course
+    function getCandidateZones(id) {
         const box = byDisplayId.get(id);
+        if (!box) return [];
         const base = (box.dataset.courseId || '').toUpperCase();
         const db = lookupCourse(base) || {};
         const is490A = /490A$/.test(id);
@@ -2751,88 +2696,466 @@ window._autoPlaceImpl = function() {
             if (!isOfferedInSeason(db, z.season)) return;
             list.push({ zid: z.id, ord: z.ord, season: z.season });
         });
-        candidates.set(id, list);
-    });
+        return list;
+    }
 
-    // 7) Constraint checks
-    const placed = new Map(fixed); // displayId -> {zid, ord}
-    function getPlacedOrd(id) { return placed.get(id)?.ord; }
+    // ─── 9) State-based solver with backtracking (operates on pure data, not DOM) ───
+    // State: assignment map courseId -> zid, zone usage map
 
-    function prereqOk(courseId, targetOrd) {
+    function buildInitialZoneUsage() {
+        const usage = {};
+        zones.forEach(z => {
+            const lim = getZoneLimits(z.el);
+            usage[z.id] = { curCr: 0, curCnt: 0, hasWT: false, wtCnt: 0, regularCnt: 0, lim };
+            // Count fixed boxes in this zone
+            Array.from(z.el.children).forEach(box => {
+                if (!box.classList.contains('course-box')) return;
+                const cr = parseFloat(box.dataset.credit || 0);
+                usage[z.id].curCr += cr;
+                usage[z.id].curCnt += 1;
+                if (box.classList.contains('wt')) {
+                    usage[z.id].hasWT = true;
+                    usage[z.id].wtCnt += 1;
+                } else {
+                    usage[z.id].regularCnt += 1;
+                }
+            });
+        });
+        return usage;
+    }
+
+    function cloneUsage(u) {
+        const c = {};
+        for (const k in u) {
+            c[k] = { ...u[k], lim: { ...u[k].lim } };
+        }
+        return c;
+    }
+
+    function canFitState(id, zid, usage) {
+        const st = usage[zid];
+        if (!st) return false;
+        const box = byDisplayId.get(id);
+        const cr = parseFloat(box.dataset.credit || 0);
+        if (st.hasWT && !box.classList.contains('wt')) {
+            if (st.regularCnt >= 1) return false;
+        }
+        if (st.curCnt + 1 > st.lim.maxCnt) return false;
+        if (st.curCr + cr > st.lim.maxCr + 0.01) return false;
+        return true;
+    }
+
+    function applyState(id, zid, usage) {
+        const st = usage[zid];
+        const box = byDisplayId.get(id);
+        const cr = parseFloat(box.dataset.credit || 0);
+        st.curCr += cr;
+        st.curCnt += 1;
+        if (box.classList.contains('wt')) {
+            st.hasWT = true;
+            st.wtCnt += 1;
+        } else {
+            st.regularCnt += 1;
+        }
+    }
+
+    function prereqsSatisfied(courseId, targetOrd, assignment) {
         const box = byDisplayId.get(courseId);
+        if (!box) return false;
         const base = (box.dataset.courseId || '').toUpperCase();
         const db = lookupCourse(base) || {};
 
-        // prereqs: each segment must have at least one candidate placed earlier
+        // Check prereqs: each segment needs at least one candidate placed strictly before targetOrd
         const preSegs = getReqSegments(db['PRE-REQUISITE']);
         for (const seg of preSegs) {
             const ids = parseReqIdsPreserve(seg).flatMap(resolveCandidates);
             if (!ids.length) continue;
             const ok = ids.some(pid => {
-                const o = getPlacedOrd(pid);
-                return (o !== undefined) && (o < targetOrd);
-            });
-            if (!ok) return false;
-        }
-
-        // coreqs: each segment must have at least one candidate placed same/earlier,
-        // OR (if not yet placed) it must be placeable in <= this term.
-        const coSegs = getReqSegments(db['CO-REQUISITE']);
-        for (const seg of coSegs) {
-            const ids = parseReqIdsPreserve(seg).flatMap(resolveCandidates);
-            if (!ids.length) continue;
-
-            const ok = ids.some(cid => {
-                const o = getPlacedOrd(cid);
-                if (o !== undefined) return o <= targetOrd;
-                // unplaced: allow if it has some candidate zone with ord <= targetOrd
-                if (candidates.has(cid)) return candidates.get(cid).some(z => z.ord <= targetOrd);
+                // Check fixed
+                const f = fixedMap.get(pid);
+                if (f && f.ord < targetOrd) return true;
+                // Check assignment
+                const azid = assignment.get(pid);
+                if (azid) {
+                    const aord = getTermOrdFromZoneId(azid);
+                    return aord < targetOrd;
+                }
                 return false;
             });
             if (!ok) return false;
         }
 
-        // Special 490A/B linkage: B must be Winter of same academic year as A (Fall)
-        // Exception: if 490A is in zone_Y0 (past/exempt), allow any Winter zone
+        // Check coreqs: same or earlier
+        const coSegs = getReqSegments(db['CO-REQUISITE']);
+        for (const seg of coSegs) {
+            const ids = parseReqIdsPreserve(seg).flatMap(resolveCandidates);
+            if (!ids.length) continue;
+            const ok = ids.some(cid => {
+                const f = fixedMap.get(cid);
+                if (f && f.ord <= targetOrd) return true;
+                const azid = assignment.get(cid);
+                if (azid) return getTermOrdFromZoneId(azid) <= targetOrd;
+                // Not yet placed: allow if it has candidate zones <= targetOrd
+                const cands = getCandidateZones(cid);
+                return cands.some(z => z.ord <= targetOrd);
+            });
+            if (!ok) return false;
+        }
+
+        // 490A/B linkage
         if (/490B$/.test(courseId)) {
             const aId = courseId.replace(/B$/, 'A');
-            const a = placed.get(aId);
-            if (a) {
-                const aYear = a.zid.match(/zone_(\d{4})-/)?.[1];
+            const aZid = assignment.get(aId) || fixedMap.get(aId)?.zid;
+            if (aZid) {
+                const aYear = aZid.match(/zone_(\d{4})-/)?.[1];
                 if (aYear) {
-                    // 490A is in a regular grid zone — enforce same academic year, Fall→Winter
                     const bZone = zones.find(z => z.ord === targetOrd);
                     const bYear = bZone?.id?.match(/zone_(\d{4})-/)?.[1];
-                    const aSeason = a.zid.split('_').pop();
+                    const aSeason = aZid.split('_').pop();
                     const bSeason = bZone?.season;
                     if (!(bYear && aYear === bYear && aSeason === 'Fall' && bSeason === 'Winter')) return false;
                 }
-                // If aYear is undefined (zone_Y0), allow any Winter — candidates already restrict 490B to Winter
             }
         }
-
         return true;
     }
 
-    // 8) Greedy placement: process in topological order (prereqs first), place in earliest valid zone
-    const assign = new Map(); // courseId -> zid
+    // ─── 10) Score a configuration ───
+    // Pure data score (no DOM needed) — distance + unplaced penalties
+    function scoreConfigBase(assignment) {
+        let distScore = 0;
+        let unplacedCore = 0;
+        let unplacedEcp  = 0;
 
-    orderedIds.forEach(cid => {
-        const box = byDisplayId.get(cid);
-        if (!box) return;
-        const cand = candidates.get(cid) || [];
-        for (const { zid, ord } of cand) {
-            if (!canFitInZone(box, zid)) continue;
-            if (!prereqOk(cid, ord)) continue;
-            assign.set(cid, zid);
-            placed.set(cid, { zid, ord });
-            applyToZone(box, zid);
-            break; // earliest valid slot found
+        boxesToPlace.forEach(b => {
+            const id = getBoxDisplayId(b);
+            const base = (b.dataset.courseId || '').toUpperCase();
+            const db = lookupCourse(base) || {};
+            const t = String(db['CORE_TE'] || '').toUpperCase();
+            const isEcp = t.includes('ECP');
+
+            if (!assignment.has(id)) {
+                if (isEcp) unplacedEcp++;
+                else unplacedCore++;
+                return;
+            }
+
+            // Distance from standard sequence (only for non-ECP)
+            if (!isEcp && stdOrdMap.has(id)) {
+                const placedOrd = getTermOrdFromZoneId(assignment.get(id));
+                const stdOrd = stdOrdMap.get(id);
+                distScore += Math.abs(placedOrd - stdOrd);
+            }
+        });
+
+        // Penalty: unplaced courses are very expensive (100 per core, 50 per ECP)
+        return distScore + unplacedCore * 100 + unplacedEcp * 50;
+    }
+
+    // Set of displayIds placed by the solver (to distinguish from taken/pinned/WT)
+    const solverPlacedIds = new Set();
+
+    // Full score: apply assignment to DOM → run validateGrid → count course-level errors
+    // on solver-placed boxes only → restore DOM. Returns { score, validationErrors }.
+    function scoreConfigWithValidation(assignment) {
+        const baseScore = scoreConfigBase(assignment);
+
+        // ── Temporarily apply assignment to DOM ──
+        // Remember where each solver-placed box currently is (should be Unallocated)
+        const savedParents = new Map();
+        solverPlacedIds.clear();
+
+        assignment.forEach((zid, cid) => {
+            const box = byDisplayId.get(cid);
+            if (!box) return;
+            solverPlacedIds.add(cid);
+            savedParents.set(cid, box.parentElement);
+            const zoneEl = document.getElementById(zid);
+            if (zoneEl) zoneEl.appendChild(box);
+        });
+
+        // ── Run validateGrid silently ──
+        // validateGrid writes error badges onto course-box elements and populates
+        // the issues panel. We call it, then inspect the boxes.
+        if (window.validateGrid) window.validateGrid();
+
+        // ── Collect errors ONLY on solver-placed boxes ──
+        let validationErrorCount = 0;
+        const validationErrors = [];
+
+        assignment.forEach((_zid, cid) => {
+            const box = byDisplayId.get(cid);
+            if (!box) return;
+            // Check if validateGrid marked this box with an error
+            // validateGrid adds class 'cv-error' for error-severity issues
+            // and appends a div.cv-error-line with the message
+            if (box.classList.contains('cv-error')) {
+                validationErrorCount++;
+                const errLine = box.querySelector('.cv-error-line');
+                if (errLine) {
+                    validationErrors.push(`${cid}: ${errLine.innerText.replace(/^▶\s*/, '')}`);
+                }
+            }
+        });
+
+        // ── Restore DOM: move boxes back to their original parents ──
+        savedParents.forEach((parent, cid) => {
+            const box = byDisplayId.get(cid);
+            if (box && parent) parent.appendChild(box);
+        });
+
+        // Clear validation badges that validateGrid added (clean slate for next attempt)
+        boxesToPlace.forEach(b => {
+            b.classList.remove('cv-warning', 'cv-error');
+            const el = b.querySelector('.cv-error-line');
+            if (el) el.remove();
+        });
+
+        // Each validation error on a solver-placed course adds a heavy penalty (200 per error)
+        const totalScore = baseScore + validationErrorCount * 200;
+        return { score: totalScore, validationErrors, validationErrorCount };
+    }
+
+    // ─── 11) Sort courses: highest backLen first (deepest prereq chain) ───
+    const sortedByBack = [...boxesToPlace].map(b => getBoxDisplayId(b))
+        .sort((a, b) => {
+            const ba = chainInfo.get(a), bb = chainInfo.get(b);
+            // Primary: backLen desc
+            if (bb.back !== ba.back) return bb.back - ba.back;
+            // Secondary: total chain (back + fwd) desc
+            return (bb.back + bb.fwd) - (ba.back + ba.fwd);
+        });
+
+    // ─── 12) Recursive chain placer with backtracking ───
+    // We limit total iterations to avoid hanging on large course sets
+    const MAX_ITERATIONS = 50000;
+    let iterations = 0;
+    let bestAssignment = null;
+    let bestScore = Infinity;
+
+    // Get all prereqs of a course that still need placement (not fixed, not yet in assignment)
+    function getUnplacedPrereqs(id, assignment) {
+        return [...(bwdEdges.get(id) || [])].filter(pid =>
+            byDisplayId.has(pid) && !assignment.has(pid) && !fixedMap.has(pid)
+        );
+    }
+
+    // Get all direct dependents (courses that list id as prereq) still needing placement
+    function getUnplacedDependents(id, assignment) {
+        return [...(fwdEdges.get(id) || [])].filter(did =>
+            byDisplayId.has(did) && !assignment.has(did) && !fixedMap.has(did)
+        );
+    }
+
+    // Try to place a course and then recursively place its prereq chain backward,
+    // then proceed forward to dependents. Returns true if we found a complete placement for the sub-chain.
+    function placeChainBackward(id, assignment, usage, maxOrd) {
+        if (iterations >= MAX_ITERATIONS) return;
+        if (assignment.has(id)) return; // already placed
+
+        // Find candidate zones for this course, filtered by maxOrd
+        const cands = getCandidateZones(id).filter(z => z.ord <= maxOrd);
+
+        // Try standard sequence position first if it fits
+        const stdOrd = stdOrdMap.get(id);
+        if (stdOrd !== undefined) {
+            cands.sort((a, b) => {
+                const da = Math.abs(a.ord - stdOrd);
+                const db2 = Math.abs(b.ord - stdOrd);
+                return da - db2;
+            });
         }
-    });
 
-    // 9) Apply placements to DOM (leave those not in assign in Unallocated)
-    assign.forEach((zid, cid) => {
+        for (const cand of cands) {
+            iterations++;
+            if (iterations >= MAX_ITERATIONS) return;
+
+            if (!canFitState(id, cand.zid, usage)) continue;
+            if (!prereqsSatisfied(id, cand.ord, assignment)) {
+                // Prereqs not yet placed — try to place them first (backward)
+                const unplacedPre = getUnplacedPrereqs(id, assignment);
+                if (unplacedPre.length > 0) {
+                    const savedAssignment = new Map(assignment);
+                    const savedUsage = cloneUsage(usage);
+                    let allPreOk = true;
+
+                    for (const pid of unplacedPre) {
+                        placeChainBackward(pid, assignment, usage, cand.ord - 1);
+                        if (!assignment.has(pid)) { allPreOk = false; break; }
+                    }
+
+                    if (allPreOk && prereqsSatisfied(id, cand.ord, assignment)) {
+                        // prereqs were placed, now place this course
+                        if (canFitState(id, cand.zid, usage)) {
+                            assignment.set(id, cand.zid);
+                            applyState(id, cand.zid, usage);
+                            return; // success
+                        }
+                    }
+
+                    // Backtrack prereq placements if this path didn't work
+                    // Restore state
+                    for (const [k, v] of savedAssignment) assignment.set(k, v);
+                    for (const k of [...assignment.keys()]) {
+                        if (!savedAssignment.has(k)) assignment.delete(k);
+                    }
+                    Object.assign(usage, cloneUsage(savedUsage));
+                    // Try next candidate zone
+                    continue;
+                }
+                continue; // prereqs can't be placed
+            }
+
+            // Prereqs satisfied, place this course
+            assignment.set(id, cand.zid);
+            applyState(id, cand.zid, usage);
+            return; // success
+        }
+    }
+
+    // ─── 13) Main solve: iterate through root courses (sorted by backLen desc) ───
+    // Try placing the deepest-chain course first, then its prereqs backward,
+    // then move to next unplaced course. Try shifting root if not all placed.
+
+    function solve() {
+        const assignment = new Map();
+        const usage = buildInitialZoneUsage();
+        iterations = 0;
+
+        // Process courses in chain-depth order
+        for (const rootId of sortedByBack) {
+            if (assignment.has(rootId)) continue;
+            if (iterations >= MAX_ITERATIONS) break;
+
+            // Try to place this course (with backward chain resolution)
+            const maxOrd = zones[zones.length - 1].ord;
+            placeChainBackward(rootId, assignment, usage, maxOrd);
+        }
+
+        // Now try to place any remaining courses greedily (forward pass)
+        const remaining = sortedByBack.filter(id => !assignment.has(id));
+        remaining.sort((a, b) => {
+            const ca = chainInfo.get(a), cb = chainInfo.get(b);
+            return (cb.back + cb.fwd) - (ca.back + ca.fwd);
+        });
+
+        for (const id of remaining) {
+            if (assignment.has(id)) continue;
+            const cands = getCandidateZones(id);
+            for (const cand of cands) {
+                if (!canFitState(id, cand.zid, usage)) continue;
+                if (!prereqsSatisfied(id, cand.ord, assignment)) continue;
+                assignment.set(id, cand.zid);
+                applyState(id, cand.zid, usage);
+                break;
+            }
+        }
+
+        return assignment;
+    }
+
+    // Run solver multiple times with different root orderings for diversity
+    function solveMulti() {
+        let bestValErrors = [];
+        let bestValCount  = 0;
+
+        function tryAttempt(label) {
+            iterations = 0;
+            const assignment = solve();
+            const result = scoreConfigWithValidation(assignment);
+            console.log(`Auto-place ${label}: score=${result.score}, valErrors=${result.validationErrorCount}, placed=${assignment.size}/${boxesToPlace.length}`);
+            if (result.score < bestScore) {
+                bestScore       = result.score;
+                bestAssignment  = new Map(assignment);
+                bestValErrors   = result.validationErrors;
+                bestValCount    = result.validationErrorCount;
+            }
+        }
+
+        // Attempt 1: default order (deepest backLen first)
+        tryAttempt('backLen-desc');
+
+        // Attempt 2: deepest total chain first (back+fwd)
+        sortedByBack.sort((a, b) => {
+            const ca = chainInfo.get(a), cb = chainInfo.get(b);
+            return (cb.back + cb.fwd) - (ca.back + ca.fwd);
+        });
+        tryAttempt('totalChain-desc');
+
+        // Attempt 3: deepest fwdLen first
+        sortedByBack.sort((a, b) => {
+            const ca = chainInfo.get(a), cb = chainInfo.get(b);
+            if (cb.fwd !== ca.fwd) return cb.fwd - ca.fwd;
+            return cb.back - ca.back;
+        });
+        tryAttempt('fwdLen-desc');
+
+        // Attempt 4: standard sequence order (courses that appear earliest in std seq first)
+        if (stdOrdMap.size > 0) {
+            sortedByBack.sort((a, b) => {
+                const sa = stdOrdMap.get(a) || 9999;
+                const sb = stdOrdMap.get(b) || 9999;
+                if (sa !== sb) return sa - sb;
+                const ca = chainInfo.get(a), cb = chainInfo.get(b);
+                return (cb.back + cb.fwd) - (ca.back + ca.fwd);
+            });
+            tryAttempt('stdSeq-order');
+        }
+
+        // If best still has validation errors, try more aggressive strategies:
+        // shift problematic courses to later slots by penalizing their current zones
+        if (bestValCount > 0 && bestAssignment) {
+            // Attempt 5: remove errored courses from assignment and re-solve remaining
+            const cleanAssignment = new Map(bestAssignment);
+            bestValErrors.forEach(errStr => {
+                const cid = errStr.split(':')[0].trim();
+                if (cleanAssignment.has(cid)) cleanAssignment.delete(cid);
+            });
+
+            // Try re-placing the removed courses in later positions
+            const removedIds = [];
+            bestValErrors.forEach(errStr => {
+                const cid = errStr.split(':')[0].trim();
+                if (byDisplayId.has(cid)) removedIds.push(cid);
+            });
+
+            if (removedIds.length > 0) {
+                // Rebuild usage from cleanAssignment
+                const usage = buildInitialZoneUsage();
+                cleanAssignment.forEach((zid, cid) => {
+                    applyState(cid, zid, usage);
+                });
+
+                // Try placing removed courses in later slots
+                removedIds.forEach(cid => {
+                    const cands = getCandidateZones(cid);
+                    for (const cand of cands) {
+                        if (!canFitState(cid, cand.zid, usage)) continue;
+                        if (!prereqsSatisfied(cid, cand.ord, cleanAssignment)) continue;
+                        cleanAssignment.set(cid, cand.zid);
+                        applyState(cid, cand.zid, usage);
+                        break;
+                    }
+                });
+
+                const result = scoreConfigWithValidation(cleanAssignment);
+                console.log(`Auto-place retry-errored: score=${result.score}, valErrors=${result.validationErrorCount}, placed=${cleanAssignment.size}/${boxesToPlace.length}`);
+                if (result.score < bestScore) {
+                    bestScore      = result.score;
+                    bestAssignment = new Map(cleanAssignment);
+                    bestValErrors  = result.validationErrors;
+                    bestValCount   = result.validationErrorCount;
+                }
+            }
+        }
+    }
+
+    solveMulti();
+
+    // ─── 14) Apply best assignment to DOM ───
+    const finalAssignment = bestAssignment || new Map();
+
+    finalAssignment.forEach((zid, cid) => {
         const box = byDisplayId.get(cid);
         const zoneEl = document.getElementById(zid);
         if (box && zoneEl) zoneEl.appendChild(box);
@@ -2840,12 +3163,13 @@ window._autoPlaceImpl = function() {
 
     window.updateCredits();
 
-    const placedN   = assign.size;
-    const totalN    = orderedIds.length;
-    const unplacedN = totalN - placedN;
+    const placedN     = finalAssignment.size;
+    const totalN      = boxesToPlace.length;
+    const unplacedN   = totalN - placedN;
     const wtUnplacedN = document.querySelectorAll('#zone_Unallocated .course-box.wt').length;
 
-    let msg = `Auto-place: placed ${placedN}/${totalN} courses.`;
+    let msg = `Auto-place (graph search): placed ${placedN}/${totalN} courses.`;
+    if (bestScore < Infinity) msg += `\nScore: ${bestScore} (lower = closer to standard sequence, 0 validation errors = ideal).`;
     if (unplacedN > 0) msg += `\n\n⚠ ${unplacedN} course(s) remain in Unallocated (no valid slot found — terms may be full or prereqs unresolved).`;
     if (wtUnplacedN > 0) msg += `\n\n⚠ ${wtUnplacedN} Work Term(s) not auto-placed — drag them manually.`;
     hideSpinner();
@@ -3800,23 +4124,91 @@ async function apiJson(url, method = 'GET', body = null) {
 }
 
 window.saveDraft = async function() {
+    // Generate default name with current date and time
+    const now = new Date();
+    const defaultName = `Draft ${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+    
+    // Prompt user for sequence name
+    const sequenceName = prompt('Enter a name for this sequence:', defaultName);
+    
+    // If user cancels, don't save
+    if (sequenceName === null) {
+        return;
+    }
+    
+    // Use the entered name or default if empty
+    const finalName = sequenceName.trim() || defaultName;
+    
     showSpinner('Saving draft…');
     try {
         const plan = collectPlanSnapshot();
         const payload = {
             status: "DRAFT",
+            name: finalName,
             plan,
             issues: currentIssues(),
             reason_code: getSelectedReasonCode(),
-            justification: getJustificationText()
+            justification: getJustificationText(),
+            term_summary: buildEmailTermSummary()
         };
         const res = await apiJson('/api/sequence/save', 'POST', payload);
         hideSpinner();
-        alert(`Saved draft. ID: ${res.sequence_id}`);
+        alert(`Saved draft: "${finalName}"\nID: ${res.sequence_id}`);
     } catch (e) {
         hideSpinner();
         console.error(e);
         alert(`Save failed: ${e.message}`);
+    }
+};
+
+window.handleLogout = async function(event) {
+    event.preventDefault();
+    
+    const isPowerUser = window.APP_CONFIG?.isPowerUser || false;
+    
+    // For non-power users, auto-save before logout
+    if (!isPowerUser) {
+        const confirmLogout = confirm('Save your current work before logging out?');
+        
+        if (confirmLogout) {
+            try {
+                // Auto-save with timestamp name
+                const now = new Date();
+                const autoSaveName = `Auto-save on logout ${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+                
+                showSpinner('Saving before logout…');
+                
+                const plan = collectPlanSnapshot();
+                const payload = {
+                    status: "DRAFT",
+                    name: autoSaveName,
+                    plan,
+                    issues: currentIssues(),
+                    reason_code: getSelectedReasonCode(),
+                    justification: getJustificationText(),
+                    term_summary: buildEmailTermSummary()
+                };
+                
+                await apiJson('/api/sequence/save', 'POST', payload);
+                hideSpinner();
+                
+                // Redirect to logout after successful save
+                window.location.href = '/logout';
+            } catch (e) {
+                hideSpinner();
+                console.error(e);
+                const proceedAnyway = confirm(`Save failed: ${e.message}\n\nDo you want to logout anyway?`);
+                if (proceedAnyway) {
+                    window.location.href = '/logout';
+                }
+            }
+        } else {
+            // User chose not to save, logout directly
+            window.location.href = '/logout';
+        }
+    } else {
+        // Power users logout directly without auto-save
+        window.location.href = '/logout';
     }
 };
 

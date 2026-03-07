@@ -49,6 +49,27 @@
 
         <div class="header-divider"></div>
 
+        {% if is_power_user %}
+        <!-- Admin view — power users only -->
+        <div class="header-section" style="gap:4px; position:relative;">
+            <input id="adminSidInput" placeholder="Search by ID or Name (min 4 chars)" value="{{ viewing_sid if viewing_sid != student_id else '' }}"
+                   style="padding:6px 10px; border:1px solid #cbd5e0; border-radius:4px; font-size:13px; width:220px;"
+                   autocomplete="off">
+            <div id="adminSearchDropdown" style="display:none; position:absolute; top:100%; left:0; background:#fff; border:1px solid #cbd5e0; border-radius:4px; box-shadow:0 4px 12px rgba(0,0,0,0.15); max-height:300px; overflow-y:auto; z-index:9999; width:400px; margin-top:2px;"></div>
+            <div style="display:flex; gap:4px;">
+                <button onclick="window.adminResetView()" title="Back to your own SID"
+                        style="background:#95a5a6; color:#fff; border:none; padding:6px 10px; border-radius:4px; font-size:12px; font-weight:700; cursor:pointer; flex:1;">
+                    Self
+                </button>
+                <button onclick="window.adminSwitchStudent()"
+                        style="background:#3498db; color:#fff; border:none; padding:6px 10px; border-radius:4px; font-size:12px; font-weight:700; cursor:pointer; flex:1;">
+                    Switch
+                </button>
+            </div>
+        </div>
+        <div class="header-divider"></div>
+        {% endif %}
+
         <!-- Save / Load -->
         <div style="display:flex; gap:4px; align-items:center;">
             <button onclick="window.saveDraft()"
@@ -67,19 +88,10 @@
                 </button>
                 <div id="pendingMenuDropdown" style="display:none;position:absolute;top:100%;right:0;background:#fff;border:1px solid #ddd;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.15);min-width:300px;max-height:350px;overflow-y:auto;z-index:9999;"></div>
             </div>
-            <!-- Admin SID input — inline after Pending -->
-            <div style="display:flex; gap:4px; align-items:center; margin-left:4px;">
-                <input id="adminSidInput" placeholder="Student ID" value="{{ viewing_sid if viewing_sid != student_id else '' }}"
-                       style="padding:6px 8px; border:1px solid #cbd5e0; border-radius:4px; font-size:13px; width:110px;">
-                <button onclick="window.adminResetView()" title="Back to your own SID"
-                        style="background:#95a5a6; color:#fff; border:none; padding:6px 8px; border-radius:4px; font-size:12px; font-weight:700; cursor:pointer;">
-                    Self
-                </button>
-                <button onclick="window.adminSwitchStudent()"
-                        style="background:#3498db; color:#fff; border:none; padding:6px 8px; border-radius:4px; font-size:12px; font-weight:700; cursor:pointer;">
-                    Switch
-                </button>
-            </div>
+            <button onclick="window.open('/admin_checks', '_blank')"
+                    style="background:#8e44ad;color:#fff;border:none;padding:6px 10px;border-radius:20px;font-size:12px;font-weight:bold;cursor:pointer;">
+                🔍 ADMIN CHECK
+            </button>
             {% endif %}
         </div>
 
@@ -88,10 +100,20 @@
             <div style="display:flex; flex-direction:column; align-items:flex-end; gap:2px;">
                 {% if is_power_user and viewing_sid != student_id %}
                 <span style="font-size:12px;"><b style="color:#e74c3c;">ADMIN</b> viewing <b>{{ viewing_sid }}</b>{% if viewing_name %} — {{ viewing_name }}{% endif %}</span>
-                <span style="font-size:11px;color:#888;"><span id="headerProgram"></span>{% if student_email %}&nbsp;<a id="adminEmailLink" href="#" onclick="window.adminOpenMailto(event)" title="Send message to student" style="color:#2980b9;text-decoration:underline dotted;">{{ student_email }}</a>{% endif %}</span>
                 {% else %}
                 <span style="font-size:12px;"><b>{{ viewing_sid }}</b>{% if student_email %} — {{ student_email }}{% endif %}</span>
+                {% endif %}
                 <span id="headerProgram" style="font-size:11px;color:#888;"></span>
+                {% if is_power_user and viewing_sid != student_id %}
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <a href="#" onclick="window.sendEmailToStudent(); return false;" style="font-size:11px; color:#3498db; text-decoration:none; font-weight:bold;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">
+                        📧 Email Student
+                    </a>
+                    <label style="font-size:10px; color:#666; display:flex; align-items:center; gap:4px; cursor:pointer;">
+                        <input type="checkbox" id="includeInstituteOps" style="width:12px; height:12px; accent-color:#e74c3c;">
+                        <span>SEQUENCE RESTRICTIONS</span>
+                    </label>
+                </div>
                 {% endif %}
                 <span style="font-size:11px;color:#aaa;">Logged in as: <b>{{ student_id }}</b>{% if student_name %} ({{ student_name }}){% endif %}</span>
             </div>
@@ -110,11 +132,14 @@
             {% if is_power_user %}
             <div id="approveWrapper" class="header-admin-actions" style="display:none;">
                 <div class="header-admin-btn-row">
-                    <button onclick="window.processApproval('APPROVED')" id="btnApprove" class="btn-admin-approve">
-                        ✅ APPROVE SEQUENCE
-                    </button>
                     <button onclick="window.processApproval('REWORK')" id="btnRework" class="btn-admin-rework">
                         🔄 REWORK
+                    </button>
+                    <button onclick="insertCannedComment(1)" style="background: #95a5a6; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-size: 11px; font-weight: bold; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.1); transition: 0.2s;" onmouseover="this.style.background='#7f8c8d'" onmouseout="this.style.background='#95a5a6'">
+                        ⚠️ Cannot go on WT - academic
+                    </button>
+                    <button onclick="insertCannedComment(2)" style="background: #95a5a6; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-size: 11px; font-weight: bold; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.1); transition: 0.2s;" onmouseover="this.style.background='#7f8c8d'" onmouseout="this.style.background='#95a5a6'">
+                        ⚠️ If no internship found must reschedule
                     </button>
                 </div>
                 <div id="approveCreditsInfo" class="header-admin-info"></div>
@@ -145,6 +170,11 @@
             <tbody id="tableBody"></tbody>
         </table>
 
+        <!-- Credit Summary (always visible) -->
+        <div id="creditSummaryPanel" style="background:#f8f9fa; border:1px solid #e5e5e5; border-radius:6px; padding:8px; margin-top:12px; font-size:11px; color:#333; line-height:1.6;">
+            <b>Credit Summary:</b> <span id="creditSummaryContent">—</span>
+        </div>
+
         <!-- ===== SEQUENCE SUBMISSION (below table) ===== -->
         <div class="submission-panel-below" id="submissionPanel">
             <div style="display:flex; gap:12px; align-items:flex-start;">
@@ -168,11 +198,6 @@
                             <label class="reason-item"><input type="radio" name="submissionReason" value="8"> 8) My WT is or will be extended </label>
                             <label class="reason-item"><input type="radio" name="submissionReason" value="9"> 9) Other personal reasons: see my comments</label>
                         </div>
-                    </div>
-
-                    <!-- Credit Summary line -->
-                    <div id="creditSummaryPanel" style="background:#f8f9fa; border:1px solid #e5e5e5; border-radius:6px; padding:8px; font-size:11px; color:#333; line-height:1.6;">
-                        <b>Credit Summary:</b> <span id="creditSummaryContent">—</span>
                     </div>
 
                     <!-- Course Breakdown by Category -->
@@ -290,6 +315,15 @@
 
 </div><!-- end layout-wrapper -->
 
+{% if is_power_user %}
+<!-- Full-width Approve button at the end -->
+<div id="approveButtonWrapper" style="display:none; margin: 20px; padding: 15px; background: #e8f6f3; border: 2px solid #27ae60; border-radius: 8px;">
+    <button onclick="window.processApproval('APPROVED')" id="btnApprove" style="width:100%; background:#27ae60; color:white; border:none; padding:15px; border-radius:6px; font-weight:bold; font-size:16px; cursor:pointer; box-shadow:0 4px 6px rgba(0,0,0,0.1); transition: 0.2s;" onmouseover="this.style.background='#229954'" onmouseout="this.style.background='#27ae60'">
+        ✅ APPROVE SEQUENCE
+    </button>
+</div>
+{% endif %}
+
 <!-- App config passed from Flask -->
 <script>
     window.APP_CONFIG = {
@@ -300,16 +334,18 @@
         sequencesDb:    {{ sequences_db   | safe if sequences_db   else '[]' }},
         restrictionsDb:   {{ restrictions_db    | safe if restrictions_db    else '[]' }},
         programNamesDb:   {{ program_names_db   | safe if program_names_db   else '[]' }},
+        programsRequirementsDb: {{ programs_requirements_db | safe if programs_requirements_db else '[]' }},
         ugrdProgs:      {{ ugrd_programs  | safe if ugrd_programs  else '[]' }},
         gradProgs:      {{ grad_programs  | safe if grad_programs  else '[]' }},
         allProgs:       {{ all_programs   | safe if all_programs   else '[]' }},
         isGuest:        {{ 'true' if is_guest else 'false' }},
         isGrad:         {{ 'true' if is_grad  else 'false' }},
         detectedProgram: "{{ detected_program }}",
+        disciplineDescr: "{{ discipline_descr or '' }}",
         isPowerUser: {{ 'true' if is_power_user else 'false' }},
         studentId: "{{ student_id }}",
         viewingSid: "{{ viewing_sid }}",
-        studentName: "{{ student_name or viewing_name or viewing_sid }}",
+        studentName: "{{ viewing_name or student_name or viewing_sid }}",
         studentEmail: "{{ student_email or '' }}",
         adminEmail: "{{ admin_email or '' }}",
         initialPlan: {{ initial_plan | safe if initial_plan else 'null' }},

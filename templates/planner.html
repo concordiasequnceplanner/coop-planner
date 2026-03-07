@@ -12,6 +12,12 @@
     <div id="spinnerMsg" style="color:#555;font-size:15px;font-weight:600;">Loading…</div>
 </div>
 
+{% if is_debug %}
+<div style="background:#ff0000;color:#fff;text-align:center;padding:6px 0;font-weight:900;font-size:14px;letter-spacing:2px;position:sticky;top:0;z-index:9999;">
+    ⚠ DEBUG MODE — emails redirected to debug address ⚠
+</div>
+{% endif %}
+
 <div class="header-box">
 
     <!-- ===== ROW 1: Controls ===== -->

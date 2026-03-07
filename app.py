@@ -26,6 +26,7 @@ from utils import (
     load_sequences,
     load_restrictions,
     get_email_recipients,
+    debug_no_emails,
 )
 
 # =========================================================
@@ -652,6 +653,7 @@ def planner_page():
             admin_email=admin_email,
             initial_plan=initial_plan,
             initial_plan_id=initial_plan_id,
+            is_debug=(debug_no_emails == "DEBUG"),
         )
 
     except Exception as e:

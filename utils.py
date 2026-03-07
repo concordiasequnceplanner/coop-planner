@@ -46,6 +46,34 @@ def load_program_names():
     except Exception:
         return []
 
+def load_programs_requirements():
+    """Load Programs sheet for credit requirements by type. Returns list of dicts with Program, Level, Type of credits, no of credits"""
+    try:
+        excel_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "CORE_TE.xlsx")
+        # Try to read the Excel file and list all sheet names
+        xl_file = pd.ExcelFile(excel_path)
+        print(f"📋 Available sheets in CORE_TE.xlsx: {xl_file.sheet_names}")
+        
+        # Try common variations of the sheet name
+        possible_names = ['Programs', 'programs', 'PROGRAMS', 'Program', 'program']
+        sheet_name = None
+        for name in possible_names:
+            if name in xl_file.sheet_names:
+                sheet_name = name
+                break
+        
+        if not sheet_name:
+            print(f"⚠️ Programs sheet not found. Available sheets: {xl_file.sheet_names}")
+            return []
+        
+        df = pd.read_excel(excel_path, sheet_name=sheet_name)
+        df.columns = [str(c).strip() for c in df.columns]
+        print(f"✅ Loaded Programs sheet with columns: {df.columns.tolist()}")
+        return df.fillna("").to_dict(orient="records")
+    except Exception as e:
+        print(f"❌ Error loading Programs: {e}")
+        return []
+
 def load_restrictions():
     try:
         excel_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "CORE_TE.xlsx")
@@ -365,6 +393,19 @@ def process_student_data(ts_df, coop_df):
         for _, row in coop_df.iterrows():
             y, s = parse_term(row['Term'])
             if y != "UNKNOWN" and s != "UNKNOWN":
-                coop_terms.append({"year": y, "season": s, "type": str(row.get('Term number Sx or Wx', '')).strip()})
+                term_details = str(row.get('Term Details', '')).strip() if pd.notna(row.get('Term Details')) else ""
+                ws = str(row.get('WS', '')).strip() if pd.notna(row.get('WS')) else ""
+                jobs_view = str(row.get('Jobs View No', '')).strip() if pd.notna(row.get('Jobs View No')) else ""
+                jobs_applied = str(row.get('Jobs Applied No', '')).strip() if pd.notna(row.get('Jobs Applied No')) else ""
+                
+                coop_terms.append({
+                    "year": y, 
+                    "season": s, 
+                    "type": str(row.get('Term number Sx or Wx', '')).strip(),
+                    "details": term_details,
+                    "ws": ws,
+                    "jobs_view": jobs_view,
+                    "jobs_applied": jobs_applied
+                })
 
     return is_grad, student_courses, detected_program, coop_terms

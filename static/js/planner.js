@@ -438,6 +438,35 @@ document.addEventListener("DOMContentLoaded", () => {
                         headerClass += isWork ? ' coop-work-header' : ' coop-study-header';
                         isStudyTerm  = !isWork;
                         coopLabel    = ` <span style="color:${isWork ? '#e74c3c' : '#2980b9'};font-weight:900;">[${ct.type}]</span>`;
+                        
+                        // Add Term Details if present (bold dark red)
+                        if (ct.details && ct.details.trim()) {
+                            coopLabel += `<br><span style="font-size:11px;color:#8B0000;font-weight:bold;">${ct.details}</span>`;
+                        }
+                        
+                        // Add Jobs View/Applied info only if either > 0
+                        const jobsView = parseInt(ct.jobs_view) || 0;
+                        const jobsApplied = parseInt(ct.jobs_applied) || 0;
+                        
+                        if (jobsView > 0 || jobsApplied > 0) {
+                            const jobParts = [];
+                            if (jobsView > 0) {
+                                jobParts.push(`view: ${jobsView}`);
+                            }
+                            if (jobsApplied > 0) {
+                                jobParts.push(`app: ${jobsApplied}`);
+                            }
+                            
+                            const jobInfo = jobParts.join(' / ');
+                            
+                            // Add WS content on separate line if present
+                            if (ct.ws && ct.ws.trim()) {
+                                coopLabel += `<br><span style="font-size:11px;color:#8B0000;font-weight:bold;">${ct.ws}</span>`;
+                                coopLabel += `<br><span style="font-size:11px;color:#8B0000;font-weight:bold;">${jobInfo}</span>`;
+                            } else {
+                                coopLabel += `<br><span style="font-size:11px;color:#8B0000;font-weight:bold;">${jobInfo}</span>`;
+                            }
+                        }
                     }
                 }
 
@@ -709,14 +738,31 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (k && (!firstCoopKey || k < firstCoopKey)) firstCoopKey = k;
             });
 
-            // last placed WT zone key
-            let lastWtKey = '';
-            document.querySelectorAll('.drop-zone .course-box.wt').forEach(b => {
-                const zid = b.parentElement?.id;
-                if (!zid || zid === 'zone_Unallocated') return;
-                const k = _sk(zid);
-                if (k > lastWtKey) lastWtKey = k;
+            // Find the highest WT number that exists anywhere
+            let maxWtNum = 0;
+            document.querySelectorAll('.course-box.wt').forEach(b => {
+                const did = (b.dataset.displayId || b.dataset.courseId || '').toUpperCase();
+                const m = did.match(/WT(\d)/);
+                if (m) maxWtNum = Math.max(maxWtNum, parseInt(m[1]));
             });
+
+            // Find the zone of the highest WT (only if placed in grid, not Unallocated)
+            let lastWtKey = '';
+            if (maxWtNum > 0) {
+                document.querySelectorAll('.drop-zone').forEach(zone => {
+                    if (zone.id === 'zone_Unallocated' || zone.id === 'zone_Y0') return;
+                    const hasMaxWt = Array.from(zone.children).some(c => {
+                        if (!c.classList.contains('wt')) return false;
+                        const did = (c.dataset.displayId || c.dataset.courseId || '').toUpperCase();
+                        const m = did.match(/WT(\d)/);
+                        return m && parseInt(m[1]) === maxWtNum;
+                    });
+                    if (hasMaxWt) {
+                        const k = _sk(zone.id);
+                        if (k > lastWtKey) lastWtKey = k;
+                    }
+                });
+            }
 
             document.querySelectorAll('td').forEach(td => {
                 const zone = td.querySelector('.drop-zone');
@@ -733,8 +779,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 const isBlue  = !!td.querySelector('.coop-study-header');
                 const zKey    = _sk(zone.id);
-                // cap non-blue terms past the last placed WT (blue study terms always checked)
-                if (!isBlue && lastWtKey && zKey > lastWtKey) return;
+                
+                // NEW LOGIC: If highest WT is placed and this zone is after it, skip validation for blue terms
+                if (lastWtKey && zKey > lastWtKey && isBlue) {
+                    return; // Skip full-time check for blue terms after highest WT
+                }
+                
                 const inRange = firstCoopKey && lastWtKey && zKey >= firstCoopKey && zKey <= lastWtKey;
                 if (!isBlue && !inRange) return; // must be blue or within co-op range
 
@@ -958,6 +1008,8 @@ document.addEventListener("DOMContentLoaded", () => {
             // Show approve/rework wrapper
             const aw = document.getElementById('approveWrapper');
             if (aw) aw.style.display = '';
+            const abw = document.getElementById('approveButtonWrapper');
+            if (abw) abw.style.display = '';
         }, 500);
     }
 
@@ -965,7 +1017,15 @@ document.addEventListener("DOMContentLoaded", () => {
     const headerProg = document.getElementById('headerProgram');
     if (headerProg) {
         const syncProg = () => {
-            headerProg.textContent = document.getElementById('programSelect')?.value || '';
+            const progName = document.getElementById('programSelect')?.value || '';
+            const discipline = window.APP_CONFIG?.disciplineDescr || '';
+            
+            // Display: Program name + discipline description (if available)
+            if (discipline) {
+                headerProg.textContent = `${progName} — ${discipline}`;
+            } else {
+                headerProg.textContent = progName;
+            }
         };
         syncProg();
         document.getElementById('programSelect')?.addEventListener('change', syncProg);
@@ -1342,11 +1402,38 @@ document.addEventListener("DOMContentLoaded", () => {
         const repCr   = cats['REP']   || 0;
         const mainTotal = total - ecpCr - otherCr - repCr;
 
-        // Main categories: exclude ECP, OTHER, REP (those go in the "in addition to" note)
-        const mainCats = Object.keys(cats).filter(k => k !== 'ECP' && k !== 'OTHER' && k !== 'REP').sort();
+        // Get program requirements from Programs sheet
+        const selectedProg = document.getElementById('programSelect')?.value || '';
+        const programsReqDb = window.APP_CONFIG?.programsRequirementsDb || [];
+        const progReqs = {}; // { 'ENG CORE': 27, 'PRG CORE': 87, 'TE': 6 }
+        programsReqDb.forEach(row => {
+            if (String(row['Program'] || '').trim() === selectedProg && String(row['Level'] || '').trim() === 'UGRD') {
+                const type = String(row['Type of credits'] || '').trim();
+                const required = parseFloat(row['no of credits'] || 0);
+                if (type && required >= 0) {  // Include even if 0
+                    progReqs[type] = required;
+                }
+            }
+        });
 
-        // Summary line: Xcr CAT1 + Xcr CAT2 ...
-        const parts = mainCats.filter(k => cats[k]).map(k => `${fmt(cats[k])}cr ${k}`);
+        // Combine all categories: from cats AND from progReqs
+        const allCats = new Set([...Object.keys(cats), ...Object.keys(progReqs)]);
+        const mainCats = Array.from(allCats).filter(k => k !== 'ECP' && k !== 'OTHER' && k !== 'REP').sort();
+
+        // Summary line: Xcr CAT1 + Xcr CAT2 ... with required credits and red highlighting
+        const parts = mainCats.map(k => {
+            const current = cats[k] || 0;
+            const required = progReqs[k];
+            const isLow = required !== undefined && current < required;
+            const color = isLow ? '#c0392b' : '#333';
+            const weight = isLow ? 'bold' : 'normal';
+            
+            if (required !== undefined) {
+                return `<span style="color:${color}; font-weight:${weight};">${fmt(current)}/${fmt(required)}cr</span> ${k}`;
+            } else {
+                return `${fmt(current)}cr ${k}`;
+            }
+        }).filter(p => p);  // Remove empty parts
 
         const addons = [];
         if (repCr)   addons.push(`${fmt(repCr)}cr REP`);
@@ -1404,9 +1491,10 @@ document.addEventListener("DOMContentLoaded", () => {
         // Build new interleaved text
         let newContent = 'ISSUES & JUSTIFICATIONS:\n\n';
         issues.forEach((issue, i) => {
+            const prefix = issue.sev === 'error' ? '[ERROR]' : issue.sev === 'warning' ? '[WARNING]' : '[FYI]';
             const errText = `${issue.courseId || '—'}: ${issue.msg}`;
             const savedAnswer = answersMap[errText] || '';
-            newContent += `${i + 1}. ${errText}\nJustification: ${savedAnswer}\n\n`;
+            newContent += `${i + 1}. ${prefix} ${errText}\nJustification: ${savedAnswer}\n\n`;
         });
 
         justText.value = newContent;
@@ -1563,6 +1651,123 @@ window.openPendingItem = async function(seqId, studentId) {
 };
 
 // =========================================================
+// CANNED COMMENTS (Power User)
+// =========================================================
+window.insertCannedComment = function(type) {
+    const publicNotes = document.getElementById('publicNotes');
+    if (!publicNotes) return;
+    
+    let msg = '';
+    if (type === 1) {
+        msg = "Due to low academic performance, student cannot go on next scheduled WT; must re-sequence. This places the student on Probation (still with CO-OP, but no work terms; this has no impact on MIAE Program and course registration). Student's status in CO-OP Program will be re-evaluated every term upon academic performance.";
+    } else if (type === 2) {
+        msg = "Due to low academic performance, apply one of the two: if next term WT is already secured, the one after (next next one) cannot be placed in the subsequent 2 terms, and will be approved pending academic performance improvement. If next term WT is not already secured, it must be re-scheduled at earliest 2 terms later and will be approved pending academic performance improvement. In either case, a change of sequence is requested. This places the student on Probation (still with CO-OP, but no work term; this has no impact on MIAE Program and course registration). Student's status in CO-OP Program will be re-evaluated every term upon academic performance.";
+    }
+    
+    // Format: [date time, email]: message\n\nold text
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const dt = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    const email = window.APP_CONFIG?.adminEmail || '';
+    
+    const existing = String(publicNotes.value || '').trim();
+    const newComment = `[${dt}, ${email}]: ${msg}${existing ? '\n\n' + existing : ''}`;
+    
+    publicNotes.value = newComment;
+    publicNotes.style.height = 'auto';
+    publicNotes.style.height = publicNotes.scrollHeight + 'px';
+    
+    // Auto-save
+    if (window.autoSaveAdminNotes) {
+        window.autoSaveAdminNotes(newComment, document.getElementById('privateNotes')?.value || '');
+    }
+};
+
+// =========================================================
+// SEND EMAIL TO STUDENT (Power User)
+// =========================================================
+window.sendEmailToStudent = function() {
+    const studentName = window.APP_CONFIG?.studentName || '';
+    const studentId = window.APP_CONFIG?.viewingSid || '';
+    const studentEmail = window.APP_CONFIG?.studentEmail || `${studentId}@mail.concordia.ca`;
+    const adminEmail = window.APP_CONFIG?.adminEmail || '';
+    const publicNotes = document.getElementById('publicNotes')?.value || '';
+    const program = document.getElementById('programSelect')?.value || '';
+    
+    if (!publicNotes.trim()) {
+        alert('No message to send. Please add a message in the Public Notes field.');
+        return;
+    }
+    
+    // Determine coordinator email based on program and student ID
+    let coordEmail = 'frederick.francis@concordia.ca';
+    if (program && program.toUpperCase().includes('INDU')) {
+        try {
+            const lastDigit = parseInt(String(studentId).slice(-1));
+            if (lastDigit >= 0 && lastDigit <= 4) {
+                coordEmail = 'frederick.francis@concordia.ca';
+            } else if (lastDigit >= 5 && lastDigit <= 9) {
+                coordEmail = 'nathalie.steverman@concordia.ca';
+            }
+        } catch (e) {
+            console.warn('Could not determine coordinator from student ID');
+        }
+    }
+    
+    // Check if Institute Operations should be included
+    const includeInst = document.getElementById('includeInstituteOps')?.checked || false;
+    const headerMsg = includeInst 
+        ? "⚠️ WT IMPACTED - Operations Institute are cc-ed\n\n" 
+        : "✅ Institute Operations not cc-ed - no restrictions on WT\n\n";
+    
+    // Build CC list
+    let ccList = ['coop_miae@concordia.ca', 'sabrina.poirier@concordia.ca', coordEmail];
+    if (includeInst) {
+        ccList.push('instituteoperations@concordia.ca');
+    }
+    ccList = [...new Set(ccList)]; // Remove duplicates
+    
+    // Build email content
+    const subject = `MIAE CO-OP AD message for ${studentName}, ${studentId}`;
+    const body = `${headerMsg}Hello ${studentName},\n\nPlease see message below:\n\n${publicNotes}\n\nPS: Please use REPLY TO ALL\n\nRegards,\n${adminEmail}`;
+    
+    // Show custom dialog with email preview
+    const confirmed = confirm(`Send email to:\n\nTo: ${studentEmail}\nCC: ${ccList.join(', ')}\n\nSubject: ${subject}\n\nMessage:\n${body}\n\nPress OK to send, or Cancel to abort.`);
+    
+    if (confirmed) {
+        // Send email via backend API
+        showSpinner('Sending email...');
+        fetch('/api/admin/send_student_email', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                student_id: studentId,
+                student_name: studentName,
+                student_email: studentEmail,
+                program: program,
+                message: publicNotes,
+                include_institute: includeInst,
+                cc_list: ccList
+            })
+        })
+        .then(res => res.json())
+        .then(data => {
+            hideSpinner();
+            if (data.ok) {
+                alert('✅ Email sent successfully!');
+            } else {
+                alert(`❌ Failed to send email: ${data.error}`);
+            }
+        })
+        .catch(err => {
+            hideSpinner();
+            console.error('Email send error:', err);
+            alert(`❌ Failed to send email: ${err.message}`);
+        });
+    }
+};
+
+// =========================================================
 // APPROVE / REWORK (Power User action)
 // =========================================================
 window.processApproval = async function(action) {
@@ -1634,6 +1839,8 @@ window.processApproval = async function(action) {
             sessionStorage.removeItem('_pendingSeqId');
             const aw = document.getElementById('approveWrapper');
             if (aw) aw.style.display = 'none';
+            const abw = document.getElementById('approveButtonWrapper');
+            if (abw) abw.style.display = 'none';
         } else {
             hideSpinner();
             alert(`Failed: ${res.error || 'Unknown error'}`);
@@ -1659,6 +1866,128 @@ document.addEventListener('click', (e) => {
     const btn = document.getElementById('btnPendingHeader');
     const dd  = document.getElementById('pendingMenuDropdown');
     if (dd && btn && !btn.contains(e.target)) dd.style.display = 'none';
+});
+
+// =========================================================
+// ADMIN STUDENT SEARCH AUTOCOMPLETE
+// =========================================================
+let searchTimeout = null;
+let currentSearchResults = [];
+
+window.setupAdminSearchAutocomplete = function() {
+    const input = document.getElementById('adminSidInput');
+    const dropdown = document.getElementById('adminSearchDropdown');
+    
+    if (!input || !dropdown) return;
+    
+    // Search as user types (with debouncing)
+    input.addEventListener('input', function() {
+        const query = this.value.trim();
+        
+        // Clear previous timeout
+        if (searchTimeout) clearTimeout(searchTimeout);
+        
+        // Hide dropdown if less than 4 characters
+        if (query.length < 4) {
+            dropdown.style.display = 'none';
+            currentSearchResults = [];
+            return;
+        }
+        
+        // Debounce: wait 300ms after user stops typing
+        searchTimeout = setTimeout(async () => {
+            try {
+                const res = await fetch(`/api/admin/search_students?q=${encodeURIComponent(query)}`);
+                const data = await res.json();
+                
+                if (data.ok && data.results && data.results.length > 0) {
+                    currentSearchResults = data.results;
+                    renderSearchDropdown(data.results);
+                } else {
+                    dropdown.style.display = 'none';
+                    currentSearchResults = [];
+                }
+            } catch (e) {
+                console.error('Search error:', e);
+                dropdown.style.display = 'none';
+            }
+        }, 300);
+    });
+    
+    // Handle keyboard navigation
+    input.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            dropdown.style.display = 'none';
+        }
+    });
+    
+    // Close dropdown when clicking outside
+    document.addEventListener('click', function(e) {
+        if (!input.contains(e.target) && !dropdown.contains(e.target)) {
+            dropdown.style.display = 'none';
+        }
+    });
+};
+
+function renderSearchDropdown(results) {
+    const dropdown = document.getElementById('adminSearchDropdown');
+    if (!dropdown) return;
+    
+    dropdown.innerHTML = '';
+    
+    results.forEach(student => {
+        const item = document.createElement('div');
+        item.style.cssText = 'padding:10px; cursor:pointer; border-bottom:1px solid #e0e0e0; transition:background 0.2s;';
+        item.innerHTML = `
+            <div style="font-weight:bold; font-size:13px; color:#2c3e50;">${escapeHtml(student.name)}</div>
+            <div style="font-size:11px; color:#7f8c8d; margin-top:2px;">ID: ${escapeHtml(student.id)} • ${escapeHtml(student.email)}</div>
+        `;
+        
+        item.addEventListener('mouseenter', function() {
+            this.style.background = '#f0f0f0';
+        });
+        
+        item.addEventListener('mouseleave', function() {
+            this.style.background = '#fff';
+        });
+        
+        item.addEventListener('click', function() {
+            selectStudent(student);
+        });
+        
+        dropdown.appendChild(item);
+    });
+    
+    dropdown.style.display = 'block';
+}
+
+function selectStudent(student) {
+    const input = document.getElementById('adminSidInput');
+    const dropdown = document.getElementById('adminSearchDropdown');
+    
+    if (input) {
+        input.value = student.id;
+    }
+    
+    if (dropdown) {
+        dropdown.style.display = 'none';
+    }
+    
+    // Automatically switch to the selected student
+    window.adminSwitchStudent();
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Initialize autocomplete when page loads
+document.addEventListener('DOMContentLoaded', function() {
+    if (window.APP_CONFIG && window.APP_CONFIG.isPowerUser) {
+        window.setupAdminSearchAutocomplete();
+    }
 });
 
 window.adminSwitchStudent = async function() {
@@ -1719,23 +2048,6 @@ window.adminResetView = async function() {
         console.error(e);
         alert('Connection error.');
     }
-};
-
-window.adminOpenMailto = function(evt) {
-    if (evt) evt.preventDefault();
-    const cfg         = window.APP_CONFIG || {};
-    const studentId   = cfg.viewingSid || '';
-    const studentName = cfg.studentName || studentId;
-    const studentEmail = cfg.studentEmail || '';
-    const publicNotes  = document.getElementById('publicNotes')?.value?.trim() || '';
-
-    const subject = `Message from MIAE CO-OP AD to ${studentName} ${studentId}`;
-    const body    = publicNotes
-        ? `${publicNotes}\n\nBest Regards,\nMIAE CO-OP AD`
-        : `Best Regards,\nMIAE CO-OP AD`;
-
-    const mailto = `mailto:${encodeURIComponent(studentEmail)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    window.location.href = mailto;
 };
 
 // =========================================================
@@ -2546,8 +2858,14 @@ function getTermOrdFromZoneId(zid) {
     if (!zid || zid === 'zone_Y0') return -1;
     const m = zid.match(/zone_(\d{4})-\d{4}_(Summer|Fall|Winter)/);
     if (!m) return -1;
-    const sOrd = { Summer: 1, Fall: 2, Winter: 3 };
-    return parseInt(m[1]) * 10 + (sOrd[m[2]] || 0);
+    const year = parseInt(m[1]);
+    const season = m[2];
+    
+    // Proper chronological order within academic year:
+    // Summer (1) → Fall (2) → Winter (3)
+    // Each academic year gets 3 slots: year*3 + season_offset
+    const seasonOrd = { Summer: 1, Fall: 2, Winter: 3 };
+    return year * 3 + seasonOrd[season];
 }
 
 function addWarningBadge(box, issues) {
@@ -2571,7 +2889,7 @@ window.validateGrid = function() {
     });
 
     // Collect all issues across all boxes; apply badges at end
-    let allIssues = []; // { courseId, msg, sev }
+    const allIssues = []; // { courseId, msg, sev }
     const boxIssues = new Map(); // box element → [{msg, sev}]
 
     function flagBox(box, issues) {
@@ -2718,13 +3036,14 @@ window.validateGrid = function() {
     // Check 7 + 8: WT ordering — WT2 requires WT1 before, WT3 requires WT2 before
     if (document.getElementById('coopRegistered')?.checked) {
         // Collect WT positions: { WT1: { ord, el: box }, WT2: ..., WT3: ... }
-        // Includes both planned and already-taken WT courses (from grid zones and zone_Y0)
         const wtPos = {};
-        function _detectWtInEl(el, ord) {
+        allZones.forEach(({ ord, el }) => {
             Array.from(el.children).forEach(box => {
                 if (!box.classList.contains('wt')) return;
+                // Skip taken WT courses for position tracking
                 const cid = (box.dataset.courseId || '').toUpperCase();
                 const did = (box.dataset.displayId || '').toUpperCase();
+                // Determine WT number from displayId, courseId, or alias
                 let wtNum = null;
                 const mDid = did.match(/WT(\d)/);
                 const mCid = cid.match(/WT(\d)/);
@@ -2745,14 +3064,10 @@ window.validateGrid = function() {
                     if (!wtPos[key] || ord < wtPos[key].ord) wtPos[key] = { ord, el: box };
                 }
             });
-        }
-        allZones.forEach(({ ord, el }) => _detectWtInEl(el, ord));
-        // Also scan zone_Y0: taken WTs from before the grid start year land here
-        const _y0El = document.getElementById('zone_Y0');
-        if (_y0El) _detectWtInEl(_y0El, -1);
+        });
 
-        // WT1 checks — study terms + credits (skip if WT1 is before grid start, i.e. in zone_Y0)
-        if (wtPos.WT1 && wtPos.WT1.ord > -1) {
+        // WT1 checks — study terms + credits
+        if (wtPos.WT1) {
             let studyTermsBefore = 0, coreCrBefore = 0;
             allZones.forEach(({ ord, el }) => {
                 if (ord >= wtPos.WT1.ord) return;
@@ -2787,8 +3102,44 @@ window.validateGrid = function() {
                 flagBox(wtPos.WT3.el, [{ msg: 'WT3 must be in a later term than WT2', sev: 'error' }]);
         }
 
-        // Check 9: After WT3 there must be ≥1 CORE/PRG/ECP course (skip if WT3 is before grid start)
-        if (wtPos.WT3 && wtPos.WT3.ord > -1) {
+        // Check 8c: Term immediately before last WT must be full-time (≥12cr)
+        // Find the last (highest) WT
+        const lastWt = [wtPos.WT1, wtPos.WT2, wtPos.WT3]
+            .filter(w => w)
+            .sort((a, b) => b.ord - a.ord)[0];
+        
+        if (lastWt && lastWt.ord > 0) {
+            // Find the term immediately before the last WT
+            const prevTermOrd = lastWt.ord - 1;
+            const prevZone = allZones.find(z => z.ord === prevTermOrd);
+            
+            if (prevZone) {
+                const prevSeason = prevZone.id.split('_').pop();
+                const isPrevSummer = prevSeason === 'Summer';
+                
+                // Check if previous term has a WT
+                const prevHasWt = Array.from(prevZone.el.children).some(c => c.classList.contains('wt'));
+                
+                // Only check if previous term is NOT summer and does NOT have a WT
+                if (!isPrevSummer && !prevHasWt) {
+                    let prevCr = 0;
+                    Array.from(prevZone.el.children).forEach(box => {
+                        if (!box.classList.contains('wt')) {
+                            prevCr += parseFloat(box.dataset.credit || 0);
+                        }
+                    });
+                    
+                    if (prevCr < 12) {
+                        const lastWtName = (lastWt.el.dataset.displayId || lastWt.el.dataset.courseId || 'last WT').toUpperCase();
+                        const prevLabel = prevZone.id.replace('zone_', '').replace(/_/g, ' ');
+                        flagBox(lastWt.el, [{ msg: `The term before ${lastWtName} (${prevLabel}) must be Full-Time (≥12 credits). Currently it has ${prevCr}cr`, sev: 'error' }]);
+                    }
+                }
+            }
+        }
+
+        // Check 9: After WT3 there must be ≥1 CORE/PRG/ECP course
+        if (wtPos.WT3) {
             let coreAfterWT3 = 0;
             const teAfterWT3 = [];
             let totalPlannedCr = 0;
@@ -2829,23 +3180,56 @@ window.validateGrid = function() {
             }
         }
 
-        // Check: WT1, WT2, WT3 in 3 consecutive terms / all in Summer
-        if (wtPos.WT1 && wtPos.WT2 && wtPos.WT3) {
-            const lastWtEl = wtPos.WT3.el;
+        // Check 10: 3 consecutive WTs validation
+        const wtOrds = [];
+        if (wtPos.WT1) wtOrds.push({ num: 1, ord: wtPos.WT1.ord, el: wtPos.WT1.el });
+        if (wtPos.WT2) wtOrds.push({ num: 2, ord: wtPos.WT2.ord, el: wtPos.WT2.el });
+        if (wtPos.WT3) wtOrds.push({ num: 3, ord: wtPos.WT3.ord, el: wtPos.WT3.el });
+        wtOrds.sort((a, b) => a.ord - b.ord);
 
-            const ords = [wtPos.WT1.ord, wtPos.WT2.ord, wtPos.WT3.ord].sort((a, b) => a - b);
-            if (ords[1] - ords[0] === 1 && ords[2] - ords[1] === 1) {
-                const msg = 'WT1, WT2 and WT3 are in 3 consecutive terms — not permitted';
-                allIssues.push({ courseId: 'WT3', msg, sev: 'error' });
-                flagBox(lastWtEl, [{ msg, sev: 'error' }]);
+        if (wtOrds.length >= 3) {
+            // Check if any 3 WTs are consecutive (ord values differ by 1)
+            for (let i = 0; i < wtOrds.length - 2; i++) {
+                if (wtOrds[i+1].ord === wtOrds[i].ord + 1 && wtOrds[i+2].ord === wtOrds[i].ord + 2) {
+                    // Flag all 3 WTs involved
+                    flagBox(wtOrds[i].el, [{ msg: 'Invalid Sequence: You cannot have 3 consecutive Work Terms', sev: 'error' }]);
+                    flagBox(wtOrds[i+1].el, [{ msg: 'Invalid Sequence: You cannot have 3 consecutive Work Terms', sev: 'error' }]);
+                    flagBox(wtOrds[i+2].el, [{ msg: 'Invalid Sequence: You cannot have 3 consecutive Work Terms', sev: 'error' }]);
+                    break;
+                }
             }
+        }
 
-            const wtZones = [wtPos.WT1, wtPos.WT2, wtPos.WT3].map(w => w.el?.parentElement?.id || '');
-            if (wtZones.every(zid => zid.endsWith('_Summer'))) {
-                const msg = 'WT1, WT2 and WT3 are all placed in Summer terms — not permitted';
-                allIssues.push({ courseId: 'WT3', msg, sev: 'error' });
-                flagBox(lastWtEl, [{ msg, sev: 'error' }]);
+        // Check 11: 3 summer WTs validation
+        let summerWTCount = 0;
+        const summerWTs = [];
+        if (wtPos.WT1) {
+            const zone1 = allZones.find(z => z.ord === wtPos.WT1.ord);
+            if (zone1 && zone1.id.includes('Summer')) {
+                summerWTCount++;
+                summerWTs.push({ num: 1, el: wtPos.WT1.el });
             }
+        }
+        if (wtPos.WT2) {
+            const zone2 = allZones.find(z => z.ord === wtPos.WT2.ord);
+            if (zone2 && zone2.id.includes('Summer')) {
+                summerWTCount++;
+                summerWTs.push({ num: 2, el: wtPos.WT2.el });
+            }
+        }
+        if (wtPos.WT3) {
+            const zone3 = allZones.find(z => z.ord === wtPos.WT3.ord);
+            if (zone3 && zone3.id.includes('Summer')) {
+                summerWTCount++;
+                summerWTs.push({ num: 3, el: wtPos.WT3.el });
+            }
+        }
+
+        if (summerWTCount >= 3) {
+            // Flag all 3 summer WTs
+            summerWTs.forEach(wt => {
+                flagBox(wt.el, [{ msg: 'Invalid Sequence: You cannot have 3 Summer Work Terms', sev: 'error' }]);
+            });
         }
     }
 
@@ -2991,7 +3375,6 @@ window.validateGrid = function() {
         });
     })();
 
-
     // Credits_FT check: co-op study terms (blue) that are Fall/Winter must meet minimum credits
     (function() {
         const progNamesDb  = window.APP_CONFIG?.programNamesDb || [];
@@ -3041,8 +3424,10 @@ window.validateGrid = function() {
 
             const isBlue  = !!td.querySelector('.coop-study-header');
             const zKey    = zoneSortKey(zid);
-            // cap non-blue terms past the last placed WT (blue study terms always checked)
-            if (!isBlue && lastWtKey && zKey > lastWtKey) return;
+            
+            // Skip terms AFTER the last WT
+            if (lastWtKey && zKey > lastWtKey) return;
+            
             const inRange = firstCoopKey && lastWtKey && zKey >= firstCoopKey && zKey <= lastWtKey;
             if (!isBlue && !inRange) return;
 
@@ -3080,6 +3465,53 @@ window.validateGrid = function() {
         }
     })();
 
+    // Check: Credit requirements validation
+    (function() {
+        const selectedProg = document.getElementById('programSelect')?.value || '';
+        const programsReqDb = window.APP_CONFIG?.programsRequirementsDb || [];
+        
+        // Get program requirements
+        const progReqs = {}; // { 'ENG CORE': 27, 'PRG CORE': 87, 'TE': 6 }
+        programsReqDb.forEach(row => {
+            if (String(row['Program'] || '').trim() === selectedProg && String(row['Level'] || '').trim() === 'UGRD') {
+                const type = String(row['Type of credits'] || '').trim();
+                const required = parseFloat(row['no of credits'] || 0);
+                if (type && required > 0) {  // Only check categories with required > 0
+                    progReqs[type] = required;
+                }
+            }
+        });
+        
+        if (Object.keys(progReqs).length === 0) return;
+        
+        // Calculate current credits by category
+        const cats = {};
+        document.querySelectorAll('.drop-zone .course-box').forEach(box => {
+            if (box.parentElement?.id === 'zone_Unallocated') return;
+            const cid = (box.dataset.courseId || '').toUpperCase();
+            const db  = lookupCourse(cid) || {};
+            const t   = String(db['CORE_TE'] || '').trim();
+            const cr  = parseFloat(box.dataset.credit || 0);
+            if (t && cr > 0) {
+                cats[t] = (cats[t] || 0) + cr;
+            }
+        });
+        
+        // Check each required category
+        Object.keys(progReqs).forEach(category => {
+            const required = progReqs[category];
+            const current = cats[category] || 0;
+            
+            if (current < required) {
+                allIssues.push({
+                    courseId: '',
+                    msg: `Not enough credits in ${category} category: ${current} listed out of ${required} required`,
+                    sev: 'error'
+                });
+            }
+        });
+    })();
+
     // Apply all badges
     boxIssues.forEach((issues, box) => addWarningBadge(box, issues));
 
@@ -3092,14 +3524,6 @@ window.validateGrid = function() {
         const errCount  = allIssues.filter(i => i.sev === 'error').length;
         const warnCount = allIssues.filter(i => i.sev === 'warning').length;
         const fyi       = allIssues.filter(i => i.sev === 'fyi').length;
-        // Final dedup: same message text should appear only once in the issues list
-        const _seenMsgs = new Set();
-        allIssues = allIssues.filter(i => {
-            const key = `${i.sev}|${i.courseId}|${i.msg}`;
-            if (_seenMsgs.has(key)) return false;
-            _seenMsgs.add(key);
-            return true;
-        });
         window.latestIssues = allIssues;
 
         if (allIssues.length === 0) {
@@ -3107,11 +3531,12 @@ window.validateGrid = function() {
             panel.classList.remove('ep-open');
         } else {
             epBox.style.display = '';
+            panel.classList.add('ep-open'); // Auto-open the panel when there are issues
             const total = allIssues.length;
             const parts = [];
-            if (errCount > 0)  parts.push(`${errCount} Error${errCount > 1 ? 's' : ''}`);
-            if (warnCount > 0) parts.push(`${warnCount} Warning${warnCount > 1 ? 's' : ''}`);
-            if (fyi > 0)       parts.push(`${fyi} FYI`);
+            if (errCount > 0)  parts.push(`<span style="color:#c0392b; font-weight:bold;">${errCount} Error${errCount > 1 ? 's' : ''}</span>`);
+            if (warnCount > 0) parts.push(`<span style="color:#2980b9; font-weight:bold;">${warnCount} Warning${warnCount > 1 ? 's' : ''}</span>`);
+            if (fyi > 0)       parts.push(`<span style="color:#7f8c8d;">${fyi} FYI</span>`);
             title.innerHTML = `⚠ ${total} Issue${total > 1 ? 's' : ''} (${parts.join(', ')})`;
 
             // Show ALL issues in the body (expandable)

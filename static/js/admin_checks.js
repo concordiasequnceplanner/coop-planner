@@ -50,8 +50,8 @@ async function loadCheckData() {
                 <td style="font-weight:bold; color:#e67e22;">${s.gpa24}</td>
                 <td>${s.gpa24_cr}</td>
                 <td style="font-size:11px; white-space:nowrap; text-align:left;">${s.wts}</td>
-                <td><div class="notes-cell-vis">${s.notes_vis}</div></td>
-                <td><div class="notes-cell-invis">${s.notes_invis}</div></td>`;
+                <td style="font-size:11px; text-align:left; background:#f9fff9; padding:8px; white-space:pre-wrap; word-wrap:break-word; max-width:300px; overflow-y:auto; max-height:150px;">${s.notes_vis}</td>
+                <td style="font-size:11px; text-align:left; background:#fdf2f2; padding:8px; white-space:pre-wrap; word-wrap:break-word; max-width:300px; overflow-y:auto; max-height:150px;">${s.notes_invis}</td>`;
             tbody.appendChild(tr);
         });
 

@@ -6,8 +6,8 @@ import resend
 
 
 debug_no_emails =  "SITE_ACTIVE" # then it works
-#debug_no_emails = "DEBUG" # debug
-debug_email="sorin.voiculescu@concordia.ca"
+debug_no_emails = "DEBUG" # debug
+debug_email="coop_miae@concordia.ca"
 
 
 # Setăm API key-ul Resend din variabile de mediu
@@ -210,6 +210,27 @@ def send_email(to, subject, content, cc=None, bcc=None, reply_to=None, is_html=T
     if isinstance(cc, str): cc = _merge_email_lists(cc, DEFAULT_COORD_EMAIL)
     if isinstance(bcc, str): bcc = [bcc]
     if isinstance(reply_to, str): reply_to = [reply_to]
+
+    # DEBUG mode: redirect ALL recipients to debug_email
+    if debug_no_emails == "DEBUG":
+        original_to = to or []
+        original_cc = cc or []
+        original_bcc = bcc or []
+        to = [debug_email]
+        cc = None
+        bcc = None
+        subject = f"[DEBUG] {subject}"
+        debug_note = (
+            f"<hr><p style='color:red;font-size:11px;'><b>DEBUG MODE</b> — original recipients:<br>"
+            f"TO: {', '.join(original_to)}<br>"
+            f"CC: {', '.join(original_cc)}<br>"
+            f"BCC: {', '.join(original_bcc)}</p>"
+        )
+        if is_html:
+            content = str(content) + debug_note
+        else:
+            content = str(content) + f"\n\n--- DEBUG: original TO={original_to} CC={original_cc} BCC={original_bcc}"
+        print(f"📧 DEBUG email → {debug_email} (original TO: {original_to})")
 
     email_data = {
         "from": sender,

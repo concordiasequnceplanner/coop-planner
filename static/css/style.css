@@ -735,6 +735,14 @@ td { border: 1px solid #dee2e6; vertical-align: top; padding: 0; background-colo
 .cv-error-line-err  { color: #c0392b; }
 .cv-error-line-warn { color: #d35400; }
 
+.std-seq-dist {
+    font-size: 10px;
+    font-weight: 700;
+    margin-top: 2px;
+    line-height: 1.2;
+    letter-spacing: 0.3px;
+}
+
 .course-box.cv-error   { border-left-color: #e74c3c !important; }
 .course-box.cv-warning { border-left-color: #f39c12 !important; }
 

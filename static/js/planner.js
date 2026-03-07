@@ -1511,9 +1511,15 @@ document.addEventListener("DOMContentLoaded", () => {
         let newContent = 'ISSUES & JUSTIFICATIONS:\n\n';
         issues.forEach((issue, i) => {
             const prefix = issue.sev === 'error' ? '[ERROR]' : issue.sev === 'warning' ? '[WARNING]' : '[FYI]';
-            const errText = `${issue.courseId || '—'}: ${issue.msg}`;
-            const savedAnswer = answersMap[errText] || '';
-            newContent += `${i + 1}. ${prefix} ${errText}\nJustification: ${savedAnswer}\n\n`;
+            const isFyi = issue.msg.startsWith('FYI');
+            const errText = issue.courseId ? `${issue.courseId}: ${issue.msg}` : issue.msg;
+            if (isFyi) {
+                // FYI items: no justification needed, just show the info
+                newContent += `${i + 1}. ${prefix} ${errText}\n\n`;
+            } else {
+                const savedAnswer = answersMap[errText] || '';
+                newContent += `${i + 1}. ${prefix} ${errText}\nJustification: ${savedAnswer}\n\n`;
+            }
         });
 
         justText.value = newContent;
@@ -1795,7 +1801,10 @@ window.processApproval = async function(action) {
     if (!window.APP_CONFIG?.isPowerUser) { alert('Unauthorized'); return; }
     const viewingSid = window.APP_CONFIG.viewingSid;
     const seqId2 = sessionStorage.getItem('_pendingSeqId') || (window.APP_CONFIG.initialPlanId ? String(window.APP_CONFIG.initialPlanId).replace(/"/g,'') : '');
-    if (!seqId2) { alert('No sequence loaded to approve.'); return; }
+    if (!seqId2) {
+        const proceed = confirm('No sequence loaded to approve.\n\nPress OK to proceed anyway, or Cancel to abort.');
+        if (!proceed) return;
+    }
 
     const conf = confirm(`Are you sure you want to ${action} this sequence for ${viewingSid}?`);
     if (!conf) return;
@@ -1838,6 +1847,121 @@ window.processApproval = async function(action) {
 
     const valErrors = (window.latestIssues || []).filter(i => i.sev === 'error').map(i => `${i.courseId || ''}: ${i.msg}`);
 
+    // ── Build course deviations for DB (only on APPROVED) ──
+    let courseDeviations = [];
+    if (action === 'APPROVED') {
+        const sequencesDb = window.APP_CONFIG?.sequencesDb || [];
+        const progSel2 = document.getElementById('programSelect');
+        const progKey2 = progSel2 ? getProgramKey(progSel2.value) : null;
+        const sYearStr2 = document.getElementById('startYear')?.value || '';
+        const baseYear2 = sYearStr2 ? parseInt(sYearStr2.split('-')[0]) : 0;
+
+        // Standard sequence map: courseId → { stdZoneId, stdLabel, stdOrd }
+        const stdMap2 = {};
+        if (sequencesDb.length && progKey2 && baseYear2) {
+            sequencesDb.filter(s => s.PROGRAM_KEY === progKey2).forEach(entry => {
+                const cid = String(entry.COURSE).replace(/\s/g, '').toUpperCase();
+                const pos = String(entry.POSITION).trim();
+                const zid = positionToZoneId(pos, baseYear2);
+                if (!zid) return;
+                const ord = getTermOrdFromZoneId(zid);
+                const parts = zid.replace('zone_', '').split('_');
+                stdMap2[cid] = { stdZoneId: zid, stdOrd: ord, stdLabel: parts.join(' ') };
+            });
+        }
+
+        // Helper: format course number for DB — "AAAA 123" or "AAAA 1234"
+        function fmtCourseForDb(rawId) {
+            const n = rawId.replace(/\s/g, '').toUpperCase();
+            // Match: 2-5 letters + 3-4 digits + optional suffix
+            const m = n.match(/^([A-Z]{2,5})(\d{3,4})([A-Z]?)$/);
+            if (!m) return null;
+            return `${m[1]} ${m[2]}${m[3]}`;
+        }
+
+        // Helper: zone id → "YYYY-YYYY Season"
+        function zoneToTermLabel(zid) {
+            if (!zid) return '';
+            const parts = zid.replace('zone_', '').split('_');
+            return parts.join(' ');
+        }
+
+        // Iterate all future grid zones (after current term)
+        document.querySelectorAll('.drop-zone').forEach(zone => {
+            if (zone.id === 'zone_Y0' || zone.id === 'zone_Unallocated') return;
+            if (zone.dataset.isPast === 'true' || zone.dataset.isCurrent === 'true') return;
+
+            const actualOrd = getTermOrdFromZoneId(zone.id);
+            const actualLabel = zoneToTermLabel(zone.id);
+
+            Array.from(zone.children).forEach(box => {
+                if (!box.classList.contains('course-box')) return;
+                if (box.classList.contains('course-taken')) return;
+
+                const cid = (box.dataset.courseId || '').toUpperCase();
+                const displayId = (box.dataset.displayId || cid).toUpperCase();
+
+                // WT courses: include WT1, WT2, WT3
+                if (box.classList.contains('wt')) {
+                    const wtMatch = displayId.match(/^WT(\d)$/);
+                    if (wtMatch) {
+                        const wtName = `WT${wtMatch[1]}`;
+                        const std = stdMap2[wtName];
+                        const origLabel = std ? std.stdLabel : '';
+                        const origOrd = std ? std.stdOrd : actualOrd;
+                        const delta = actualOrd - origOrd;
+                        courseDeviations.push({
+                            course: wtName,
+                            original_term: origLabel,
+                            new_term: actualLabel,
+                            delta: delta
+                        });
+                    }
+                    return;
+                }
+
+                const db = lookupCourse(cid) || {};
+                const coreType = String(db['CORE_TE'] || '').toUpperCase();
+
+                // Skip TE (pure electives)
+                if (coreType.includes('TE') && !coreType.includes('CORE')) return;
+
+                // Skip ENGR W-courses (work-term related ENGR courses like ENGR391, ENGR392 etc.)
+                if (/^ENGR\d/.test(cid) && cid.match(/ENGR[234]\d{2}/)) {
+                    // Only skip if it looks like a work-placement course (W-prefix in title or similar)
+                    const title = String(db['TITLE'] || '').toUpperCase();
+                    if (title.includes('WORK') || title.includes('CO-OP') || title.includes('COOP')) return;
+                }
+
+                // 490A → store as "DEPT 490", skip 490B entirely
+                let courseForDb;
+                if (/490B$/.test(displayId)) return; // skip 490B
+                if (/490A$/.test(displayId)) {
+                    // Store as "DEPT 490" (without A suffix)
+                    const prefix = displayId.replace(/490A$/, '');
+                    courseForDb = `${prefix} 490`;
+                } else {
+                    courseForDb = fmtCourseForDb(displayId);
+                }
+
+                if (!courseForDb) return;
+
+                // Look up standard sequence position
+                const std = stdMap2[displayId] || stdMap2[cid] || stdMap2[cid.replace(/[AB]$/, '')];
+                const origLabel = std ? std.stdLabel : '';
+                const origOrd = std ? std.stdOrd : actualOrd;
+                const delta = actualOrd - origOrd;
+
+                courseDeviations.push({
+                    course: courseForDb,
+                    original_term: origLabel,
+                    new_term: actualLabel,
+                    delta: delta
+                });
+            });
+        });
+    }
+
     try {
         const payload = {
             status: action,
@@ -1850,7 +1974,8 @@ window.processApproval = async function(action) {
             wt_summary: wtSummary,
             term_summary: termSummary,
             justification: document.getElementById('justificationText')?.value || '',
-            validation_errors: valErrors
+            validation_errors: valErrors,
+            course_deviations: courseDeviations
         };
         const res = await apiJson('/api/admin/approve', 'POST', payload);
         if (res.ok) {
@@ -3211,6 +3336,8 @@ window.validateGrid = function() {
         b.classList.remove('cv-warning', 'cv-error');
         const el = b.querySelector('.cv-error-line');
         if (el) el.remove();
+        const distEl = b.querySelector('.std-seq-dist');
+        if (distEl) distEl.remove();
     });
 
     // Collect all issues across all boxes; apply badges at end
@@ -3837,6 +3964,108 @@ window.validateGrid = function() {
         });
     })();
 
+    // Check: Standard sequence deviation — list courses placed in a different term than std seq
+    (function() {
+        const sequencesDb = window.APP_CONFIG?.sequencesDb;
+        if (!sequencesDb || !sequencesDb.length) return;
+
+        const progSel = document.getElementById('programSelect');
+        if (!progSel || !progSel.value) return;
+        const progKey = getProgramKey(progSel.value);
+        if (!progKey) return;
+
+        const sYearStr = document.getElementById('startYear')?.value;
+        if (!sYearStr) return;
+        const baseYear = parseInt(sYearStr.split('-')[0]);
+
+        // Build map: courseId → { stdZoneId, stdOrd, stdLabel }
+        const stdMap = {};
+        sequencesDb.filter(s => s.PROGRAM_KEY === progKey).forEach(entry => {
+            const cid = String(entry.COURSE).replace(/\s/g, '').toUpperCase();
+            const pos = String(entry.POSITION).trim();
+            const zid = positionToZoneId(pos, baseYear);
+            if (!zid) return;
+            const ord = getTermOrdFromZoneId(zid);
+            const parts = zid.replace('zone_', '').split('_');
+            const label = parts.join(' ');
+            stdMap[cid] = { stdZoneId: zid, stdOrd: ord, stdLabel: label };
+        });
+
+        if (!Object.keys(stdMap).length) return;
+
+        // Helper: zone id → human label
+        function zoneLabel(zid) {
+            if (!zid || zid === 'zone_Y0') return 'Y0';
+            if (zid === 'zone_Unallocated') return 'Unallocated';
+            const parts = zid.replace('zone_', '').split('_');
+            return parts.join(' ');
+        }
+
+        // Scan all placed non-taken courses on the grid (including WT)
+        const deviations = [];
+        document.querySelectorAll('.drop-zone').forEach(zone => {
+            if (zone.id === 'zone_Y0' || zone.id === 'zone_Unallocated') return;
+            const actualOrd = getTermOrdFromZoneId(zone.id);
+
+            Array.from(zone.children).forEach(box => {
+                if (!box.classList.contains('course-box')) return;
+                if (box.classList.contains('course-taken')) return;
+
+                const cid = (box.dataset.courseId || '').toUpperCase();
+                const displayId = (box.dataset.displayId || cid).toUpperCase();
+
+                // For WT courses: lookup by WT1/WT2/WT3
+                let std = null;
+                if (box.classList.contains('wt')) {
+                    const wtMatch = displayId.match(/^WT(\d)$/);
+                    if (wtMatch) std = stdMap['WT' + wtMatch[1]];
+                } else {
+                    std = stdMap[displayId] || stdMap[cid] || stdMap[cid.replace(/[AB]$/, '')];
+                }
+
+                if (!std) return; // no standard sequence entry for this course
+
+                if (zone.id === std.stdZoneId) return; // matches standard — no deviation
+
+                const diff = actualOrd - std.stdOrd;
+                const sign = diff > 0 ? `+${diff}` : `${diff}`;
+                const actualLabel = zoneLabel(zone.id);
+
+                deviations.push({
+                    courseId: displayId,
+                    diff: diff,
+                    sign: sign,
+                    stdLabel: std.stdLabel,
+                    actualLabel: actualLabel,
+                    absDiff: Math.abs(diff)
+                });
+
+                // Write DIST label directly on the course box
+                const distDiv = document.createElement('div');
+                distDiv.className = 'std-seq-dist';
+                const color = diff > 0 ? '#c0392b' : '#2980b9';
+                distDiv.style.cssText = `font-size:10px;color:${color};font-weight:700;margin-top:2px;line-height:1.2;`;
+                distDiv.textContent = `DIST ${sign} from std.seq. ${std.stdLabel}`;
+                box.appendChild(distDiv);
+            });
+        });
+
+        if (!deviations.length) return;
+
+        // Sort by absolute deviation descending
+        deviations.sort((a, b) => b.absDiff - a.absDiff);
+
+        // Build one single FYI warning with all deviations listed
+        const lines = deviations.map(d =>
+            `${d.courseId} ${d.sign}: std.seq. ${d.stdLabel} → ${d.actualLabel}`
+        );
+        allIssues.push({
+            courseId: '',
+            msg: `FYI — ${deviations.length} course(s) differ from standard sequence:\n${lines.join('\n')}`,
+            sev: 'warning'
+        });
+    })();
+
     // Apply all badges
     boxIssues.forEach((issues, box) => addWarningBadge(box, issues));
 
@@ -3856,7 +4085,7 @@ window.validateGrid = function() {
             panel.classList.remove('ep-open');
         } else {
             epBox.style.display = '';
-            panel.classList.add('ep-open'); // Auto-open the panel when there are issues
+            panel.classList.add('ep-open');
             const total = allIssues.length;
             const parts = [];
             if (errCount > 0)  parts.push(`<span style="color:#c0392b; font-weight:bold;">${errCount} Error${errCount > 1 ? 's' : ''}</span>`);
@@ -3868,7 +4097,8 @@ window.validateGrid = function() {
             allIssues.forEach(({ courseId, msg, sev }) => {
                 const item = document.createElement('div');
                 item.className = `ep-item ${sev === 'error' ? 'ep-error' : sev === 'fyi' ? 'ep-fyi' : 'ep-warning'}`;
-                item.innerText = `${courseId || '—'}: ${msg}`;
+                item.style.whiteSpace = 'pre-line';
+                item.innerText = courseId ? `${courseId}: ${msg}` : msg;
                 panel.appendChild(item);
             });
         }

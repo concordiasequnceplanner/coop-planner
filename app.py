@@ -1574,7 +1574,43 @@ def api_admin_approve():
                     {"stat": status, "sid": target_sid, "ts": timestamp},
                 )
 
-        # 3. Send email
+        # 3. Save course deviations (only on APPROVED)
+        if status == STATUS_APPROVED:
+            course_deviations = data.get("course_deviations") or []
+            if course_deviations:
+                try:
+                    with engine.begin() as conn:
+                        # Delete existing records for this student
+                        conn.execute(
+                            text("DELETE FROM course_deviation WHERE student_id = :sid"),
+                            {"sid": target_sid},
+                        )
+                        # Insert new deviation records
+                        for dev in course_deviations:
+                            course_num = str(dev.get("course", "")).strip()
+                            orig_term = str(dev.get("original_term", "")).strip()
+                            new_term = str(dev.get("new_term", "")).strip()
+                            delta = int(dev.get("delta", 0))
+                            if not course_num:
+                                continue
+                            conn.execute(
+                                text(
+                                    "INSERT INTO course_deviation "
+                                    "(student_id, course, original_term, new_term, delta) "
+                                    "VALUES (:sid, :course, :orig, :new, :delta)"
+                                ),
+                                {
+                                    "sid": target_sid,
+                                    "course": course_num,
+                                    "orig": orig_term,
+                                    "new": new_term,
+                                    "delta": delta,
+                                },
+                            )
+                except Exception as e:
+                    print(f"⚠ course_deviation save error (non-fatal): {e}")
+
+        # 4. Send email
         student_email = _get_student_email_db(target_sid)
         power_user_email = session.get("pre_auth_email") or session.get("user_email") or ""
         power_user_name = power_user_email.split("@")[0] if power_user_email else "Coordinator"

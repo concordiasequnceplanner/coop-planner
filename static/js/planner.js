@@ -547,6 +547,7 @@ document.addEventListener("DOMContentLoaded", () => {
             div.dataset.credit   = isWt ? 0 : c.credit;
             div.dataset.courseId = baseCid;
             div.dataset.displayId = normDisplayId(displayId);
+            div.dataset.grade    = c.grade || "";
             div.draggable      = true;
             div.ondragstart    = window.drag;
             div.innerHTML      = generateCourseHTML(
@@ -3900,10 +3901,12 @@ function buildEmailTermSummary() {
                 const c = parseFloat(box.dataset.credit || 0);
                 cr += c;
                 const did = box.dataset.displayId || box.dataset.courseId || '';
+                const grade = box.dataset.grade || '';
                 courses.push({
                     name: did,
                     credit: c,
-                    is_wt: box.classList.contains('wt')
+                    is_wt: box.classList.contains('wt'),
+                    grade: grade
                 });
             });
 

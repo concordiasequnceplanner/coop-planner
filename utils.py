@@ -6,7 +6,7 @@ import resend
 
 
 debug_no_emails =  "SITE_ACTIVE" # then it works
-debug_no_emails = "DEBUG" # debug
+#debug_no_emails = "DEBUG" # debug
 debug_email="coop_miae@concordia.ca"
 
 

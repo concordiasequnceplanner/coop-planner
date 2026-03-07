@@ -328,6 +328,7 @@ def process_student_data(ts_df, coop_df):
         term_val = str(row.get('Academic Term', '')).strip()
         course_val = str(row.get('COURSE', '')).strip().replace(" ", "").upper()
         cred_val = float(row.get('CREDVAL', 0)) if pd.notna(row.get('CREDVAL')) else 0.0
+        grade_val = str(row.get('GRADE', '')).strip() if pd.notna(row.get('GRADE')) else ""
         
         taken_course_ids.add(course_val)
         y, s = parse_term(term_val)
@@ -342,14 +343,14 @@ def process_student_data(ts_df, coop_df):
                 part   = m490.group('part')
 
                 if part is None:
-                    student_courses.append({"id": f"{prefix}490A", "year": y, "season": "Fall",   "credit": cred_val/2})
-                    student_courses.append({"id": f"{prefix}490B", "year": y, "season": "Winter", "credit": cred_val/2})
+                    student_courses.append({"id": f"{prefix}490A", "year": y, "season": "Fall",   "credit": cred_val/2, "grade": grade_val})
+                    student_courses.append({"id": f"{prefix}490B", "year": y, "season": "Winter", "credit": cred_val/2, "grade": grade_val})
                 elif part.upper() == 'A':
-                    student_courses.append({"id": f"{prefix}490A", "year": y, "season": "Fall",   "credit": cred_val})
+                    student_courses.append({"id": f"{prefix}490A", "year": y, "season": "Fall",   "credit": cred_val, "grade": grade_val})
                 else:  # 'B'
-                    student_courses.append({"id": f"{prefix}490B", "year": y, "season": "Winter", "credit": cred_val})
+                    student_courses.append({"id": f"{prefix}490B", "year": y, "season": "Winter", "credit": cred_val, "grade": grade_val})
             else:
-                student_courses.append({"id": course_val, "year": y, "season": s, "credit": cred_val})
+                student_courses.append({"id": course_val, "year": y, "season": s, "credit": cred_val, "grade": grade_val})
 
     # Detectare automată a programului din DISCIPLINE1_DESCR
     detected_program = "Mechanical Engineering"

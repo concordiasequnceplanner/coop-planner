@@ -193,6 +193,9 @@ def build_terms_html(term_summary):
     if not term_summary:
         return ""
 
+    # Check if user is power user
+    is_power = _is_power_user()
+
     out = []
     out.append("<table style='width:100%;border-collapse:collapse;margin-top:15px;font-size:13px;'>")
     out.append("<thead><tr style='color:white;'>")
@@ -238,8 +241,17 @@ def build_terms_html(term_summary):
                 cname = escape(str(c.get("name", "") or ""))
                 ccr = fmt_cr(c.get("credit", 0))
                 is_wt = bool(c.get("is_wt"))
+                grade = str(c.get("grade", "")).strip()
+                
+                # Build course text
+                course_text = f"{cname} ({ccr}cr)"
+                
+                # Add grade for power users
+                if is_power and grade:
+                    course_text += f" --> {escape(grade)}"
+                
                 style = "color:#00c853;font-weight:800;" if is_wt else "color:#333;"
-                course_lines.append(f"<div style='margin:0 0 4px 0;{style}'>{cname} ({ccr}CR)</div>")
+                course_lines.append(f"<div style='margin:0 0 4px 0;{style}'>{course_text}</div>")
 
             c_html = "".join(course_lines) if course_lines else "<div>&nbsp;</div>"
 

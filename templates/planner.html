@@ -117,7 +117,7 @@
                 {% endif %}
                 <span style="font-size:11px;color:#aaa;">Logged in as: <b>{{ student_id }}</b>{% if student_name %} ({{ student_name }}){% endif %}</span>
             </div>
-            <a href="/logout" class="logout-link" style="margin-left:8px;">Logout</a>
+            <a href="#" onclick="window.handleLogout(event)" class="logout-link" style="margin-left:8px;">Logout</a>
         </div>
 
     </div><!-- end header-row-controls -->
@@ -130,7 +130,7 @@
                     placeholder="Public notes (visible to students)"></textarea>
 
             {% if is_power_user %}
-            <div id="approveWrapper" class="header-admin-actions" style="display:none;">
+            <div id="approveWrapper" class="header-admin-actions">
                 <div class="header-admin-btn-row">
                     <button onclick="window.processApproval('REWORK')" id="btnRework" class="btn-admin-rework">
                         🔄 REWORK
@@ -140,6 +140,9 @@
                     </button>
                     <button onclick="insertCannedComment(2)" style="background: #95a5a6; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-size: 11px; font-weight: bold; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.1); transition: 0.2s;" onmouseover="this.style.background='#7f8c8d'" onmouseout="this.style.background='#95a5a6'">
                         ⚠️ If no internship found must reschedule
+                    </button>
+                    <button onclick="insertCannedComment(3)" style="background: #95a5a6; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-size: 11px; font-weight: bold; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.1); transition: 0.2s;" onmouseover="this.style.background='#7f8c8d'" onmouseout="this.style.background='#95a5a6'">
+                        📉 Explain low GPA - WT
                     </button>
                 </div>
                 <div id="approveCreditsInfo" class="header-admin-info"></div>
@@ -317,7 +320,7 @@
 
 {% if is_power_user %}
 <!-- Full-width Approve button at the end -->
-<div id="approveButtonWrapper" style="display:none; margin: 20px; padding: 15px; background: #e8f6f3; border: 2px solid #27ae60; border-radius: 8px;">
+<div id="approveButtonWrapper" style="margin: 20px; padding: 15px; background: #e8f6f3; border: 2px solid #27ae60; border-radius: 8px;">
     <button onclick="window.processApproval('APPROVED')" id="btnApprove" style="width:100%; background:#27ae60; color:white; border:none; padding:15px; border-radius:6px; font-weight:bold; font-size:16px; cursor:pointer; box-shadow:0 4px 6px rgba(0,0,0,0.1); transition: 0.2s;" onmouseover="this.style.background='#229954'" onmouseout="this.style.background='#27ae60'">
         ✅ APPROVE SEQUENCE
     </button>

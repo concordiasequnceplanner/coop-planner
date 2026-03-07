@@ -379,6 +379,49 @@ td { border: 1px solid #dee2e6; vertical-align: top; padding: 0; background-colo
 .badge-win  { background-color: #3498db !important; }
 .badge-any  { background-color: #7f8c8d !important; }
 
+.grade-badge { 
+    color: #333; 
+    padding: 2px 6px; 
+    border-radius: 3px; 
+    font-weight: bold; 
+    font-size: 10px; 
+    margin-left: 5px;
+    display: inline-block;
+    border: 1px solid rgba(0,0,0,0.1);
+}
+
+/* Grade color coding */
+.grade-badge.grade-a {
+    background-color: #d4edda;  /* Very light green for A range */
+    color: #155724;
+}
+
+.grade-badge.grade-b {
+    background-color: #fff3cd;  /* Light yellow for B range */
+    color: #856404;
+}
+
+.grade-badge.grade-cd {
+    background-color: #ffe5cc;  /* Light orange for C/D range */
+    color: #8a4a00;
+}
+
+.grade-badge.grade-fail {
+    background-color: #f8d7da;  /* Light red for F/R */
+    color: #721c24;
+}
+
+.grade-badge.grade-disc {
+    background-color: #ffffff;  /* White background for DISC */
+    color: #000000;
+    border: 1px solid #333;
+}
+
+.grade-badge.grade-other {
+    background-color: #f0f0f0;  /* Light gray for other grades */
+    color: #333;
+}
+
 /* =========================================================
    HIGHLIGHT STATES
    ========================================================= */

@@ -1729,7 +1729,7 @@ window.sendEmailToStudent = function() {
     
     // Build email content
     const subject = `MIAE CO-OP AD message for ${studentName}, ${studentId}`;
-    const body = `${headerMsg}Hello ${studentName},\n\nPlease see message below:\n\n${publicNotes}\n\nPS: Please use REPLY TO ALL\n\nRegards,\n${adminEmail}`;
+    const body = `${headerMsg}Hello ${studentName},\n\nPlease see the message below:\n\n${publicNotes}\n\nPS: Please use REPLY TO ALL\n\nRegards,\n${adminEmail}`;
     
     // Show custom dialog with email preview
     const confirmed = confirm(`Send email to:\n\nTo: ${studentEmail}\nCC: ${ccList.join(', ')}\n\nSubject: ${subject}\n\nMessage:\n${body}\n\nPress OK to send, or Cancel to abort.`);
@@ -4104,3 +4104,4 @@ window.openPendingApprovals = async function() {
         alert(`Pending approvals failed: ${e.message}`);
     }
 };
+

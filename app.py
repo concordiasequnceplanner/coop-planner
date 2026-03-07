@@ -1123,7 +1123,7 @@ def api_admin_send_student_email():
         
         body = f"""{header_msg}Hello {student_name},
 
-Please see message below:
+Please see the message below:
 
 {message}
 
@@ -1680,3 +1680,4 @@ def api_admin_approve():
 
 if __name__ == "__main__":
     app.run(debug=True)
+

@@ -730,6 +730,7 @@ document.addEventListener("DOMContentLoaded", () => {
                         seen.add(r.text);
                         const div = document.createElement('div');
                         div.className = `term-restriction-warning ${r.isWarning ? 'warning-yes' : 'warning-no'}`;
+                        div.style.whiteSpace = 'pre-line';
                         div.textContent = r.text;
                         restContainer.appendChild(div);
                     });
@@ -1319,6 +1320,14 @@ document.addEventListener("DOMContentLoaded", () => {
             if (rCoop && rCoop !== 'NAN') {
                 if (rCoop === 'YES' && !isCoop) match = false;
                 if (rCoop === 'NO' && isCoop) match = false;
+            }
+
+            // 3b) Level filter: UGRD or GRAD — skip if doesn't match student level
+            const rLevel = String(r['Level'] || r['level'] || '').trim().toUpperCase();
+            if (rLevel && rLevel !== 'NAN') {
+                const studentIsGrad = !!window.APP_CONFIG?.isGrad;
+                if (rLevel === 'UGRD' && studentIsGrad) match = false;
+                if (rLevel === 'GRAD' && !studentIsGrad) match = false;
             }
 
             // 4) Year filter: if set, must match this term's academic year
@@ -3326,7 +3335,7 @@ function addWarningBadge(box, issues) {
     box.classList.toggle('cv-warning', !hasError);
     const line = document.createElement('div');
     line.className = `cv-error-line ${hasError ? 'cv-error-line-err' : 'cv-error-line-warn'}`;
-    line.innerText = '▶ ' + issues.map(i => i.msg).join(' | ');
+    line.innerHTML = issues.map(i => '▶ ' + i.msg.replace(/</g, '&lt;')).join('<br>');
     box.appendChild(line);
 }
 
@@ -3554,13 +3563,19 @@ window.validateGrid = function() {
                 flagBox(wtPos.WT3.el, [{ msg: 'WT3 must be in a later term than WT2', sev: 'error' }]);
         }
 
-        // Check 8c: Term immediately before last WT must be full-time (≥12cr)
+        // Check 8c: Term immediately before last WT must be full-time (≥Credits_FT)
         // Find the last (highest) WT
         const lastWt = [wtPos.WT1, wtPos.WT2, wtPos.WT3]
             .filter(w => w)
             .sort((a, b) => b.ord - a.ord)[0];
         
         if (lastWt && lastWt.ord > 0) {
+            // Look up Credits_FT from program DB
+            const _progNamesDb8c = window.APP_CONFIG?.programNamesDb || [];
+            const _selectedProg8c = document.getElementById('programSelect')?.value || '';
+            const _progRow8c = _progNamesDb8c.find(r => String(r['Program'] || '').trim() === _selectedProg8c);
+            const _creditsFT8c = _progRow8c ? parseFloat(_progRow8c['Credits_FT']) : 12; // fallback 12
+
             // Find the term immediately before the last WT
             const prevTermOrd = lastWt.ord - 1;
             const prevZone = allZones.find(z => z.ord === prevTermOrd);
@@ -3581,10 +3596,10 @@ window.validateGrid = function() {
                         }
                     });
                     
-                    if (prevCr < 12) {
+                    if (prevCr < _creditsFT8c) {
                         const lastWtName = (lastWt.el.dataset.displayId || lastWt.el.dataset.courseId || 'last WT').toUpperCase();
                         const prevLabel = prevZone.id.replace('zone_', '').replace(/_/g, ' ');
-                        flagBox(lastWt.el, [{ msg: `The term before ${lastWtName} (${prevLabel}) must be Full-Time (≥12 credits). Currently it has ${prevCr}cr`, sev: 'error' }]);
+                        flagBox(lastWt.el, [{ msg: `Not full-time: ${prevLabel} has ${prevCr}cr < FT minimum of ${_creditsFT8c}cr — the term before ${lastWtName} must be Full-Time`, sev: 'error' }]);
                     }
                 }
             }
@@ -3733,6 +3748,14 @@ window.validateGrid = function() {
             if (rCoopSel && rCoopSel !== 'NAN') {
                 if (rCoopSel === 'YES' && !isCoop) return;
                 if (rCoopSel === 'NO' && isCoop) return;
+            }
+            
+            // Check Level filter: UGRD or GRAD
+            const rLevel2 = String(r['Level'] || r['level'] || '').trim().toUpperCase();
+            if (rLevel2 && rLevel2 !== 'NAN') {
+                const studentIsGrad2 = !!window.APP_CONFIG?.isGrad;
+                if (rLevel2 === 'UGRD' && studentIsGrad2) return;
+                if (rLevel2 === 'GRAD' && !studentIsGrad2) return;
             }
             
             // Check date filter

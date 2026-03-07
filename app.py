@@ -61,6 +61,33 @@ app = Flask(__name__)
 app.secret_key = "SVsecretKEY_MIAE_2024"
 
 # =========================================================
+# SESSION TIMEOUT (auto-logoff)
+# =========================================================
+SESSION_TIMEOUT_STUDENT = 5 * 60    # 30 minutes (seconds)
+SESSION_TIMEOUT_POWER   = 8 * 60 * 60  # 8 hours (seconds)
+app.config['PERMANENT_SESSION_LIFETIME'] = datetime.timedelta(hours=9)  # absolute max cookie lifetime
+
+@app.before_request
+def check_session_timeout():
+    # Skip for static files, login, verify, health, favicon
+    if request.endpoint in (None, 'static', 'login', 'verify', 'health', 'favicon'):
+        return
+    if 'student_id' not in session:
+        return
+
+    now = datetime.datetime.now().timestamp()
+    last_active = session.get('last_active', now)
+
+    is_power = str(session.get('student_id', '')).startswith('9') and not session.get('is_guest', False)
+    timeout = SESSION_TIMEOUT_POWER if is_power else SESSION_TIMEOUT_STUDENT
+
+    if now - last_active > timeout:
+        session.clear()
+        return redirect(url_for('login'))
+
+    session['last_active'] = now
+
+# =========================================================
 # RATE LIMITING
 # =========================================================
 limiter = Limiter(
@@ -190,7 +217,7 @@ def nl2html(txt, fallback=""):
         s = fallback
     return escape(s).replace("\n", "<br>")
 
-def build_terms_html(term_summary):
+def build_terms_html(term_summary, include_grades=True):
     if not term_summary:
         return ""
 
@@ -247,8 +274,8 @@ def build_terms_html(term_summary):
                 # Build course text
                 course_text = f"{cname} ({ccr}cr)"
                 
-                # Add grade for power users
-                if is_power and grade:
+                # Add grade only for power users AND only if include_grades is True
+                if is_power and grade and include_grades:
                     course_text += f" --> {escape(grade)}"
                 
                 style = "color:#00c853;font-weight:800;" if is_wt else "color:#333;"
@@ -270,7 +297,7 @@ def build_terms_html(term_summary):
 
 def render_sequence_email(mode, student_email, student_name, target_sid, program,
                           terms_html="", comments_html="", wt_html="", wt_status_msg="",
-                          signer="Coordinator"):
+                          signer="Coordinator", notes_html=""):
     if mode == "PENDING":
         return f"""
         <div style="font-family:Arial,sans-serif;color:#333;max-width:750px;margin:0 auto;border:1px solid #e0e0e0;padding:20px;border-radius:8px;">
@@ -293,6 +320,14 @@ def render_sequence_email(mode, student_email, student_name, target_sid, program
         """
 
     if mode == "APPROVED":
+        notes_section = ""
+        if notes_html:
+            notes_section = f"""
+                <p><b>Notes:</b></p>
+                <div style="background:#fff8e1;border:1px solid #ffe082;border-left:4px solid #f39c12;padding:12px;border-radius:5px;line-height:1.6;font-size:13px;">
+                    {notes_html}
+                </div>
+            """
         return f"""
         <div style="font-family:Arial,sans-serif;color:#333;max-width:750px;margin:0 auto;border:1px solid #e0e0e0;padding:20px;border-radius:8px;">
             <h2 style="color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:10px;">Approved Course Sequence</h2>
@@ -310,6 +345,8 @@ def render_sequence_email(mode, student_email, student_name, target_sid, program
             <div style="background:#e8f5e9;border:1px solid #c8e6c9;padding:12px;border-radius:5px;line-height:1.6;">
                 {comments_html}
             </div>
+
+            {notes_section}
 
             <h3>Approved Sequence</h3>
             {terms_html}
@@ -485,6 +522,8 @@ def verify():
                     session["student_name"] = str(name_res[0]) if name_res and name_res[0] else "Student"
                     session["is_guest"] = False
                     session["is_power_user"] = str(sid).startswith("9")
+                    session["last_active"] = datetime.datetime.now().timestamp()
+                    session.permanent = True
                     return redirect(url_for("planner_page"))
 
                 # wrong code
@@ -930,7 +969,7 @@ def api_sequence_save():
                 student_email_addr = email_to_save or _get_student_email_db(target_sid)
                 student_display_name = sid_name or _get_student_name_db(target_sid) or target_sid
 
-                terms_html = build_terms_html(term_summary)
+                terms_html = build_terms_html(term_summary, include_grades=False)
 
                 subject_line = f"Sequence submitted for approval - {student_display_name} ({target_sid}) - {program}"
                 html_body = render_sequence_email(
@@ -1657,7 +1696,7 @@ def api_admin_approve():
 
                 wt_html += f"<p style='margin:6px 0;font-size:14px;line-height:1.5;'>{wt_label}: {term_txt}{change_span}</p>"
 
-            terms_html = build_terms_html(term_summary)
+            terms_html = build_terms_html(term_summary, include_grades=False)
             comments_html = nl2html(pub_comment, "No comments.")
             wt_status_msg = (
                 "<p style='color:#e67e22;font-weight:bold;'>⚠️ Work term placements were modified during approval.</p>"
@@ -1666,6 +1705,19 @@ def api_admin_approve():
             )
 
         if status == STATUS_APPROVED:
+            # Fetch public_notes from DB to include in email
+            notes_html = ""
+            try:
+                with engine.connect() as conn:
+                    nr = conn.execute(
+                        text("SELECT public_notes FROM S_id_comments WHERE S_id = :sid LIMIT 1"),
+                        {"sid": target_sid},
+                    ).fetchone()
+                    if nr and nr[0] and str(nr[0]).strip():
+                        notes_html = nl2html(str(nr[0]).strip())
+            except Exception as ne:
+                print(f"⚠ Could not fetch public_notes for email: {ne}")
+
             subject = f"Approved sequence for {student_name} {target_sid} {program}"
             html_body = render_sequence_email(
                 mode="APPROVED",
@@ -1678,7 +1730,18 @@ def api_admin_approve():
                 wt_html=wt_html,
                 wt_status_msg=wt_status_msg,
                 signer=power_user_name,
+                notes_html=notes_html,
             )
+
+            # Clear public_notes after approval
+            try:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text("UPDATE S_id_comments SET public_notes = NULL WHERE S_id = :sid"),
+                        {"sid": target_sid},
+                    )
+            except Exception as ne:
+                print(f"⚠ Could not clear public_notes after approval: {ne}")
         else:  # REWORK
             subject = f"REWORK for {student_name} ({target_sid}) - {program}"
             html_body = f"""

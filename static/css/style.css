@@ -234,7 +234,7 @@ table { width: 100%; border-collapse: collapse; table-layout: fixed; }
 
 th { color: white; padding: 12px 10px; font-size: 13px; text-shadow: 1px 1px 2px rgba(0,0,0,0.2); }
 
-td { border: 1px solid #dee2e6; vertical-align: top; padding: 0; background-color: #fff; }
+td { border: 1px solid #dee2e6; vertical-align: top; padding: 0; background-color: #fff; height: 200px; }
 
 .th-year   { background: #800000; width: 80px; }
 .th-summer { background: #27ae60; }
@@ -291,6 +291,7 @@ td { border: 1px solid #dee2e6; vertical-align: top; padding: 0; background-colo
    ========================================================= */
 .drop-zone {
     min-height: 80px;
+    height: 100%;
     background: #fff;
     border-radius: 4px;
     padding: 8px;
@@ -444,10 +445,32 @@ td { border: 1px solid #dee2e6; vertical-align: top; padding: 0; background-colo
     margin-bottom: 20px;
     background: white;
     box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    table-layout: fixed;
 }
 .admin-results-table th,
 .admin-results-table td { border: 1px solid #dee2e6; padding: 8px; text-align: center; }
 .admin-results-table th { background: #2c3e50; color: white; position: sticky; top: 0; }
+
+/* Wrap long emails */
+.admin-results-table td:nth-child(4) { 
+    word-break: break-word; 
+    max-width: 200px; 
+    white-space: normal;
+}
+
+/* Notes columns - prevent overlap */
+.admin-results-table td:nth-child(11),
+.admin-results-table td:nth-child(12) {
+    vertical-align: top;
+    padding: 0;
+    width: 300px;
+}
+
+.notes-cell-vis, .notes-cell-invis {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+}
 
 .admin-email-panel {
     margin-top: 20px;
@@ -498,8 +521,30 @@ td { border: 1px solid #dee2e6; vertical-align: top; padding: 0; background-colo
 
 .student-count { color: #c0392b; display: none; }
 
-.notes-cell-vis { max-height: 50px; overflow-y: auto; font-size: 11px; text-align: left; background: #f9fff9; padding: 4px; }
-.notes-cell-invis { max-height: 50px; overflow-y: auto; font-size: 11px; text-align: left; background: #fdf2f2; padding: 4px; }
+.notes-cell-vis { 
+    min-width: 250px; 
+    max-width: 400px; 
+    max-height: 150px; 
+    overflow-y: auto; 
+    font-size: 11px; 
+    text-align: left; 
+    background: #f9fff9; 
+    padding: 8px; 
+    white-space: pre-wrap; 
+    word-wrap: break-word;
+}
+.notes-cell-invis { 
+    min-width: 250px; 
+    max-width: 400px; 
+    max-height: 150px; 
+    overflow-y: auto; 
+    font-size: 11px; 
+    text-align: left; 
+    background: #fdf2f2; 
+    padding: 8px; 
+    white-space: pre-wrap; 
+    word-wrap: break-word;
+}
 
 /* Spinner Overlay */
 .spinner-overlay {
@@ -665,18 +710,17 @@ td { border: 1px solid #dee2e6; vertical-align: top; padding: 0; background-colo
    ERROR PANEL
    ========================================================= */
 .ep-box {
-    border: 2px solid #e74c3c;
+    border: 1px solid #e0e0e0;
     border-radius: 6px;
-    margin-top: 10px;
+    margin-top: 8px;
     overflow: hidden;
     font-size: 11px;
 }
 
 .ep-header {
-    background: #fbe8ea;
-    padding: 9px 12px;
+    background: #fdf3f4;
+    padding: 6px 10px;
     font-weight: bold;
-    font-size: 12px;
     cursor: pointer;
     display: flex;
     justify-content: space-between;
@@ -684,12 +728,18 @@ td { border: 1px solid #dee2e6; vertical-align: top; padding: 0; background-colo
     color: #c0392b;
     user-select: none;
     border-bottom: 1px solid #e0e0e0;
-    border-left: 4px solid #e74c3c;
 }
-.ep-header:hover { background: #f5c6cb; }
+.ep-header:hover { background: #fbe8ea; }
 
-.ep-body { display: none; max-height: none; overflow-y: auto; background: #fff; }
-.ep-body.ep-open { display: block; }
+.ep-body { 
+    display: none; 
+    max-height: 400px; 
+    overflow-y: auto; 
+    background: #fff;
+}
+.ep-body.ep-open { 
+    display: block; 
+}
 
 .ep-item {
     padding: 5px 10px;
@@ -698,7 +748,7 @@ td { border: 1px solid #dee2e6; vertical-align: top; padding: 0; background-colo
 }
 .ep-item:last-child { border-bottom: none; }
 .ep-error   { color: #c0392b; }
-.ep-warning { color: #d35400; }
+.ep-warning { color: #2980b9; }
 .ep-fyi     { color: #7f8c8d; font-style: italic; }
 
 

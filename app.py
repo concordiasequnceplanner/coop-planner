@@ -27,7 +27,7 @@ from utils import (
     load_restrictions,
     get_email_recipients,
     debug_no_emails,
-)
+) 
 
 # =========================================================
 # STATUS CONSTANTS
@@ -1269,7 +1269,8 @@ def api_admin_run_check():
             "2": "v_check_2_gpa24_low",
             "3": "v_check_3_gpa24_borderline",
             "5": "v_check_5_wt_violation",
-            "6": "v_check_6_no_sequence"
+            "6": "v_check_6_no_sequence",
+            "7": "v_check_7_sequence_deviations"
         }
         
         view_name = view_mapping.get(str(check_id))
@@ -1426,6 +1427,10 @@ def api_admin_run_check():
                 # Get scheduled WTs from the batch query results
                 scheduled_wts = wts_map.get(student_id, "")
                 
+                # Get deviated courses if present (for check 7)
+                deviated_courses = row_dict.get('Deviated_Courses') or row_dict.get('Deviated Courses') or ""
+                deviated_courses = str(deviated_courses).strip() if deviated_courses else ""
+                
                 students.append({
                     "id": student_id,
                     "name": name,
@@ -1436,6 +1441,7 @@ def api_admin_run_check():
                     "gpa24": str(row_dict.get('GPA24') or row_dict.get('GPA_X_CR') or "").strip(),
                     "gpa24_cr": str(row_dict.get('GPA24_Credits') or row_dict.get('GPA_X_CR_Actual_Credits') or "").strip(),
                     "wts": scheduled_wts,
+                    "deviated_courses": deviated_courses,
                     "notes_vis": notes_vis,
                     "notes_invis": notes_invis
                 })

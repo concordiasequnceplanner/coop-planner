@@ -21,6 +21,12 @@ async function loadCheckData() {
     document.getElementById('loadingOverlay').style.display = 'flex';
     document.getElementById('resultsTable').style.display   = 'none';
 
+    // Show/hide Deviated Courses column based on check_id
+    const checkId = selected.value;
+    const deviatedCoursesHeader = document.getElementById('deviatedCoursesHeader');
+    const showDeviatedCourses = (checkId === '7');
+    deviatedCoursesHeader.style.display = showDeviatedCourses ? '' : 'none';
+
     try {
         const res = await fetch('/api/admin_run_check', {
             method: 'POST',
@@ -39,6 +45,15 @@ async function loadCheckData() {
         tbody.innerHTML = '';
         currentStudents.forEach(s => {
             const tr = document.createElement('tr');
+            
+            // Build deviated courses cell if applicable
+            let deviatedCoursesCell = '';
+            if (showDeviatedCourses && s.deviated_courses) {
+                deviatedCoursesCell = `<td style="font-size:11px; text-align:left; background:#fff8e1; padding:8px; white-space:pre-wrap; word-wrap:break-word; max-width:400px; overflow-y:auto; max-height:200px; font-family:monospace;">${s.deviated_courses}</td>`;
+            } else if (showDeviatedCourses) {
+                deviatedCoursesCell = '<td></td>';
+            }
+            
             tr.innerHTML = `
                 <td style="text-align:center;"><input type="checkbox" name="studentCheck" value="${s.id}" checked></td>
                 <td style="font-weight:bold; color:#2980b9;">${s.name}</td>
@@ -50,6 +65,7 @@ async function loadCheckData() {
                 <td style="font-weight:bold; color:#e67e22;">${s.gpa24}</td>
                 <td>${s.gpa24_cr}</td>
                 <td style="font-size:11px; white-space:nowrap; text-align:left;">${s.wts}</td>
+                ${deviatedCoursesCell}
                 <td style="font-size:11px; text-align:left; background:#f9fff9; padding:8px; white-space:pre-wrap; word-wrap:break-word; max-width:300px; overflow-y:auto; max-height:150px;">${s.notes_vis}</td>
                 <td style="font-size:11px; text-align:left; background:#fdf2f2; padding:8px; white-space:pre-wrap; word-wrap:break-word; max-width:300px; overflow-y:auto; max-height:150px;">${s.notes_invis}</td>`;
             tbody.appendChild(tr);

@@ -4024,7 +4024,7 @@ window.validateGrid = function() {
             return parts.join(' ');
         }
 
-        // Scan all placed non-taken courses on the grid (including WT)
+        // Scan all placed courses on the grid (including WT and taken courses)
         const deviations = [];
         document.querySelectorAll('.drop-zone').forEach(zone => {
             if (zone.id === 'zone_Y0' || zone.id === 'zone_Unallocated') return;
@@ -4032,7 +4032,6 @@ window.validateGrid = function() {
 
             Array.from(zone.children).forEach(box => {
                 if (!box.classList.contains('course-box')) return;
-                if (box.classList.contains('course-taken')) return;
 
                 const cid = (box.dataset.courseId || '').toUpperCase();
                 const displayId = (box.dataset.displayId || cid).toUpperCase();

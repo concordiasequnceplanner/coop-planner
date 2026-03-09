@@ -260,7 +260,7 @@ def send_otp_email(recipient, otp):
         <div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee;">
             <h2 style="color: #912338;">MIAE Academic Planner</h2>
             <p>Your access code is: <b style="font-size: 24px; color: #333;">{otp}</b></p>
-            <p style="font-size: 12px; color: #666;">This code is valid for one session.</p>
+            <p style="font-size: 12px; color: #666;">This code is valid for any login within the next 30 minutes.</p>
         </div>
     """
     

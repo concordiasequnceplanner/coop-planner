@@ -1023,8 +1023,10 @@ document.addEventListener("DOMContentLoaded", () => {
             window.rebuildGrid();
         }
         setTimeout(() => {
+            // Only disable submit button for power users viewing pending plans
+            // Regular students should always be able to submit
             const btnSubmit = document.getElementById('btnSubmitApproval');
-            if (btnSubmit) {
+            if (btnSubmit && config.isPowerUser) {
                 btnSubmit.disabled = true;
                 btnSubmit.style.opacity = '0.45';
                 btnSubmit.style.cursor = 'not-allowed';

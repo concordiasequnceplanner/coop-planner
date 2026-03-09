@@ -58,54 +58,54 @@
         {% if is_power_user %}
         <!-- Admin view — power users only -->
         <div class="header-section" style="gap:4px; position:relative;">
-            <input id="adminSidInput" placeholder="Search by ID or Name (min 4 chars)" value="{{ viewing_sid if viewing_sid != student_id else '' }}"
-                   style="padding:6px 10px; border:1px solid #cbd5e0; border-radius:4px; font-size:13px; width:220px;"
+            <input id="adminSidInput" placeholder="Search by ID or Name" value="{{ viewing_sid if viewing_sid != student_id else '' }}"
+                   style="padding:6px 8px; border:1px solid #cbd5e0; border-radius:4px; font-size:12px; width:160px;"
                    autocomplete="off">
             <div id="adminSearchDropdown" style="display:none; position:absolute; top:100%; left:0; background:#fff; border:1px solid #cbd5e0; border-radius:4px; box-shadow:0 4px 12px rgba(0,0,0,0.15); max-height:300px; overflow-y:auto; z-index:9999; width:400px; margin-top:2px;"></div>
-            <div style="display:flex; gap:4px;">
-                <button onclick="window.adminResetView()" title="Back to your own SID"
-                        style="background:#95a5a6; color:#fff; border:none; padding:6px 10px; border-radius:4px; font-size:12px; font-weight:700; cursor:pointer; flex:1;">
-                    Self
-                </button>
-                <button onclick="window.adminSwitchStudent()"
-                        style="background:#3498db; color:#fff; border:none; padding:6px 10px; border-radius:4px; font-size:12px; font-weight:700; cursor:pointer; flex:1;">
-                    Switch
-                </button>
-            </div>
+            <button onclick="window.adminSwitchStudent()"
+                    style="background:#3498db; color:#fff; border:none; padding:6px 10px; border-radius:4px; font-size:11px; font-weight:700; cursor:pointer;">
+                Switch
+            </button>
         </div>
         <div class="header-divider"></div>
         {% endif %}
 
         <!-- Save / Load -->
-        <div style="display:flex; gap:4px; align-items:center;">
-            <button onclick="window.saveDraft()"
-                    style="background:#7f8c8d;color:#fff;border:none;padding:6px 10px;border-radius:4px;font-size:12px;font-weight:bold;cursor:pointer;">
-                💾 Save
-            </button>
-            <button onclick="window.loadPlan()"
-                    style="background:#27ae60;color:#fff;border:none;padding:6px 10px;border-radius:4px;font-size:12px;font-weight:bold;cursor:pointer;">
-                📂 Load
-            </button>
-            {% if is_power_user %}
-            <div style="position:relative;">
-                <button id="btnPendingHeader" onclick="window.openPendingMenu()"
-                        style="background:#e74c3c;color:#fff;border:none;padding:6px 10px;border-radius:20px;font-size:12px;font-weight:bold;cursor:pointer;">
-                    📥 Pending<span id="pendingBadge"></span>
+        <div style="display:flex; gap:4px; align-items:flex-start; flex-direction:column;">
+            <div style="display:flex; gap:4px;">
+                <button onclick="window.saveDraft()"
+                        style="background:#7f8c8d;color:#fff;border:none;padding:6px 10px;border-radius:4px;font-size:12px;font-weight:bold;cursor:pointer;">
+                    💾 Save
                 </button>
-                <div id="pendingMenuDropdown" style="display:none;position:absolute;top:100%;right:0;background:#fff;border:1px solid #ddd;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.15);min-width:300px;max-height:350px;overflow-y:auto;z-index:9999;"></div>
+                {% if is_power_user %}
+                <div style="position:relative;">
+                    <button id="btnPendingHeader" onclick="window.openPendingMenu()"
+                            style="background:#e74c3c;color:#fff;border:none;padding:6px 10px;border-radius:20px;font-size:12px;font-weight:bold;cursor:pointer;">
+                        📥 Pending<span id="pendingBadge"></span>
+                    </button>
+                    <div id="pendingMenuDropdown" style="display:none;position:absolute;top:100%;right:0;background:#fff;border:1px solid #ddd;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.15);min-width:300px;max-height:350px;overflow-y:auto;z-index:9999;"></div>
+                </div>
+                {% endif %}
             </div>
-            <button onclick="window.open('/admin_checks', '_blank')"
-                    style="background:#8e44ad;color:#fff;border:none;padding:6px 10px;border-radius:20px;font-size:12px;font-weight:bold;cursor:pointer;">
-                🔍 ADMIN CHECK
-            </button>
-            {% endif %}
+            <div style="display:flex; gap:4px;">
+                <button onclick="window.loadPlan()"
+                        style="background:#27ae60;color:#fff;border:none;padding:6px 10px;border-radius:4px;font-size:12px;font-weight:bold;cursor:pointer;">
+                    📂 Load
+                </button>
+                {% if is_power_user %}
+                <button onclick="window.open('/admin_checks', '_blank')"
+                        style="background:#8e44ad;color:#fff;border:none;padding:6px 10px;border-radius:20px;font-size:12px;font-weight:bold;cursor:pointer;">
+                    🔍 ADMIN CHECK
+                </button>
+                {% endif %}
+            </div>
         </div>
 
         <!-- User info + logout -->
         <div class="header-user">
             <div style="display:flex; flex-direction:column; align-items:flex-end; gap:2px;">
                 {% if is_power_user and viewing_sid != student_id %}
-                <span style="font-size:12px;"><b style="color:#e74c3c;">ADMIN</b> viewing <b>{{ viewing_sid }}</b>{% if viewing_name %} — {{ viewing_name }}{% endif %}</span>
+                <span style="font-size:12px;"><b style="color:#e74c3c;">ADMIN</b> ({{ admin_email }}) viewing <b>{{ viewing_sid }}</b>{% if viewing_name %} — {{ viewing_name }}{% endif %}</span>
                 {% else %}
                 <span style="font-size:12px;"><b>{{ viewing_sid }}</b>{% if student_email %} — {{ student_email }}{% endif %}</span>
                 {% endif %}
@@ -113,7 +113,7 @@
                 {% if is_power_user and viewing_sid != student_id %}
                 <div style="display:flex; align-items:center; gap:8px;">
                     <a href="#" onclick="window.sendEmailToStudent(); return false;" style="font-size:11px; color:#3498db; text-decoration:none; font-weight:bold;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">
-                        📧 Email Student
+                        📧 Email {{ student_email if student_email else viewing_sid }}
                     </a>
                     <label style="font-size:10px; color:#666; display:flex; align-items:center; gap:4px; cursor:pointer;">
                         <input type="checkbox" id="includeInstituteOps" style="width:12px; height:12px; accent-color:#e74c3c;">
@@ -131,7 +131,7 @@
     <!-- ===== ROW 2: Notes ===== -->
     <div class="header-row-notes">
         <!-- Student Instructions (Collapsible) -->
-        <details open style="margin-bottom: 15px; padding: 12px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; max-width: 40%; word-wrap: break-word;">
+        <details id="instructionsDetails" open style="margin-bottom: 15px; padding: 12px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; max-width: 40%; word-wrap: break-word;">
             <summary style="cursor: pointer; font-weight: bold; font-size: 14px; color: #2c3e50; margin-bottom: 10px;">
                 📋 How to Use This Tool
             </summary>
@@ -391,6 +391,24 @@
     };
 </script>
 <script src="{{ url_for('static', filename='js/planner.js') }}"></script>
+<script>
+    // Persist instructions collapse state across session
+    (function() {
+        const details = document.getElementById('instructionsDetails');
+        if (!details) return;
+        
+        // Restore state from sessionStorage
+        const savedState = sessionStorage.getItem('instructionsOpen');
+        if (savedState !== null) {
+            details.open = savedState === 'true';
+        }
+        
+        // Save state when toggled
+        details.addEventListener('toggle', function() {
+            sessionStorage.setItem('instructionsOpen', details.open);
+        });
+    })();
+</script>
 
 </body>
 </html>

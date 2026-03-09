@@ -644,7 +644,7 @@ def planner_page():
     try:
         with engine.connect() as conn:
             ts_df = pd.read_sql(
-                text("SELECT COURSE, `Academic Term`, CREDVAL, GRADE, PROG_LINK, DISCIPLINE1_DESCR FROM Transcripts WHERE `Student ID` = :sid"),
+                text("SELECT COURSE, `Academic Term`, CREDVAL, GRADE, PROG_LINK, DISCIPLINE1_DESCR, REPEAT_FLAG FROM Transcripts WHERE `Student ID` = :sid"),
                 conn,
                 params={"sid": target_sid},
             )
@@ -866,6 +866,43 @@ def api_comments_append():
         return jsonify({"ok": True})
     except Exception as e:
         print(f"❌ Append comments error: {e}")
+        return jsonify({"ok": False, "error": "An error occurred"}), 500
+
+
+@app.route("/api/save_admin_notes", methods=["POST"])
+@limiter.limit("100 per 15 minutes")
+def api_save_admin_notes():
+    """Admin-only endpoint to auto-save public and private notes."""
+    if not _require_login():
+        return jsonify({"ok": False, "error": "Unauthorized"}), 401
+
+    if not _is_power_user():
+        return jsonify({"ok": False, "error": "Admin only"}), 403
+
+    data = request.get_json(silent=True) or {}
+    target_sid = str(data.get("target_sid", "") or "").strip()
+    pub = str(data.get("public_notes", "") or "")
+    priv = str(data.get("private_notes", "") or "")
+
+    if not target_sid:
+        return jsonify({"ok": False, "error": "Missing target_sid"}), 400
+
+    try:
+        with engine.begin() as conn:
+            chk = conn.execute(text("SELECT 1 FROM S_id_comments WHERE S_id = :sid"), {"sid": target_sid}).fetchone()
+            if chk:
+                conn.execute(
+                    text("UPDATE S_id_comments SET Public_comments=:pub, PRIVATE_comments=:priv WHERE S_id=:sid"),
+                    {"sid": target_sid, "pub": pub, "priv": priv},
+                )
+            else:
+                conn.execute(
+                    text("INSERT INTO S_id_comments (S_id, Public_comments, PRIVATE_comments) VALUES (:sid, :pub, :priv)"),
+                    {"sid": target_sid, "pub": pub, "priv": priv},
+                )
+        return jsonify({"ok": True})
+    except Exception as e:
+        print(f"❌ Save admin notes error: {e}")
         return jsonify({"ok": False, "error": "An error occurred"}), 500
 
 
@@ -1171,7 +1208,7 @@ def api_admin_send_student_email():
         
         # Build email subject and body
         subject = f"MIAE CO-OP AD message for {student_name}, {student_id}"
-        header_msg = "⚠️ WT IMPACTED - Operations Institute are cc-ed\n\n" if include_institute else "✅ Institute Operations not cc-ed - no restrictions on WT\n\n"
+        header_msg = "⚠️ WT IMPACTED - Operations Institute are cc-ed\n\n" if include_institute else ""
         admin_email = session.get("user_email", "")
         
         body = f"""{header_msg}Hello {student_name},

@@ -899,7 +899,7 @@ document.addEventListener("DOMContentLoaded", () => {
             });
         })();
 
-        // LOW GPA next-2-terms visual warning
+        // LOW GPA next-3-terms visual warning
         (function() {
             const progNamesDb  = window.APP_CONFIG?.programNamesDb || [];
             const selectedProg = document.getElementById('programSelect')?.value || '';
@@ -940,12 +940,13 @@ document.addEventListener("DOMContentLoaded", () => {
                 .filter(Boolean)
                 .sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
 
-            // find the 2 zones immediately after the low-GPA term
+            // find the 3 zones immediately after the low-GPA term
             const afterIdx = allZones.findIndex(z => z.key > lowZoneKey);
             if (afterIdx === -1) return;
-            const nextTwo = allZones.slice(afterIdx, afterIdx + 2);
+            const nextThree = allZones.slice(afterIdx, afterIdx + 3);
 
-            nextTwo.forEach(({ zone }) => {
+            // Show restriction in next 3 terms, even if WT is already placed
+            nextThree.forEach(({ zone }) => {
                 const restContainer = document.getElementById(`restrictions_${zone.id}`);
                 if (!restContainer) return;
                 const div = document.createElement('div');
@@ -1699,7 +1700,7 @@ window.insertCannedComment = function(type) {
     } else if (type === 2) {
         msg = "Due to low academic performance, apply one of the two: if next term WT is already secured, the one after (next next one) cannot be placed in the subsequent 2 terms, and will be approved pending academic performance improvement. If next term WT is not already secured, it must be re-scheduled at earliest 2 terms later and will be approved pending academic performance improvement. In either case, a change of sequence is requested. This places the student on Probation (still with CO-OP, but no work term; this has no impact on MIAE Program and course registration). Student's status in CO-OP Program will be re-evaluated every term upon academic performance.";
     } else if (type === 3) {
-        msg = "Hello,\n\nI am sorry you are in this situation. As a reminder, the minimum CGPA requirement for all undergraduate Engineering and Computer Science programs is outlined here: https://www.concordia.ca/academics/co-op/internships.html (select your program)\n\nTechnically, students with a CGPA below the minimum should be withdrawn immediately; also, we cannot authorize a work term if a student hasn't demonstrated the minimum required engineering knowledge. This fundamental knowledge is directly measured by your GPA (at least 0.2 above the withdrawal GPA), and a low GPA indicates that this requirement has not yet been met.\n\nWhile we are willing to offer a second chance to improve student's academic standing, we are facing a procedural issue: final grades generally come in after the search term starts, and we cannot allow a search term prior to the posting of the grades. This explains the decision we had to take to postpone your internship by 2 terms.\n\nAs soon as your grades are in and your CGPA shows a major improvement, we will remove the restriction.\n\nI am confident this unpleasant situation is only a temporary one, and that your grades next term will make past term become forgotten history.\n\nRegards,";
+        msg = "\nHello,\n\nI understand this is a difficult situation. As a reminder, the minimum CGPA requirements for undergraduate Engineering and Computer Science co-op programs are outlined here: https://www.concordia.ca/academics/co-op/internships.html (select your program).\n\nUnder normal circumstances, students with a CGPA below the minimum threshold would be withdrawn from the co-op program immediately. However, MIAE Department is willing to offer students a second chance to improve their academic standing, with certain restrictions.\n\nWe cannot authorize a work term until the student has demonstrated the minimum required engineering knowledge, which is directly measured by your GPA (at least 0.2 above the withdrawal threshold). Additionally, there is a procedural constraint: final grades are typically posted after the search term begins, and we cannot authorize a search term before student's improved grades are available. The above explains why we had to postpone your internship by 2 terms.\n\nOnce your grades are posted and your CGPA shows significant improvement, we will remove the restriction and you can proceed with your work term.\n\nI am confident this is a temporary setback, and that your performance next term will demonstrate the progress needed to move forward.\n\nBest regards,";
     }
     
     // Format: [date time, email]: message\n\nold text
@@ -1756,7 +1757,7 @@ window.sendEmailToStudent = function() {
     const includeInst = document.getElementById('includeInstituteOps')?.checked || false;
     const headerMsg = includeInst 
         ? "⚠️ WT IMPACTED - Operations Institute are cc-ed\n\n" 
-        : "✅ Institute Operations not cc-ed - no restrictions on WT\n\n";
+        : "";
     
     // Build CC list
     let ccList = ['coop_miae@concordia.ca', 'sabrina.poirier@concordia.ca', coordEmail];
@@ -1974,6 +1975,36 @@ window.processApproval = async function(action) {
     }
 
     try {
+        // If APPROVED, save the current plan state first
+        if (action === 'APPROVED') {
+            const plan = collectPlanSnapshot();
+            const savePlanPayload = {
+                status: "APPROVED",
+                plan,
+                issues: window.latestIssues || [],
+                reason_code: null,
+                justification: document.getElementById('justificationText')?.value || '',
+                term_summary: termSummary,
+                student_id: viewingSid
+            };
+            await apiJson('/api/sequence/save', 'POST', savePlanPayload);
+            
+            // Auto-prepend approval comment to public notes
+            try {
+                const now = new Date();
+                const pad = n => String(n).padStart(2, '0');
+                const dt = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+                const email = window.APP_CONFIG?.studentId || window.APP_CONFIG?.adminEmail || '';
+                const existing = String(document.getElementById('publicNotes')?.value || '').trim();
+                const newComment = `[${dt}, ${email}]: Sequence APPROVED${existing ? '\n\n' + existing : ''}`;
+                await apiJson('/api/comments/append', 'POST', { text: newComment });
+                const pubEl = document.getElementById('publicNotes');
+                if (pubEl) pubEl.value = newComment;
+            } catch (ne) {
+                console.warn('Could not append approval comment to public notes:', ne.message);
+            }
+        }
+
         const payload = {
             status: action,
             student_id: viewingSid,
@@ -2033,6 +2064,14 @@ window.setupAdminSearchAutocomplete = function() {
     const dropdown = document.getElementById('adminSearchDropdown');
     
     if (!input || !dropdown) return;
+    
+    // Enter key triggers Switch button
+    input.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            window.adminSwitchStudent();
+        }
+    });
     
     // Search as user types (with debouncing)
     input.addEventListener('input', function() {

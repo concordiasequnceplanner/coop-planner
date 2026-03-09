@@ -2871,6 +2871,12 @@ window._autoPlaceImpl = function() {
         if (!st) return false;
         const box = byDisplayId.get(id);
         const cr = parseFloat(box.dataset.credit || 0);
+        const courseId = (box.dataset.courseId || '').toUpperCase();
+        const is490 = /490[AB]?$/.test(courseId);
+        
+        // Restriction: 490 courses cannot be in the same term as WT
+        if (is490 && st.hasWT) return false;
+        
         if (st.hasWT && !box.classList.contains('wt')) {
             if (st.regularCnt >= 1) return false;
         }
@@ -3448,6 +3454,11 @@ window.validateGrid = function() {
             }
             if (!box.classList.contains('wt') && wtBoxes.length > 0 && realBoxes.length > 1) {
                 issues.push({ msg: 'Too many courses in a Work Term', sev: 'error' });
+            }
+            
+            // Check 4b: Warning when exactly 1 course is taken during WT
+            if (!box.classList.contains('wt') && wtBoxes.length > 0 && realBoxes.length === 1) {
+                issues.push({ msg: 'You may take a maximum of one course during your internship term. You must obtain approval of your sequence from your Academic Director and written permission from your employer. The course must not interfere with the internship or conflict with normal business hours. Students are responsible for their coursework; employers are not obligated to adjust work schedules, and professors are not obligated to grant accommodations.', sev: 'warning' });
             }
 
             // Check 5: Capstone (490) cannot be in a WT term

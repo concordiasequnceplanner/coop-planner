@@ -63,7 +63,7 @@ app.secret_key = "SVsecretKEY_MIAE_2024"
 # =========================================================
 # SESSION TIMEOUT (auto-logoff)
 # =========================================================
-SESSION_TIMEOUT_STUDENT = 5 * 60    # 30 minutes (seconds)
+SESSION_TIMEOUT_STUDENT = 30 * 60    # 30 minutes (seconds)
 SESSION_TIMEOUT_POWER   = 8 * 60 * 60  # 8 hours (seconds)
 app.config['PERMANENT_SESSION_LIFETIME'] = datetime.timedelta(hours=9)  # absolute max cookie lifetime
 
@@ -139,6 +139,57 @@ def _viewing_sid():
     if _is_power_user():
         return str(session.get("admin_view_sid", cur)).strip()
     return cur
+
+
+def log_error(error_type, error_message, endpoint=None, extra_data=None):
+    """Centralized error logging to Error_Log table and file backup"""
+    try:
+        student_id = session.get("student_id", "UNKNOWN")
+        student_email = session.get("user_email", "")
+        endpoint = endpoint or request.endpoint or request.path
+        
+        error_data = {
+            "timestamp": datetime.datetime.now().isoformat(),
+            "student_id": student_id,
+            "student_email": student_email,
+            "error_type": error_type,
+            "error_message": str(error_message),
+            "endpoint": endpoint,
+            "user_agent": request.headers.get("User-Agent", ""),
+            "ip_address": request.remote_addr,
+            "extra_data": extra_data
+        }
+        
+        # Try database logging
+        if engine is not None:
+            try:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text("""
+                            INSERT INTO Error_Log 
+                            (student_id, student_email, error_type, error_message, endpoint, user_agent, ip_address, sequence_snapshot)
+                            VALUES (:sid, :email, :type, :msg, :endpoint, :ua, :ip, :snapshot)
+                        """),
+                        {
+                            "sid": student_id,
+                            "email": student_email,
+                            "type": error_type[:50],  # Limit to 50 chars
+                            "msg": str(error_message),
+                            "endpoint": endpoint[:255],  # Limit to 255 chars
+                            "ua": request.headers.get("User-Agent", "")[:500],
+                            "ip": request.remote_addr,
+                            "snapshot": json.dumps(extra_data) if extra_data else None
+                        }
+                    )
+            except Exception as db_err:
+                print(f"❌ Failed to log error to DB: {db_err}")
+        
+        # Always log to file as backup
+        with open("error_log.json", "a") as f:
+            f.write(json.dumps(error_data) + "\n")
+            
+    except Exception as log_err:
+        print(f"❌ Critical: Failed to log error: {log_err}")
 
 
 def _safe_json_load(val):
@@ -916,6 +967,46 @@ def api_save_admin_notes():
 @limiter.limit("100 per 15 minutes")
 def api_sequence_save():
     if not _require_login():
+        data = request.get_json(silent=True) or {}
+        student_id = session.get("student_id", "UNKNOWN")
+        
+        # Log the error
+        log_error(
+            error_type="UNAUTHORIZED_SUBMIT",
+            error_message="Session expired or invalid during sequence save",
+            endpoint="/api/sequence/save",
+            extra_data={"has_session_sid": "student_id" in session, "has_engine": engine is not None}
+        )
+        
+        # Try to save sequence as ERROR_RECOVERY so student doesn't lose work
+        if engine is not None and student_id != "UNKNOWN":
+            try:
+                plan = data.get("plan") or {}
+                program = str(data.get("program") or plan.get("program") or "").strip()
+                
+                with engine.begin() as conn:
+                    conn.execute(
+                        text("""
+                            INSERT INTO Saved_Sequences 
+                            (student_id, student_id_name, Student_Email, Sequence_Name, Program, 
+                             Date_Saved, status, student_comments, cos_reason, JSON_Data)
+                            VALUES (:sid, :name, :email, :seq_name, :prog, NOW(), :status, :comments, :reason, :json_data)
+                        """),
+                        {
+                            "sid": student_id,
+                            "name": session.get("student_name", ""),
+                            "email": session.get("user_email", ""),
+                            "seq_name": f"ERROR_RECOVERY_{datetime.datetime.now().strftime('%Y-%m-%d_%H:%M')}",
+                            "prog": program,
+                            "status": "ERROR_RECOVERY",
+                            "comments": str(data.get("justification") or ""),
+                            "reason": int(data.get("reason_code") or 0),
+                            "json_data": json.dumps(data)
+                        }
+                    )
+            except Exception as save_err:
+                log_error("ERROR_RECOVERY_FAILED", str(save_err), "/api/sequence/save")
+        
         return jsonify({"ok": False, "error": "Unauthorized"}), 401
 
     data = request.get_json(silent=True) or {}
@@ -930,9 +1021,20 @@ def api_sequence_save():
     cur_sid = _current_sid()
     viewing_sid = _viewing_sid()
 
-    target_sid = str(data.get("student_id") or viewing_sid).strip()
+    # For students, always use cur_sid (their own ID)
+    # For admins, use student_id from data or viewing_sid
+    if is_admin:
+        target_sid = str(data.get("student_id") or viewing_sid).strip()
+    else:
+        target_sid = cur_sid  # Students can only save their own sequences
 
     if (not is_admin) and target_sid != cur_sid:
+        log_error(
+            "UNAUTHORIZED_MISMATCH",
+            f"Student ID mismatch: target_sid={target_sid}, cur_sid={cur_sid}, viewing_sid={viewing_sid}",
+            "/api/sequence/save",
+            extra_data={"target_sid": target_sid, "cur_sid": cur_sid, "viewing_sid": viewing_sid, "is_admin": is_admin}
+        )
         return jsonify({"ok": False, "error": "Unauthorized"}), 403
     if is_admin and target_sid not in (cur_sid, viewing_sid):
         return jsonify({"ok": False, "error": "Admin must switch view first"}), 400
@@ -1046,6 +1148,7 @@ def api_sequence_save():
         return jsonify({"ok": True, "sequence_id": ts})
 
     except Exception as e:
+        log_error("SAVE_SEQUENCE_ERROR", str(e), "/api/sequence/save", extra_data={"plan": data.get("plan")})
         print(f"❌ Save sequence error: {e}")
         return jsonify({"ok": False, "error": "An error occurred"}), 500
 
@@ -1830,6 +1933,7 @@ def api_admin_approve():
 
         return jsonify({"ok": True})
     except Exception as e:
+        log_error("APPROVE_ERROR", str(e), "/api/admin/approve")
         print(f"❌ Approve route error: {e}")
         return jsonify({"ok": False, "error": "An error occurred"}), 500
 

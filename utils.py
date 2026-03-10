@@ -50,9 +50,7 @@ def load_programs_requirements():
     """Load Programs sheet for credit requirements by type. Returns list of dicts with Program, Level, Type of credits, no of credits"""
     try:
         excel_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "CORE_TE.xlsx")
-        # Try to read the Excel file and list all sheet names
         xl_file = pd.ExcelFile(excel_path)
-        print(f"📋 Available sheets in CORE_TE.xlsx: {xl_file.sheet_names}")
         
         # Try common variations of the sheet name
         possible_names = ['Programs', 'programs', 'PROGRAMS', 'Program', 'program']
@@ -63,15 +61,12 @@ def load_programs_requirements():
                 break
         
         if not sheet_name:
-            print(f"⚠️ Programs sheet not found. Available sheets: {xl_file.sheet_names}")
             return []
         
         df = pd.read_excel(excel_path, sheet_name=sheet_name)
         df.columns = [str(c).strip() for c in df.columns]
-        print(f"✅ Loaded Programs sheet with columns: {df.columns.tolist()}")
         return df.fillna("").to_dict(orient="records")
     except Exception as e:
-        print(f"❌ Error loading Programs: {e}")
         return []
 
 def load_restrictions():

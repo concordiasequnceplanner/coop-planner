@@ -1084,7 +1084,10 @@ document.addEventListener("DOMContentLoaded", () => {
         if (badge) badge.style.display = anyChecked ? 'none' : 'inline';
     }
     document.querySelectorAll('input[name="submissionReason"]').forEach(r =>
-        r.addEventListener('change', updateReasonHighlight)
+        r.addEventListener('change', () => {
+            updateReasonHighlight();
+            if (window.buildStudentMessage) window.buildStudentMessage();
+        })
     );
     updateReasonHighlight();
 
@@ -1501,8 +1504,23 @@ document.addEventListener("DOMContentLoaded", () => {
         const justText = document.getElementById('justificationText');
         if (!justText) return;
 
-        if (issues.length === 0) {
-            // No issues — don't auto-format, leave as-is or clear system text
+        // Get selected reason code
+        const reasonCode = getSelectedReasonCode();
+        const reasonLabels = {
+            1: "I have not yet started / I was asked by COOP AD but there are no changes",
+            2: "I want to reduce summer load",
+            3: "I want to reduce overall load",
+            4: "Off sequence (e.g., must repeat course)",
+            5: "I couldn't find a place in one/several courses I had scheduled",
+            6: "I have / will change academic program (e.g., transfer)",
+            7: "I was not placed for the coming work term (did not find an internship)",
+            8: "My WT is or will be extended",
+            9: "LOW GPA - CO-OP AD requested a CoS",
+            10: "Other personal reasons: see my comments"
+        };
+
+        if (issues.length === 0 && !reasonCode) {
+            // No issues and no reason — don't auto-format, leave as-is or clear system text
             if (justText.value.includes('ISSUES & JUSTIFICATIONS:')) {
                 justText.value = '';
             }
@@ -1515,23 +1533,36 @@ document.addEventListener("DOMContentLoaded", () => {
         const answersMap = {};
         const blocks = currentText.split(/(?=\d+\.\s)/);
         blocks.forEach(block => {
-            const m = block.match(/^\d+\.\s*([^\n]+)\nJustification:\s*([\s\S]*)/);
+            const m = block.match(/^\d+\.\s*([^\n]+)\n(?:Justification|DETAILS):\s*([\s\S]*)/);
             if (m) answersMap[m[1].trim()] = m[2].trim();
         });
 
         // Build new interleaved text
         let newContent = 'ISSUES & JUSTIFICATIONS:\n\n';
-        issues.forEach((issue, i) => {
+        let itemNumber = 1;
+
+        // Add reason code as first item if selected
+        if (reasonCode && reasonLabels[reasonCode]) {
+            const reasonText = `Submission Reason: ${reasonLabels[reasonCode]}`;
+            const savedAnswer = answersMap[reasonText] || '';
+            const labelText = (reasonCode === 4 || reasonCode === 5 || reasonCode === 6 || reasonCode === 10) ? 'DETAILS' : 'DETAILS (optional)';
+            newContent += `${itemNumber}. ${reasonText}\n${labelText}: ${savedAnswer}\n\n`;
+            itemNumber++;
+        }
+
+        // Add validation issues
+        issues.forEach((issue) => {
             const prefix = issue.sev === 'error' ? '[ERROR]' : issue.sev === 'warning' ? '[WARNING]' : '[FYI]';
             const isFyi = issue.msg.startsWith('FYI');
             const errText = issue.courseId ? `${issue.courseId}: ${issue.msg}` : issue.msg;
             if (isFyi) {
                 // FYI items: no justification needed, just show the info
-                newContent += `${i + 1}. ${prefix} ${errText}\n\n`;
+                newContent += `${itemNumber}. ${prefix} ${errText}\n\n`;
             } else {
                 const savedAnswer = answersMap[errText] || '';
-                newContent += `${i + 1}. ${prefix} ${errText}\nJustification: ${savedAnswer}\n\n`;
+                newContent += `${itemNumber}. ${prefix} ${errText}\nJustification: ${savedAnswer}\n\n`;
             }
+            itemNumber++;
         });
 
         justText.value = newContent;
@@ -4668,8 +4699,17 @@ window.submitForApproval = async function() {
                 const pad = n => String(n).padStart(2, '0');
                 const dt = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
                 const name = window.APP_CONFIG?.studentName || window.APP_CONFIG?.viewingSid || '';
+                
+                // Format justification based on reason code
+                let formattedJust = just;
+                if (reason === 4 || reason === 5 || reason === 6 || reason === 10) {
+                    formattedJust = `DETAILS:\n${just}`;
+                } else {
+                    formattedJust = `Justification:\n${just}`;
+                }
+                
                 const existing = String(document.getElementById('publicNotes')?.value || '').trim();
-                const newComment = `[${dt}, ${name}]: ${just}${existing ? '\n\n' + existing : ''}`;
+                const newComment = `[${dt}, ${name}]:\n${formattedJust}${existing ? '\n\n' + existing : ''}`;
                 await apiJson('/api/comments/append', 'POST', { text: newComment });
                 const pubEl = document.getElementById('publicNotes');
                 if (pubEl) pubEl.value = newComment;

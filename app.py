@@ -1188,6 +1188,19 @@ def api_sequence_save():
                 student_email_addr = email_to_save or _get_student_email_db(target_sid)
                 student_display_name = sid_name or _get_student_name_db(target_sid) or target_sid
 
+                # Get program from database (more reliable than frontend data)
+                program_from_db = program  # Default to what was provided
+                try:
+                    with engine.connect() as conn:
+                        program_row = conn.execute(
+                            text("SELECT PROG_LINK FROM Transcripts WHERE `Student ID` = :sid LIMIT 1"),
+                            {"sid": target_sid}
+                        ).fetchone()
+                        if program_row and program_row[0]:
+                            program_from_db = str(program_row[0]).strip()
+                except Exception as prog_err:
+                    print(f"⚠ Could not fetch program from DB, using provided: {prog_err}")
+
                 terms_html = build_terms_html(term_summary, include_grades=False)
 
                 # Fetch public comments to include in email
@@ -1211,13 +1224,13 @@ def api_sequence_save():
                 except Exception as ne:
                     print(f"⚠ Could not fetch Public_comments for PENDING email: {ne}")
 
-                subject_line = f"Sequence submitted for approval - {student_display_name} ({target_sid}) - {program}"
+                subject_line = f"Sequence submitted for approval - {student_display_name} ({target_sid}) - {program_from_db}"
                 html_body = render_sequence_email(
                     mode="PENDING",
                     student_email=student_email_addr,
                     student_name=student_display_name,
                     target_sid=target_sid,
-                    program=program,
+                    program=program_from_db,
                     terms_html=terms_html,
                     reason_code=reason_code,
                     notes_html=notes_html,
@@ -1228,7 +1241,7 @@ def api_sequence_save():
                 priority1_email = _get_priority1_email_db(target_sid)
 
                 recipients = get_email_recipients(
-                    program=program,
+                    program=program_from_db,  # Use program from database
                     target_sid=target_sid,
                     submitter_email=submitter_email,
                     priority1_email=priority1_email,
@@ -1411,6 +1424,43 @@ def api_admin_send_student_email():
         
         if not student_email or not message:
             return jsonify({"ok": False, "error": "Missing required fields"}), 400
+        
+        # Get program from database (more reliable than frontend data)
+        program_from_db = program  # Default to what was provided
+        try:
+            with engine.connect() as conn:
+                program_row = conn.execute(
+                    text("SELECT PROG_LINK FROM Transcripts WHERE `Student ID` = :sid LIMIT 1"),
+                    {"sid": student_id}
+                ).fetchone()
+                if program_row and program_row[0]:
+                    program_from_db = str(program_row[0]).strip()
+        except Exception as prog_err:
+            print(f"⚠ Could not fetch program from DB for student email, using provided: {prog_err}")
+        
+        # Check if student is GRAD
+        is_grad = 'GRAD' in str(program_from_db).upper() if program_from_db else False
+        
+        # Build CC list based on GRAD status (if not provided by frontend)
+        if not cc_list:
+            if is_grad:
+                # GRAD students: Nadia + Charlene
+                cc_list = ['coop_miae@concordia.ca', 'nadia.mazzaferro@concordia.ca', 'charlene.wald@concordia.ca']
+            else:
+                # UGRD students: Sabrina + coordinator
+                coord_email = 'frederick.francis@concordia.ca'
+                if program_from_db and 'INDU' in str(program_from_db).upper():
+                    try:
+                        last_digit = int(str(student_id)[-1])
+                        if last_digit >= 5:
+                            coord_email = 'nathalie.steverman@concordia.ca'
+                    except:
+                        pass
+                cc_list = ['coop_miae@concordia.ca', 'sabrina.poirier@concordia.ca', coord_email]
+        
+        # Add optional CC addresses
+        if include_institute and 'instituteoperations@concordia.ca' not in cc_list:
+            cc_list.append('instituteoperations@concordia.ca')
         
         # Build email subject and body
         subject = f"MIAE CO-OP AD message for {student_name}, {student_id}"
@@ -1864,6 +1914,19 @@ def api_admin_approve():
     justification = str(data.get("justification", "") or "")
     reason_code = int(data.get("reason_code") or 0)
     
+    # Get program from database (more reliable than frontend data)
+    program_from_db = program  # Default to what was provided
+    try:
+        with engine.connect() as conn:
+            program_row = conn.execute(
+                text("SELECT PROG_LINK FROM Transcripts WHERE `Student ID` = :sid LIMIT 1"),
+                {"sid": target_sid}
+            ).fetchone()
+            if program_row and program_row[0]:
+                program_from_db = str(program_row[0]).strip()
+    except Exception as prog_err:
+        print(f"⚠ Could not fetch program from DB for approve, using provided: {prog_err}")
+    
     # Get power user email with multiple fallbacks
     power_user_email = session.get("pre_auth_email") or session.get("user_email") or ""
     if not power_user_email:
@@ -2117,7 +2180,7 @@ def api_admin_approve():
         priority1_email = _get_priority1_email_db(target_sid)
 
         recipients = get_email_recipients(
-            program=program,
+            program=program_from_db,  # Use program from database
             target_sid=target_sid,
             submitter_email=submitter_email,
             priority1_email=priority1_email,

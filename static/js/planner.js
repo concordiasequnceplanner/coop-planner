@@ -1847,19 +1847,28 @@ window.sendEmailToStudent = function() {
         return;
     }
     
-    // Determine coordinator email based on program and student ID
-    let coordEmail = 'frederick.francis@concordia.ca';
-    if (program && program.toUpperCase().includes('INDU')) {
-        try {
-            const lastDigit = parseInt(String(studentId).slice(-1));
-            if (lastDigit >= 0 && lastDigit <= 4) {
-                coordEmail = 'frederick.francis@concordia.ca';
-            } else if (lastDigit >= 5 && lastDigit <= 9) {
-                coordEmail = 'nathalie.steverman@concordia.ca';
+    // Check if student is GRAD
+    const isGrad = program && program.toUpperCase().includes('GRAD');
+    
+    // Determine coordinator email based on GRAD status
+    let ccList;
+    if (isGrad) {
+        // GRAD students: Nadia + Charlene
+        ccList = ['coop_miae@concordia.ca', 'nadia.mazzaferro@concordia.ca', 'charlene.wald@concordia.ca'];
+    } else {
+        // UGRD students: Sabrina + coordinator (Fred/Nathalie based on INDU and SID)
+        let coordEmail = 'frederick.francis@concordia.ca';
+        if (program && program.toUpperCase().includes('INDU')) {
+            try {
+                const lastDigit = parseInt(String(studentId).slice(-1));
+                if (lastDigit >= 5 && lastDigit <= 9) {
+                    coordEmail = 'nathalie.steverman@concordia.ca';
+                }
+            } catch (e) {
+                console.warn('Could not determine coordinator from student ID');
             }
-        } catch (e) {
-            console.warn('Could not determine coordinator from student ID');
         }
+        ccList = ['coop_miae@concordia.ca', 'sabrina.poirier@concordia.ca', coordEmail];
     }
     
     // Check if Institute Operations should be included
@@ -1868,8 +1877,7 @@ window.sendEmailToStudent = function() {
         ? "⚠️ WT IMPACTED - Operations Institute are cc-ed\n\n" 
         : "";
     
-    // Build CC list
-    let ccList = ['coop_miae@concordia.ca', 'sabrina.poirier@concordia.ca', coordEmail];
+    // Add Institute Operations to CC if checkbox is checked
     if (includeInst) {
         ccList.push('instituteoperations@concordia.ca');
     }

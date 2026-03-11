@@ -1572,9 +1572,8 @@ def api_admin_run_check():
             # Batch query 3: Get scheduled WTs from coop table
             wts_map = {}
             if student_ids:
-                from datetime import datetime
-                current_year = datetime.now().year
-                current_month = datetime.now().month
+                current_year = datetime.datetime.now().year
+                current_month = datetime.datetime.now().month
                 
                 # Determine current academic year and season (same logic as planner yellow term)
                 if current_month >= 9:  # Sep-Dec: Fall of current academic year
@@ -1696,8 +1695,19 @@ def api_admin_run_check():
             return jsonify(students)
             
     except Exception as e:
+        error_msg = str(e)
         print(f"❌ Error running admin check: {e}")
         import traceback
+        traceback.print_exc()
+        
+        # Check if it's a disk space error
+        if "No space left on device" in error_msg or "errno 28" in error_msg:
+            return jsonify({
+                "error": "Database server is out of disk space. Please contact your database administrator to clean up temporary files in /tmp/mysqltmp/",
+                "error_type": "disk_space"
+            }), 507  # HTTP 507 Insufficient Storage
+        
+        return jsonify({"error": "An error occurred while running the check"}), 500
         traceback.print_exc()
         return jsonify([]), 500  # Return empty array on error
 
@@ -1718,27 +1728,30 @@ def api_admin_bulk_email():
         short_msg = data.get("short_msg", "")
         subject = data.get("subject", "")
         include_institute = data.get("include_institute", False)
+        include_coop_reseq = data.get("include_coop_reseq", False)
         
         if not student_ids or not message:
             return jsonify({"ok": False, "error": "Missing required fields"}), 400
         
-        admin_email = session.get("user_email", "")
+        admin_email = session.get("user_email", "") or _get_student_email_db(_current_sid()) or "coop_miae@concordia.ca"
         
         # Process each student
-        with engine.connect() as conn:
+        with engine.begin() as conn:
             for sid in student_ids:
                 # Get student info
-                student_row = conn.execute(
-                    text("SELECT `Name`, `Email`, `Program` FROM `login vs id` WHERE `Student ID` = :sid"),
-                    {"sid": sid}
-                ).fetchone()
+                student_name = _get_student_name_db(sid) or "Student"
+                student_email = _get_priority1_email_db(sid)
                 
-                if not student_row:
+                if not student_email:
+                    print(f"⚠️ No email found for student {sid}, skipping...")
                     continue
                 
-                student_name = str(student_row[0]).strip() if student_row[0] else ""
-                student_email = str(student_row[1]).strip() if student_row[1] else ""
-                program = str(student_row[2]).strip() if student_row[2] else ""
+                # Get program from transcripts
+                program_row = conn.execute(
+                    text("SELECT PROG_LINK FROM Transcripts WHERE `Student ID` = :sid LIMIT 1"),
+                    {"sid": sid}
+                ).fetchone()
+                program = str(program_row[0]).strip() if program_row and program_row[0] else ""
                 
                 # Determine coordinator
                 coord_email = 'frederick.francis@concordia.ca'
@@ -1754,10 +1767,22 @@ def api_admin_bulk_email():
                 cc_list = ['coop_miae@concordia.ca', 'sabrina.poirier@concordia.ca', coord_email]
                 if include_institute:
                     cc_list.append('instituteoperations@concordia.ca')
+                if include_coop_reseq:
+                    cc_list.append('coopresequence@concordia.ca')
                 cc_list = list(set(cc_list))  # Remove duplicates
                 
                 # Build email body
-                header_msg = "⚠️ WT IMPACTED - Operations Institute are cc-ed\n\n" if include_institute else "✅ Institute Operations not cc-ed - no restrictions on WT\n\n"
+                header_parts = []
+                if include_institute:
+                    header_parts.append("Operations Institute")
+                if include_coop_reseq:
+                    header_parts.append("Coop Resequence")
+                
+                if header_parts:
+                    header_msg = f"⚠️ WT IMPACTED - {' AND '.join(header_parts)} are cc-ed\n\n"
+                else:
+                    header_msg = "✅ No WT restrictions - standard email\n\n"
+                
                 body = f"""{header_msg}Hello {student_name},
 
 {message}
@@ -1779,7 +1804,7 @@ Regards,
                 # Save short message to database if provided
                 if short_msg:
                     # Update S_id_comments table
-                    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     comment_text = f"[{now}, {admin_email}]: {short_msg}"
                     
                     # Check if record exists
@@ -1802,7 +1827,6 @@ Regards,
                             text("INSERT INTO S_id_comments (S_id, Public_comments) VALUES (:sid, :notes)"),
                             {"sid": sid, "notes": comment_text}
                         )
-                    conn.commit()
         
         return jsonify({"ok": True, "message": "Emails sent successfully"})
         

@@ -39,6 +39,18 @@ async function loadCheckData() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ check_id: selected.value })
         });
+        
+        if (!res.ok) {
+            const errorData = await res.json().catch(() => ({}));
+            if (errorData.error_type === 'disk_space') {
+                alert('⚠️ DATABASE SERVER DISK FULL\n\n' + errorData.error + '\n\nPlease try again later or contact support.');
+            } else {
+                alert('Error loading data: ' + (errorData.error || 'Server error'));
+            }
+            document.getElementById('loadingOverlay').style.display = 'none';
+            return;
+        }
+        
         const currentStudents = await res.json();
 
         // Update count display
@@ -75,7 +87,7 @@ async function loadCheckData() {
                 const courses = s.current_courses.split('<br>');
                 const processedCourses = courses.map(course => {
                     const trimmedCourse = course.trim();
-                    if (trimmedCourse.startsWith('CWTE') || trimmedCourse.startsWith('WILE') || trimmedCourse.startsWith('WEIL')) {
+                    if (trimmedCourse.startsWith('CWTE') || trimmedCourse.startsWith('WILE')) {
                         return `<span style="background:#5dade2; color:white; padding:2px 6px; border-radius:3px; display:inline-block; margin:2px 0;">${trimmedCourse}</span>`;
                     }
                     return `<span style="display:inline-block; margin:2px 0;">${trimmedCourse}</span>`;
@@ -125,9 +137,18 @@ async function sendBulkEmails() {
     const subject = document.getElementById('emailTitle').value;
 
     const includeInst = document.getElementById('chkInstAdmin').checked;
-    const extraMsg = includeInst
-        ? "\n\n⚠️ WT IMPACTED - Operations Institute are added to the email"
-        : "\n\n✅ Institute Operations not included - no restrictions on WT";
+    const includeCoopReseq = document.getElementById('chkCoopReseq').checked;
+    
+    let extraMsg = "";
+    if (includeInst && includeCoopReseq) {
+        extraMsg = "\n\n⚠️ WT IMPACTED - Operations Institute AND Coop Resequence are added to the email";
+    } else if (includeInst) {
+        extraMsg = "\n\n⚠️ WT IMPACTED - Operations Institute are added to the email";
+    } else if (includeCoopReseq) {
+        extraMsg = "\n\n⚠️ WT IMPACTED - Coop Resequence are added to the email";
+    } else {
+        extraMsg = "\n\n✅ No WT restrictions - standard email";
+    }
 
     if (!confirm(`Are you sure you want to send emails to ${sids.length} students? This may take a few minutes.` + extraMsg)) return;
 
@@ -152,7 +173,8 @@ async function sendBulkEmails() {
                     message: body,
                     short_msg: short,
                     subject: subject,
-                    include_institute: includeInst
+                    include_institute: includeInst,
+                    include_coop_reseq: includeCoopReseq
                 })
             });
 

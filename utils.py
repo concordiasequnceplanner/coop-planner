@@ -204,7 +204,12 @@ def send_email(to, subject, content, cc=None, bcc=None, reply_to=None, is_html=T
     if isinstance(to, str): to = [to]
     if isinstance(cc, str): cc = _merge_email_lists(cc, DEFAULT_COORD_EMAIL)
     if isinstance(bcc, str): bcc = [bcc]
-    if isinstance(reply_to, str): reply_to = [reply_to]
+    
+    # Set default reply_to to coop_miae@concordia.ca if not provided
+    if reply_to is None:
+        reply_to = ["coop_miae@concordia.ca"]
+    elif isinstance(reply_to, str):
+        reply_to = [reply_to]
 
     # Add footer to all emails
     footer_html = """

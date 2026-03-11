@@ -1106,10 +1106,85 @@ document.addEventListener("DOMContentLoaded", () => {
     if (coopCbEl) coopCbEl.addEventListener('change', updateSubmitVisibility);
     updateSubmitVisibility();
 
+    // Track checkbox state changes and auto-add to public notes
+    (function() {
+        const coopCb = document.getElementById('coopRegistered');
+        const acsdCb = document.getElementById('acsdRegistered');
+        
+        // Store initial states
+        let prevCoopState = coopCb ? coopCb.checked : false;
+        let prevAcsdState = acsdCb ? acsdCb.checked : false;
+        
+        async function logCheckboxChange(checkboxName, isChecked) {
+            if (!isChecked) return; // Only log when checked (not unchecked)
+            
+            // For CO-OP: only log if student is withdrawn (NOT IN CO-OP)
+            if (checkboxName === 'CO-OP') {
+                const isWithdrawn = window.APP_CONFIG?.isWithdrawn || false;
+                if (!isWithdrawn) return; // Don't log if student is in CO-OP program
+            }
+            
+            const now = new Date();
+            const pad = n => String(n).padStart(2, '0');
+            const dt = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+            const studentName = window.APP_CONFIG?.studentName || window.APP_CONFIG?.viewingSid || 'Student';
+            const comment = `[${dt}, ${studentName}]: Checked ${checkboxName}`;
+            
+            // Prepend to public notes textarea
+            const publicNotesEl = document.getElementById('publicNotes');
+            if (publicNotesEl) {
+                const existing = publicNotesEl.value.trim();
+                publicNotesEl.value = existing ? `${comment}\n\n${existing}` : comment;
+                
+                // Trigger auto-resize
+                publicNotesEl.dispatchEvent(new Event('input'));
+            }
+            
+            // Save to database via API
+            try {
+                await apiJson('/api/comments/append', 'POST', { text: comment });
+            } catch (e) {
+                console.warn('Could not save checkbox change to public notes:', e);
+            }
+        }
+        
+        if (coopCb) {
+            coopCb.addEventListener('change', function() {
+                const newState = this.checked;
+                if (!prevCoopState && newState) {
+                    // Changed from unchecked to checked
+                    logCheckboxChange('CO-OP', true);
+                }
+                prevCoopState = newState;
+            });
+        }
+        
+        if (acsdCb) {
+            acsdCb.addEventListener('change', function() {
+                const newState = this.checked;
+                if (!prevAcsdState && newState) {
+                    // Changed from unchecked to checked
+                    logCheckboxChange('ACSD', true);
+                }
+                prevAcsdState = newState;
+            });
+        }
+    })();
+
     // Auto-check CO-OP if student has co-op terms in transcript (and no plan loaded yet)
+    // BUT: if student is withdrawn, force uncheck and disable
     if (!window.APP_CONFIG?.initialPlan) {
         const hasCoopTerms = Array.isArray(window.APP_CONFIG?.coopTerms) && window.APP_CONFIG.coopTerms.length > 0;
-        if (hasCoopTerms) {
+        const isWithdrawn = window.APP_CONFIG?.isWithdrawn || false;
+        
+        if (isWithdrawn) {
+            // Student is withdrawn - force uncheck CO-OP checkbox
+            const coopCb = document.getElementById('coopRegistered');
+            if (coopCb) {
+                coopCb.checked = false;
+                window.rebuildGrid();
+            }
+        } else if (hasCoopTerms) {
             const coopCb = document.getElementById('coopRegistered');
             if (coopCb && !coopCb.checked) { coopCb.checked = true; window.rebuildGrid(); }
         }
@@ -1732,6 +1807,8 @@ window.insertCannedComment = function(type) {
         msg = "Due to low academic performance, apply one of the two: if next term WT is already secured, the one after (next next one) cannot be placed in the subsequent 2 terms, and will be approved pending academic performance improvement. If next term WT is not already secured, it must be re-scheduled at earliest 2 terms later and will be approved pending academic performance improvement. In either case, a change of sequence is requested. This places the student on Probation (still with CO-OP, but no work term; this has no impact on MIAE Program and course registration). Student's status in CO-OP Program will be re-evaluated every term upon academic performance.";
     } else if (type === 3) {
         msg = "\nHello,\n\nI understand this is a difficult situation. As a reminder, the minimum CGPA requirements for undergraduate Engineering and Computer Science co-op programs are outlined here: https://www.concordia.ca/academics/co-op/internships.html (select your program).\n\nUnder normal circumstances, students with a CGPA below the minimum threshold would be withdrawn from the co-op program immediately. However, MIAE Department is willing to offer students a second chance to improve their academic standing, with certain restrictions.\n\nWe cannot authorize a work term until the student has demonstrated the minimum required engineering knowledge, which is directly measured by your GPA (at least 0.2 above the withdrawal threshold). Additionally, there is a procedural constraint: final grades are typically posted after the search term begins, and we cannot authorize a search term before student's improved grades are available. The above explains why we had to postpone your internship by 2 terms.\n\nOnce your grades are posted and your CGPA shows significant improvement, we will remove the restriction and you can proceed with your work term.\n\nI am confident this is a temporary setback, and that your performance next term will demonstrate the progress needed to move forward.\n\nBest regards,";
+    } else if (type === 4) {
+        msg = "Please provide an updated CoS ASAP.\n\nYou must reschedule your sequence or you will be withdrawn from the CO-OP program.\n\nThank you for your quick action.";
     }
     
     // Format: [date time, email]: message\n\nold text
@@ -1744,8 +1821,9 @@ window.insertCannedComment = function(type) {
     const newComment = `[${dt}, ${email}]: ${msg}${existing ? '\n\n' + existing : ''}`;
     
     publicNotes.value = newComment;
-    publicNotes.style.height = 'auto';
-    publicNotes.style.height = publicNotes.scrollHeight + 'px';
+    
+    // Trigger auto-resize
+    publicNotes.dispatchEvent(new Event('input'));
     
     // Auto-save
     if (window.autoSaveAdminNotes) {
@@ -2025,7 +2103,7 @@ window.processApproval = async function(action) {
                 const now = new Date();
                 const pad = n => String(n).padStart(2, '0');
                 const dt = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
-                const email = window.APP_CONFIG?.studentId || window.APP_CONFIG?.adminEmail || '';
+                const email = window.APP_CONFIG?.adminEmail || window.APP_CONFIG?.studentId || '';
                 const existing = String(document.getElementById('publicNotes')?.value || '').trim();
                 const newComment = `[${dt}, ${email}]: Sequence APPROVED${existing ? '\n\n' + existing : ''}`;
                 await apiJson('/api/comments/append', 'POST', { text: newComment });
@@ -2048,7 +2126,8 @@ window.processApproval = async function(action) {
             term_summary: termSummary,
             justification: document.getElementById('justificationText')?.value || '',
             validation_errors: valErrors,
-            course_deviations: courseDeviations
+            course_deviations: courseDeviations,
+            reason_code: getSelectedReasonCode()
         };
         const res = await apiJson('/api/admin/approve', 'POST', payload);
         if (res.ok) {
@@ -4221,7 +4300,7 @@ window.autoSaveAdminNotes = async function(pub, priv) {
         await fetch('/api/save_admin_notes', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ target_sid: window.APP_CONFIG.viewingSid, public_notes: pub, private_notes: priv })
+            body: JSON.stringify({ target_sid: window.APP_CONFIG.viewingSid, Public_comments: pub, PRIVATE_comments: priv })
         });
     } catch(e) { console.error("Autosave failed", e); }
 };
@@ -4692,7 +4771,8 @@ window.submitForApproval = async function() {
 
         // restul rămâne la fel
 
-        // Auto-prepend student's justification to the public notes
+        // Backend now handles adding justification to public notes before sending email
+        // Update the UI to show the justification was added
         if (just) {
             try {
                 const now = new Date();
@@ -4710,11 +4790,11 @@ window.submitForApproval = async function() {
                 
                 const existing = String(document.getElementById('publicNotes')?.value || '').trim();
                 const newComment = `[${dt}, ${name}]:\n${formattedJust}${existing ? '\n\n' + existing : ''}`;
-                await apiJson('/api/comments/append', 'POST', { text: newComment });
+                // Update UI only (backend already saved it)
                 const pubEl = document.getElementById('publicNotes');
                 if (pubEl) pubEl.value = newComment;
             } catch (ne) {
-                console.warn('Could not append to public notes:', ne.message);
+                console.warn('Could not update public notes UI:', ne.message);
             }
         }
 

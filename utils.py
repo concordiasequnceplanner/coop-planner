@@ -206,6 +206,35 @@ def send_email(to, subject, content, cc=None, bcc=None, reply_to=None, is_html=T
     if isinstance(bcc, str): bcc = [bcc]
     if isinstance(reply_to, str): reply_to = [reply_to]
 
+    # Add footer to all emails
+    footer_html = """
+        <div style="margin-top:30px;padding-top:20px;border-top:2px solid #e0e0e0;">
+            <p style="font-size:13px;color:#333;line-height:1.6;margin-bottom:8px;">
+                <strong style="color:#912338;">To update your sequence:</strong>
+            </p>
+            <p style="font-size:12px;color:#666;line-height:1.6;margin-top:0;">
+                Login to <strong>concordia-sequence-planner.onrender.com</strong> using your CO-OP registered email (the one used for this communication).
+            </p>
+            <p style="font-size:11px;color:#999;margin-top:15px;font-style:italic;">
+                This is an automated message from the MIAE CO-OP Sequence Planner.
+            </p>
+        </div>
+    """
+    
+    footer_text = """
+---
+To update your sequence:
+Login to concordia-sequence-planner.onrender.com using your CO-OP registered email (the one used for this communication).
+
+This is an automated message from the MIAE CO-OP Sequence Planner.
+"""
+    
+    # Add footer to content
+    if is_html:
+        content = str(content) + footer_html
+    else:
+        content = str(content) + footer_text
+
     # DEBUG mode: redirect ALL recipients to debug_email
     if debug_no_emails == "DEBUG":
         original_to = to or []

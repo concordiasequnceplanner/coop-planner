@@ -15,10 +15,10 @@
 
     <div class="admin-checks-panel">
         {% for chk in checks %}
-        <label class="admin-check-label">
+        <label class="admin-check-label" {% if chk.disabled %}style="opacity:0.5; cursor:not-allowed;"{% endif %}>
             <input type="radio" name="checkOption" value="{{ chk.id }}"
                    data-msg="{{ chk.msg }}" data-short="{{ chk.short }}" data-what="{{ chk.what }}"
-                   onchange="loadCheckData()">
+                   onchange="loadCheckData()" {% if chk.disabled %}disabled{% endif %}>
             <strong>{{ chk.id }}.</strong> {{ chk.what }}
         </label>
         {% endfor %}
@@ -32,6 +32,8 @@
                 <th><input type="checkbox" id="checkAll" checked onclick="toggleAll(this)"></th>
                 <th>Name</th>
                 <th>Program</th>
+                <th id="coopProgramHeader" style="display:none;">Co-op Program</th>
+                <th id="currentCoursesHeader" style="display:none;">Current Term Courses</th>
                 <th>Email</th>
                 <th>Student ID</th>
                 <th>Last CGPA</th>

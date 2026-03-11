@@ -348,8 +348,29 @@ def build_terms_html(term_summary, include_grades=True):
 
 def render_sequence_email(mode, student_email, student_name, target_sid, program,
                           terms_html="", comments_html="", wt_html="", wt_status_msg="",
-                          signer="Coordinator", notes_html=""):
+                          signer="Coordinator", notes_html="", reason_code=0):
     if mode == "PENDING":
+        # Map reason codes to text
+        reason_text = {
+            1: "1) I have not yet started / I was asked by COOP AD but there are no changes",
+            2: "2) I want to reduce summer load",
+            3: "3) I want to reduce overall load",
+            4: "4) Off sequence (e.g., must repeat course)",
+            5: "5) I couldn't find a place in one/several courses I had scheduled",
+            6: "6) I have / will change academic program (e.g., transfer)",
+            7: "7) I was not placed for the coming work term (did not find an internship)",
+            8: "8) My WT is or will be extended",
+            9: "9) LOW GPA - CO-OP AD requested a CoS",
+            10: "10) Other personal reasons: see my comments"
+        }.get(reason_code, "Not specified")
+        
+        reason_section = f"""
+            <div style="background:#fff3cd;border:1px solid #ffc107;border-left:4px solid #ff9800;padding:12px;margin:15px 0;border-radius:5px;">
+                <p style="margin:0;"><b>Submission Reason:</b></p>
+                <p style="margin:5px 0 0 0;color:#856404;">{escape(reason_text)}</p>
+            </div>
+        """ if reason_code > 0 else ""
+        
         return f"""
         <div style="font-family:Arial,sans-serif;color:#333;max-width:750px;margin:0 auto;border:1px solid #e0e0e0;padding:20px;border-radius:8px;">
             <h2 style="color:#912338;border-bottom:2px solid #912338;padding-bottom:10px;">Sequence Submitted for Approval</h2>
@@ -358,8 +379,12 @@ def render_sequence_email(mode, student_email, student_name, target_sid, program
             <p><b>Student ID:</b> {escape(target_sid or '')}</p>
             <p><b>Program:</b> {escape(program or '')}</p>
 
+            {reason_section}
+
             <h3 style="margin-top:20px;">Submitted Sequence</h3>
             {terms_html}
+
+            {notes_html}
 
             <div style="text-align:center;margin:25px 0;">
                 <a href="https://concordia-sequence-planner.onrender.com/"
@@ -390,11 +415,6 @@ def render_sequence_email(mode, student_email, student_name, target_sid, program
 
             <div style="background:#f0f7ff;border-left:4px solid #3498db;padding:10px;margin:15px 0;">
                 {wt_html}
-            </div>
-
-            <p><b>Comments:</b></p>
-            <div style="background:#e8f5e9;border:1px solid #c8e6c9;padding:12px;border-radius:5px;line-height:1.6;">
-                {comments_html}
             </div>
 
             {notes_section}
@@ -700,10 +720,19 @@ def planner_page():
                 params={"sid": target_sid},
             )
             coop_df = pd.read_sql(
-                text("SELECT Term, `Term number Sx or Wx`, `Term Details`, WS, `Jobs View No`, `Jobs Applied No` FROM coop WHERE `Student ID` = :sid"),
+                text("SELECT Term, `Term number Sx or Wx`, `Term Details`, WS, `Jobs View No`, `Jobs Applied No`, `Transferred Withdrawn OK` FROM coop WHERE `Student ID` = :sid"),
                 conn,
                 params={"sid": target_sid},
             )
+
+        # Check if student is withdrawn from CO-OP or has no CO-OP records
+        is_withdrawn = False
+        if coop_df.empty:
+            # No CO-OP records at all - student is NOT IN CO-OP
+            is_withdrawn = True
+        elif 'Transferred Withdrawn OK' in coop_df.columns:
+            # Check if any term has "Withdr" in the status column
+            is_withdrawn = coop_df['Transferred Withdrawn OK'].astype(str).str.contains('Withdr', case=False, na=False).any()
 
         # utils.py does transcript parsing + program detection
         is_grad, student_courses, detected_program, coop_terms = process_student_data(ts_df, coop_df)
@@ -726,6 +755,7 @@ def planner_page():
             is_power_user=is_power_user,
             is_guest=is_guest,
             is_grad=is_grad,
+            is_withdrawn=is_withdrawn,
             detected_program=detected_program,
             discipline_descr=discipline_descr,
             ugrd_programs=json.dumps(ugrd_programs),
@@ -783,14 +813,26 @@ def admin_checks_page():
     checks = []
     try:
         with engine.connect() as conn:
-            res = conn.execute(text("SELECT idADMIN_checks, What, message, short_message FROM ADMIN_checks")).fetchall()
+            res = conn.execute(text("SELECT idADMIN_checks, What, message, short_message FROM ADMIN_checks ORDER BY idADMIN_checks ASC")).fetchall()
             for r in res:
-                checks.append({
-                    "id": r[0],
-                    "what": r[1] if r[1] else "",
-                    "msg": r[2] if r[2] else "",
-                    "short": r[3] if r[3] else ""
-                })
+                check_id = r[0]
+                # Mark Check 5 as TBD and disabled
+                if check_id == 5:
+                    checks.append({
+                        "id": check_id,
+                        "what": "TBD",
+                        "msg": "",
+                        "short": "",
+                        "disabled": True
+                    })
+                else:
+                    checks.append({
+                        "id": check_id,
+                        "what": r[1] if r[1] else "",
+                        "msg": r[2] if r[2] else "",
+                        "short": r[3] if r[3] else "",
+                        "disabled": False
+                    })
     except Exception as e:
         print(f"❌ Error loading ADMIN_checks: {e}")
     
@@ -932,8 +974,8 @@ def api_save_admin_notes():
 
     data = request.get_json(silent=True) or {}
     target_sid = str(data.get("target_sid", "") or "").strip()
-    pub = str(data.get("public_notes", "") or "")
-    priv = str(data.get("private_notes", "") or "")
+    pub = str(data.get("Public_comments", "") or "")
+    priv = str(data.get("PRIVATE_comments", "") or "")
 
     if not target_sid:
         return jsonify({"ok": False, "error": "Missing target_sid"}), 400
@@ -1101,6 +1143,44 @@ def api_sequence_save():
             )
 
         
+        # Add justification to public comments BEFORE sending email (if PENDING)
+        if status_db == STATUS_PENDING_APPROVAL and justification:
+            try:
+                now_dt = datetime.datetime.now()
+                dt = now_dt.strftime('%Y-%m-%d %H:%M')
+                student_display_name = sid_name or _get_student_name_db(target_sid) or target_sid
+                
+                # Format justification based on reason code
+                if reason_code in [4, 5, 6, 10]:
+                    formatted_just = f"DETAILS:\n{justification}"
+                else:
+                    formatted_just = f"Justification:\n{justification}"
+                
+                new_comment = f"[{dt}, {student_display_name}]:\n{formatted_just}"
+                
+                with engine.begin() as conn:
+                    # Check if record exists
+                    existing = conn.execute(
+                        text("SELECT Public_comments FROM S_id_comments WHERE S_id = :sid"),
+                        {"sid": target_sid}
+                    ).fetchone()
+                    
+                    if existing:
+                        # Prepend to existing notes
+                        old_notes = str(existing[0]) if existing[0] else ""
+                        updated_notes = new_comment + ("\n\n" + old_notes if old_notes else "")
+                        conn.execute(
+                            text("UPDATE S_id_comments SET Public_comments = :notes WHERE S_id = :sid"),
+                            {"notes": updated_notes, "sid": target_sid}
+                        )
+                    else:
+                        # Insert new record
+                        conn.execute(
+                            text("INSERT INTO S_id_comments (S_id, Public_comments) VALUES (:sid, :notes)"),
+                            {"sid": target_sid, "notes": new_comment}
+                        )
+            except Exception as ne:
+                print(f"⚠ Could not add justification to public comments: {ne}")
         
         # Send notification email when submitting for approval
         if status_db == STATUS_PENDING_APPROVAL:
@@ -1110,6 +1190,27 @@ def api_sequence_save():
 
                 terms_html = build_terms_html(term_summary, include_grades=False)
 
+                # Fetch public comments to include in email
+                notes_html = ""
+                try:
+                    with engine.connect() as conn:
+                        nr = conn.execute(
+                            text("SELECT Public_comments FROM S_id_comments WHERE S_id = :sid LIMIT 1"),
+                            {"sid": target_sid},
+                        ).fetchone()
+                        if nr and nr[0] and str(nr[0]).strip():
+                            notes_content = nl2html(str(nr[0]).strip())
+                            notes_html = f"""
+                                <div style="margin-top:20px;">
+                                    <h3>Public Comments:</h3>
+                                    <div style="background:#e8f5e9;border:1px solid #c8e6c9;border-left:4px solid #4caf50;padding:12px;border-radius:5px;line-height:1.6;font-size:13px;">
+                                        {notes_content}
+                                    </div>
+                                </div>
+                            """
+                except Exception as ne:
+                    print(f"⚠ Could not fetch Public_comments for PENDING email: {ne}")
+
                 subject_line = f"Sequence submitted for approval - {student_display_name} ({target_sid}) - {program}"
                 html_body = render_sequence_email(
                     mode="PENDING",
@@ -1118,6 +1219,8 @@ def api_sequence_save():
                     target_sid=target_sid,
                     program=program,
                     terms_html=terms_html,
+                    reason_code=reason_code,
+                    notes_html=notes_html,
                 )
 
                 # Send to admin BCC, student gets a copy
@@ -1409,7 +1512,7 @@ def api_admin_run_check():
             "2": "v_check_2_gpa24_low",
             "3": "v_check_3_gpa24_borderline",
             "5": "v_check_5_wt_violation",
-            "6": "v_check_6_no_sequence",
+            "6": "v_check_6_wt_with_courses",
             "7": "v_check_7_sequence_deviations"
         }
         
@@ -1558,6 +1661,8 @@ def api_admin_run_check():
                 
                 email = row_dict.get('Primary Email') or row_dict.get('Email') or row_dict.get('email') or ""
                 program = row_dict.get('PROG_LINK') or row_dict.get('Program') or row_dict.get('program') or ""
+                coop_program = row_dict.get('Co-op Program') or ""
+                current_courses = row_dict.get('Current_Term_Courses') or ""
                 
                 # Get notes from the batch query results
                 notes = notes_map.get(student_id, {'visible': '', 'invisible': ''})
@@ -1575,6 +1680,8 @@ def api_admin_run_check():
                     "id": student_id,
                     "name": name,
                     "program": str(program).strip(),
+                    "coop_program": str(coop_program).strip(),
+                    "current_courses": str(current_courses).strip(),
                     "email": str(email).strip(),
                     "cgpa": str(row_dict.get('CGPA') or row_dict.get('GPA_X_CR') or "").strip(),
                     "cgpa_cr": str(row_dict.get('CGPA_Total_Credits') or row_dict.get('GPA_X_CR_Actual_Credits') or "").strip(),
@@ -1677,7 +1784,7 @@ Regards,
                     
                     # Check if record exists
                     existing = conn.execute(
-                        text("SELECT public_notes FROM S_id_comments WHERE S_id = :sid"),
+                        text("SELECT Public_comments FROM S_id_comments WHERE S_id = :sid"),
                         {"sid": sid}
                     ).fetchone()
                     
@@ -1686,13 +1793,13 @@ Regards,
                         old_notes = str(existing[0]) if existing[0] else ""
                         new_notes = comment_text + "\n\n" + old_notes if old_notes else comment_text
                         conn.execute(
-                            text("UPDATE S_id_comments SET public_notes = :notes WHERE S_id = :sid"),
+                            text("UPDATE S_id_comments SET Public_comments = :notes WHERE S_id = :sid"),
                             {"notes": new_notes, "sid": sid}
                         )
                     else:
                         # Insert new record
                         conn.execute(
-                            text("INSERT INTO S_id_comments (S_id, public_notes) VALUES (:sid, :notes)"),
+                            text("INSERT INTO S_id_comments (S_id, Public_comments) VALUES (:sid, :notes)"),
                             {"sid": sid, "notes": comment_text}
                         )
                     conn.commit()
@@ -1723,12 +1830,28 @@ def api_admin_approve():
     wt_summary = data.get("wt_summary") or {}
     term_summary = data.get("term_summary") or []
     justification = str(data.get("justification", "") or "")
+    reason_code = int(data.get("reason_code") or 0)
+    
+    # Get power user email with multiple fallbacks
+    power_user_email = session.get("pre_auth_email") or session.get("user_email") or ""
+    if not power_user_email:
+        # Fallback: get email from student_id if it's a power user
+        cur_sid = _current_sid()
+        if cur_sid:
+            power_user_email = _get_student_email_db(cur_sid) or ""
 
     if status not in (STATUS_APPROVED, STATUS_REWORK):
         return jsonify({"ok": False, "error": "Invalid status"}), 400
+    
+    # Check if reason_code is selected (mandatory only for APPROVE, not for REWORK)
+    if status == STATUS_APPROVED and reason_code == 0:
+        return jsonify({"ok": False, "error": "Submission reason not selected. Please select a reason before approving."}), 400
 
     try:
-        # 1. Update comments
+        # Frontend already adds the auto-comment, so we just use the received comments
+        now = datetime.datetime.now()
+        
+        # 1. Update comments (use comments as received from frontend)
         with engine.begin() as conn:
             chk = conn.execute(text("SELECT 1 FROM S_id_comments WHERE S_id = :sid"), {"sid": target_sid}).fetchone()
             if chk:
@@ -1742,24 +1865,75 @@ def api_admin_approve():
                     {"sid": target_sid, "pub": pub_comment, "priv": priv_comment},
                 )
 
-        # 2. Update sequence status
+        # 2. Update sequence status and who_sent_it
+        # Get current plan data for creating new sequence
+        plan_data = data.get("plan") or {}
+        term_summary_json = json.dumps(term_summary) if term_summary else None
+        validation_errors_json = json.dumps(data.get("validation_errors") or [])
+        
         with engine.begin() as conn:
+            # Check if source sequence exists in pending (using Date_Saved as identifier)
+            source_pending = conn.execute(
+                text("SELECT Date_Saved, Sequence_Name FROM Saved_Sequences WHERE student_id = :sid AND Date_Saved = :ts AND status = :pending"),
+                {"sid": target_sid, "ts": timestamp, "pending": STATUS_PENDING_APPROVAL}
+            ).fetchone()
+            
+            # Create new APPROVED or REWORK sequence
+            new_timestamp = now.strftime('%Y-%m-%d %H:%M:%S')
+            
             if status == STATUS_APPROVED:
-                status_to_save = f"{STATUS_APPROVED} on {datetime.datetime.now().strftime('%Y-%m-%d')}"
+                new_sequence_name = f"APPROVED on {now.strftime('%Y-%m-%d %H:%M')}"
+                status_to_save = STATUS_APPROVED
+            else:  # REWORK
+                new_sequence_name = f"REWORK on {now.strftime('%Y-%m-%d %H:%M')}"
+                status_to_save = STATUS_REWORK
+            
+            # Insert new sequence with APPROVED or REWORK status
+            conn.execute(
+                text("""
+                    INSERT INTO Saved_Sequences 
+                    (student_id, Date_Saved, Sequence_Name, status, JSON_Data, Term_Json_data, who_sent_it, cos_reason, student_comments)
+                    VALUES (:sid, NOW(), :seq_name, :stat, :json_data, :term_json, :who, :reason, :comments)
+                """),
+                {
+                    "sid": target_sid,
+                    "seq_name": new_sequence_name,
+                    "stat": status_to_save,
+                    "json_data": json.dumps(plan_data) if plan_data else None,
+                    "term_json": term_summary_json,
+                    "who": power_user_email,
+                    "reason": reason_code if reason_code else None,
+                    "comments": justification
+                }
+            )
+            
+            # Mark ALL PENDING sequences as IGNORED (student is no longer an issue)
+            all_pending = conn.execute(
+                text("SELECT Date_Saved, Sequence_Name FROM Saved_Sequences WHERE student_id = :sid AND status = :pending"),
+                {"sid": target_sid, "pending": STATUS_PENDING_APPROVAL}
+            ).fetchall()
+            
+            for seq in all_pending:
+                old_date = seq[0]
+                old_name = seq[1] or old_date
+                ignored_name = f"IGNORED: {old_name}"
                 conn.execute(
-                    text("UPDATE Saved_Sequences SET status = :stat WHERE student_id = :sid AND Date_Saved = :ts"),
-                    {"stat": status_to_save, "sid": target_sid, "ts": timestamp},
+                    text("UPDATE Saved_Sequences SET status = :ignored, Sequence_Name = :new_name WHERE student_id = :sid AND Date_Saved = :old_date"),
+                    {"ignored": STATUS_IGNORED, "new_name": ignored_name, "sid": target_sid, "old_date": old_date}
                 )
-                # Mark other pending as IGNORED
+            
+            # If source was from pending, mark that specific one as ADDRESSED (overrides IGNORED)
+            if source_pending:
+                old_pending_date = source_pending[0]
+                old_pending_name = source_pending[1] or old_pending_date
+                addressed_name = f"Sent for approval on {old_pending_date}"
                 conn.execute(
-                    text("UPDATE Saved_Sequences SET status = :ignored WHERE student_id = :sid AND status = :pending"),
-                    {"ignored": STATUS_IGNORED, "sid": target_sid, "pending": STATUS_PENDING_APPROVAL},
+                    text("UPDATE Saved_Sequences SET status = 'ADDRESSED', Sequence_Name = :new_name WHERE student_id = :sid AND Date_Saved = :old_date"),
+                    {"new_name": addressed_name, "sid": target_sid, "old_date": old_pending_date}
                 )
-            else:
-                conn.execute(
-                    text("UPDATE Saved_Sequences SET status = :stat WHERE student_id = :sid AND Date_Saved = :ts"),
-                    {"stat": status, "sid": target_sid, "ts": timestamp},
-                )
+        
+        # Set variables for email (outside the with block for proper scope)
+        rework_sequence_name = new_sequence_name if status == STATUS_REWORK else None
 
         # 3. Save course deviations (only on APPROVED)
         if status == STATUS_APPROVED:
@@ -1799,7 +1973,6 @@ def api_admin_approve():
 
         # 4. Send email
         student_email = _get_student_email_db(target_sid)
-        power_user_email = session.get("pre_auth_email") or session.get("user_email") or ""
         power_user_name = power_user_email.split("@")[0] if power_user_email else "Coordinator"
 
         val_errors = data.get("validation_errors") or []
@@ -1851,18 +2024,18 @@ def api_admin_approve():
             )
 
         if status == STATUS_APPROVED:
-            # Fetch public_notes from DB to include in email
+            # Fetch Public_comments from DB to include in email
             notes_html = ""
             try:
                 with engine.connect() as conn:
                     nr = conn.execute(
-                        text("SELECT public_notes FROM S_id_comments WHERE S_id = :sid LIMIT 1"),
+                        text("SELECT Public_comments FROM S_id_comments WHERE S_id = :sid LIMIT 1"),
                         {"sid": target_sid},
                     ).fetchone()
                     if nr and nr[0] and str(nr[0]).strip():
                         notes_html = nl2html(str(nr[0]).strip())
             except Exception as ne:
-                print(f"⚠ Could not fetch public_notes for email: {ne}")
+                print(f"⚠ Could not fetch Public_comments for email: {ne}")
 
             subject = f"Approved sequence for {student_name} {target_sid} {program}"
             html_body = render_sequence_email(
@@ -1879,33 +2052,32 @@ def api_admin_approve():
                 notes_html=notes_html,
             )
 
-            # Clear public_notes after approval
-            try:
-                with engine.begin() as conn:
-                    conn.execute(
-                        text("UPDATE S_id_comments SET public_notes = NULL WHERE S_id = :sid"),
-                        {"sid": target_sid},
-                    )
-            except Exception as ne:
-                print(f"⚠ Could not clear public_notes after approval: {ne}")
         else:  # REWORK
-            subject = f"REWORK for {student_name} ({target_sid}) - {program}"
+            subject = f"Action Required: Sequence Rework - {student_name} ({target_sid})"
             html_body = f"""
             <div style="font-family:Arial,sans-serif;color:#333;max-width:750px;margin:0 auto;border:1px solid #e0e0e0;padding:20px;border-radius:8px;">
                 <h2 style="color:#c0392b;border-bottom:2px solid #e74c3c;padding-bottom:10px;">Action Required: Sequence Rework</h2>
-                <p><b>Student:</b> {student_name} ({target_sid})</p>
-                <p><b>Program:</b> {program}</p>
-                <p>Please review the comments and update your sequence.</p>
+                <p><b>Student:</b> {escape(student_name)} ({escape(target_sid)})</p>
+                <p><b>Program:</b> {escape(program)}</p>
+                
+                <div style="background:#fff3cd;border:1px solid #ffc107;border-left:4px solid #ff9800;padding:15px;margin:20px 0;border-radius:5px;">
+                    <p style="margin:0;font-weight:bold;color:#856404;">📋 Use LOAD: {escape(rework_sequence_name)}</p>
+                </div>
+                
+                <p>Please review the comments below and update your sequence accordingly.</p>
+                
                 <p><b>Comments:</b></p>
                 <div style="background:#fff8e1;border-left:4px solid #f39c12;padding:10px;line-height:1.6;">
-                    {nl2html(pub_comment, "Please review.")}
+                    {nl2html(pub_comment, "Please review and update your sequence.")}
                 </div>
-                <h3>System Check:</h3>
+                
+                <h3>Submitted Sequence:</h3>
+                {terms_html}
                 
                 <div style="text-align:center;margin:35px 0;">
                     <a href="https://concordia-sequence-planner.onrender.com/" style="background:#e74c3c;color:#fff;padding:14px 28px;text-decoration:none;border-radius:6px;font-weight:bold;">Log in to Update Sequence</a>
                 </div>
-                <p>Best Regards,<br><b>{power_user_name}</b></p>
+                <p>Best Regards,<br><b>{escape(power_user_name)}</b></p>
             </div>
             """
 

@@ -24,8 +24,14 @@ async function loadCheckData() {
     // Show/hide Deviated Courses column based on check_id
     const checkId = selected.value;
     const deviatedCoursesHeader = document.getElementById('deviatedCoursesHeader');
+    const coopProgramHeader = document.getElementById('coopProgramHeader');
+    const currentCoursesHeader = document.getElementById('currentCoursesHeader');
     const showDeviatedCourses = (checkId === '7');
+    const showCoopProgram = (checkId === '6');
+    const showCurrentCourses = (checkId === '6');
     deviatedCoursesHeader.style.display = showDeviatedCourses ? '' : 'none';
+    coopProgramHeader.style.display = showCoopProgram ? '' : 'none';
+    currentCoursesHeader.style.display = showCurrentCourses ? '' : 'none';
 
     try {
         const res = await fetch('/api/admin_run_check', {
@@ -54,10 +60,38 @@ async function loadCheckData() {
                 deviatedCoursesCell = '<td></td>';
             }
             
+            // Build coop program cell if applicable (for Check 6)
+            let coopProgramCell = '';
+            if (showCoopProgram && s.coop_program) {
+                coopProgramCell = `<td style="font-size:12px; font-weight:bold; color:#16a085; text-align:center;">${s.coop_program}</td>`;
+            } else if (showCoopProgram) {
+                coopProgramCell = '<td></td>';
+            }
+            
+            // Build current courses cell if applicable (for Check 6)
+            let currentCoursesCell = '';
+            if (showCurrentCourses && s.current_courses) {
+                // Process courses to highlight CWTE and WILE with blue background
+                const courses = s.current_courses.split('<br>');
+                const processedCourses = courses.map(course => {
+                    const trimmedCourse = course.trim();
+                    if (trimmedCourse.startsWith('CWTE') || trimmedCourse.startsWith('WILE') || trimmedCourse.startsWith('WEIL')) {
+                        return `<span style="background:#5dade2; color:white; padding:2px 6px; border-radius:3px; display:inline-block; margin:2px 0;">${trimmedCourse}</span>`;
+                    }
+                    return `<span style="display:inline-block; margin:2px 0;">${trimmedCourse}</span>`;
+                }).join('<br>');
+                
+                currentCoursesCell = `<td style="font-size:11px; text-align:left; background:#e8f8f5; padding:8px; max-width:200px; vertical-align:top;">${processedCourses}</td>`;
+            } else if (showCurrentCourses) {
+                currentCoursesCell = '<td></td>';
+            }
+            
             tr.innerHTML = `
                 <td style="text-align:center;"><input type="checkbox" name="studentCheck" value="${s.id}" checked></td>
                 <td style="font-weight:bold; color:#2980b9;">${s.name}</td>
                 <td style="font-size:11px;">${s.program}</td>
+                ${coopProgramCell}
+                ${currentCoursesCell}
                 <td style="font-size:12px;">${s.email}</td>
                 <td>${s.id}</td>
                 <td style="font-weight:bold; color:#c0392b;">${s.cgpa}</td>

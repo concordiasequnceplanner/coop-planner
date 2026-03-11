@@ -18,6 +18,16 @@
 </div>
 {% endif %}
 
+{% if is_withdrawn %}
+<div style="background:#3498db;color:#fff;text-align:center;padding:10px 0;font-weight:900;font-size:16px;letter-spacing:1px;position:sticky;top:{% if is_debug %}20px{% else %}0{% endif %};z-index:9998;">
+    ⚠️ NOT IN CO-OP PROGRAM ⚠️
+</div>
+{% endif %}
+
+<div id="acsdBanner" style="display:none;background:#8e44ad;color:#fff;text-align:center;padding:10px 0;font-weight:900;font-size:16px;letter-spacing:1px;position:sticky;top:{% if is_withdrawn %}{% if is_debug %}66px{% else %}46px{% endif %}{% elif is_debug %}20px{% else %}0{% endif %};z-index:9997;">
+    ℹ️ ACSD REGISTERED — Reduced credit load approved
+</div>
+
 <div class="header-box">
 
     <!-- ===== ROW 1: Controls ===== -->
@@ -177,6 +187,9 @@
                     </button>
                     <button onclick="insertCannedComment(3)" style="background: #95a5a6; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-size: 11px; font-weight: bold; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.1); transition: 0.2s;" onmouseover="this.style.background='#7f8c8d'" onmouseout="this.style.background='#95a5a6'">
                         📉 Explain low GPA - WT
+                    </button>
+                    <button onclick="insertCannedComment(4)" style="background: #95a5a6; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-size: 11px; font-weight: bold; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.1); transition: 0.2s;" onmouseover="this.style.background='#7f8c8d'" onmouseout="this.style.background='#95a5a6'">
+                        ⚠️ Must reschedule or withdraw
                     </button>
                 </div>
                 <div id="approveCreditsInfo" class="header-admin-info"></div>
@@ -378,6 +391,7 @@
         allProgs:       {{ all_programs   | safe if all_programs   else '[]' }},
         isGuest:        {{ 'true' if is_guest else 'false' }},
         isGrad:         {{ 'true' if is_grad  else 'false' }},
+        isWithdrawn:    {{ 'true' if is_withdrawn else 'false' }},
         detectedProgram: "{{ detected_program }}",
         disciplineDescr: "{{ discipline_descr or '' }}",
         isPowerUser: {{ 'true' if is_power_user else 'false' }},
@@ -392,6 +406,57 @@
 </script>
 <script src="{{ url_for('static', filename='js/planner.js') }}"></script>
 <script>
+    // Auto-resize textareas to fit content
+    (function() {
+        function autoResize(textarea) {
+            if (!textarea) return;
+            textarea.style.height = 'auto';
+            textarea.style.height = textarea.scrollHeight + 'px';
+        }
+        
+        const publicNotes = document.getElementById('publicNotes');
+        const privateNotes = document.getElementById('privateNotes');
+        
+        if (publicNotes) {
+            publicNotes.addEventListener('input', function() { autoResize(this); });
+            // Initial resize
+            autoResize(publicNotes);
+        }
+        
+        if (privateNotes) {
+            privateNotes.addEventListener('input', function() { autoResize(this); });
+            // Initial resize
+            autoResize(privateNotes);
+        }
+        
+        // Also resize when content is loaded from API
+        const observer = new MutationObserver(function() {
+            autoResize(publicNotes);
+            autoResize(privateNotes);
+        });
+        
+        if (publicNotes) observer.observe(publicNotes, { childList: true, characterData: true, subtree: true });
+        if (privateNotes) observer.observe(privateNotes, { childList: true, characterData: true, subtree: true });
+    })();
+    
+    // Toggle ACSD banner when checkbox changes
+    (function() {
+        const acsdCheckbox = document.getElementById('acsdRegistered');
+        const acsdBanner = document.getElementById('acsdBanner');
+        
+        if (acsdCheckbox && acsdBanner) {
+            function updateAcsdBanner() {
+                acsdBanner.style.display = acsdCheckbox.checked ? 'block' : 'none';
+            }
+            
+            // Initial state
+            updateAcsdBanner();
+            
+            // Listen for changes
+            acsdCheckbox.addEventListener('change', updateAcsdBanner);
+        }
+    })();
+    
     // Persist instructions collapse state across session
     (function() {
         const details = document.getElementById('instructionsDetails');

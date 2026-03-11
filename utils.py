@@ -151,44 +151,82 @@ def get_email_recipients(program, target_sid, submitter_email, priority1_email, 
         priority1_email = "vosorin@gmail.com"
         submitter_email = "vosorin@gmail.com"
 
-    coord_email = "frederick.francis@concordia.ca"
-    if program and "INDU" in str(program).upper():
+    # Check if student is GRAD
+    is_grad = 'GRAD' in str(program).upper() if program else False
+    
+    # Determine coordinators based on GRAD status
+    if is_grad:
+        # GRAD students: Nadia + Charlene
         if debug_no_emails == "SITE_ACTIVE":
             coord_email = "nadia.mazzaferro@concordia.ca"
+            grad_coord_email = "charlene.wald@concordia.ca"
         else:
             coord_email = debug_email
-    elif target_sid:
-        try:
-            last_digit = int(str(target_sid)[-1])
-            if 0 <= last_digit <= 4:
+            grad_coord_email = debug_email
+        miae_program_assistant = None  # GRAD doesn't include Sabrina
+    else:
+        # UGRD students: determine coordinator based on program and SID
+        grad_coord_email = None  # UGRD doesn't have second coordinator
+        coord_email = "frederick.francis@concordia.ca"
+        if program and "INDU" in str(program).upper():
+            # INDU: check SID ending for Nathalie
+            if target_sid:
+                try:
+                    last_digit = int(str(target_sid)[-1])
+                    if last_digit >= 5:
+                        coord_email = "nathalie.steverman@concordia.ca" if debug_no_emails == "SITE_ACTIVE" else debug_email
+                    else:
+                        coord_email = "frederick.francis@concordia.ca" if debug_no_emails == "SITE_ACTIVE" else debug_email
+                except ValueError:
+                    coord_email = "frederick.francis@concordia.ca" if debug_no_emails == "SITE_ACTIVE" else debug_email
+            else:
                 coord_email = "frederick.francis@concordia.ca" if debug_no_emails == "SITE_ACTIVE" else debug_email
-            elif 5 <= last_digit <= 9:
-                coord_email = "nathalie.steverman@concordia.ca" if debug_no_emails == "SITE_ACTIVE" else debug_email
-        except ValueError:
-            pass
+        else:
+            # Non-INDU UGRD: always Frederick
+            coord_email = "frederick.francis@concordia.ca" if debug_no_emails == "SITE_ACTIVE" else debug_email
 
     recipients = {"to": [], "cc": [], "bcc": []}
 
     if action_type == "SUBMIT":
         recipients["to"].append(coop_ad_email)
-        recipients["cc"].extend([miae_program_assistant, coord_email, submitter_email])
+        cc_list = [coord_email, submitter_email]
+        if miae_program_assistant:
+            cc_list.append(miae_program_assistant)
+        if grad_coord_email:
+            cc_list.append(grad_coord_email)
+        recipients["cc"].extend(cc_list)
         recipients["bcc"].append(submit_notification)
         if priority1_email and priority1_email.strip().lower() != submitter_email.strip().lower():
             recipients["bcc"].append(priority1_email)
 
     elif action_type == "REWORK":
         recipients["to"].append(submitter_email)
-        recipients["cc"].extend([coop_ad_email, miae_program_assistant, coord_email])
+        cc_list = [coop_ad_email, coord_email]
+        if miae_program_assistant:
+            cc_list.append(miae_program_assistant)
+        if grad_coord_email:
+            cc_list.append(grad_coord_email)
+        recipients["cc"].extend(cc_list)
         if priority1_email and priority1_email.strip().lower() != submitter_email.strip().lower():
             recipients["bcc"].append(priority1_email)
 
     elif action_type == "APPROVED":
         if wts_changed:
             recipients["to"].append(email_coop_approval)
-            recipients["cc"].extend([coop_ad_email, miae_program_assistant, coord_email, submitter_email])
+            cc_list = [coop_ad_email, coord_email, submitter_email]
+            if miae_program_assistant:
+                cc_list.append(miae_program_assistant)
+            if grad_coord_email:
+                cc_list.append(grad_coord_email)
+            recipients["cc"].extend(cc_list)
         else:
             recipients["to"].append(submitter_email)
-            recipients["cc"].extend([coop_ad_email, miae_program_assistant, coord_email])
+            cc_list = [coop_ad_email, coord_email]
+            if miae_program_assistant:
+                cc_list.append(miae_program_assistant)
+            if grad_coord_email:
+                cc_list.append(grad_coord_email)
+            recipients["cc"].extend(cc_list)
 
         if priority1_email and priority1_email.strip().lower() != submitter_email.strip().lower():
             recipients["bcc"].append(priority1_email)

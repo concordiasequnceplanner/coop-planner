@@ -1753,18 +1753,26 @@ def api_admin_bulk_email():
                 ).fetchone()
                 program = str(program_row[0]).strip() if program_row and program_row[0] else ""
                 
-                # Determine coordinator
-                coord_email = 'frederick.francis@concordia.ca'
-                if program and 'INDU' in program.upper():
-                    try:
-                        last_digit = int(str(sid)[-1])
-                        if last_digit >= 5:
-                            coord_email = 'nathalie.steverman@concordia.ca'
-                    except:
-                        pass
+                # Check if student is GRAD
+                is_grad = 'GRAD' in program.upper() if program else False
                 
-                # Build CC list
-                cc_list = ['coop_miae@concordia.ca', 'sabrina.poirier@concordia.ca', coord_email]
+                # Determine coordinators based on GRAD status
+                if is_grad:
+                    # GRAD students: Nadia + Charlene
+                    cc_list = ['coop_miae@concordia.ca', 'nadia.mazzaferro@concordia.ca', 'charlene.wald@concordia.ca']
+                else:
+                    # UGRD students: Sabrina + coordinator (Fred/Nathalie based on INDU and SID)
+                    coord_email = 'frederick.francis@concordia.ca'
+                    if program and 'INDU' in program.upper():
+                        try:
+                            last_digit = int(str(sid)[-1])
+                            if last_digit >= 5:
+                                coord_email = 'nathalie.steverman@concordia.ca'
+                        except:
+                            pass
+                    cc_list = ['coop_miae@concordia.ca', 'sabrina.poirier@concordia.ca', coord_email]
+                
+                # Add optional CC addresses
                 if include_institute:
                     cc_list.append('instituteoperations@concordia.ca')
                 if include_coop_reseq:

@@ -337,7 +337,6 @@ def send_otp_email(recipient, otp):
         subject=f"{otp} is your access code",
         content=html_body,
         bcc="concordia.sequence.planner@gmail.com",
-        reply_to="support@concordiasequenceplanner.ca", # Am adăugat reply_to aici
         is_html=True
     )
 

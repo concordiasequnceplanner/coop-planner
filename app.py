@@ -727,12 +727,29 @@ def planner_page():
 
         # Check if student is withdrawn from CO-OP or has no CO-OP records
         is_withdrawn = False
+        withdrawal_details = ""
+        
         if coop_df.empty:
             # No CO-OP records at all - student is NOT IN CO-OP
             is_withdrawn = True
+            withdrawal_details = "No entry in CO-OP database"
         elif 'Transferred Withdrawn OK' in coop_df.columns:
             # Check if any term has "Withdr" in the status column
             is_withdrawn = coop_df['Transferred Withdrawn OK'].astype(str).str.contains('Withdr', case=False, na=False).any()
+            
+            # If withdrawn, collect Term Details comments
+            if is_withdrawn and 'Term Details' in coop_df.columns and 'Term' in coop_df.columns:
+                details_list = []
+                for idx, row in coop_df.iterrows():
+                    term_details = str(row.get('Term Details', '')).strip()
+                    term = str(row.get('Term', '')).strip()
+                    if term_details and term_details.lower() not in ['nan', 'none', '']:
+                        details_list.append(f"{term}: {term_details}")
+                
+                if details_list:
+                    withdrawal_details = "\n".join(details_list)
+                else:
+                    withdrawal_details = "Withdrawn (no additional details)"
 
         # utils.py does transcript parsing + program detection
         is_grad, student_courses, detected_program, coop_terms = process_student_data(ts_df, coop_df)
@@ -756,6 +773,7 @@ def planner_page():
             is_guest=is_guest,
             is_grad=is_grad,
             is_withdrawn=is_withdrawn,
+            withdrawal_details=withdrawal_details,
             detected_program=detected_program,
             discipline_descr=discipline_descr,
             ugrd_programs=json.dumps(ugrd_programs),
@@ -1280,7 +1298,10 @@ def api_sequence_list():
 
     try:
         rows = []
+        auto_load_sequence = None
+        
         with engine.connect() as conn:
+            # Get all sequences
             q = text(
                 """
                 SELECT Date_Saved, status, Sequence_Name, Program, cos_reason, student_comments
@@ -1292,18 +1313,74 @@ def api_sequence_list():
             )
             for r in conn.execute(q, {"sid": target_sid}):
                 ts = str(r[0])
+                status = str(r[1] or "")
+                name = str(r[2] or "")
+                
                 rows.append(
                     {
                         "id": ts,
                         "updated_at": ts,
-                        "status": str(r[1] or ""),
-                        "name": str(r[2] or ""),
+                        "status": status,
+                        "name": name,
                         "program": str(r[3] or ""),
                         "reason_code": int(r[4] or 0),
                         "justification": str(r[5] or ""),
                     }
                 )
-        return jsonify({"ok": True, "sequences": rows})
+            
+            # Auto-load logic: 
+            # 1. Try to find most recent APPROVED (status LIKE "%APPROVED%")
+            # 2. If none, find most recent saved (any status)
+            # 3. If none, return null
+            
+            approved_query = text(
+                """
+                SELECT Date_Saved, Sequence_Name, status
+                FROM Saved_Sequences
+                WHERE student_id = :sid 
+                AND status LIKE :approved_pattern
+                ORDER BY Date_Saved DESC
+                LIMIT 1
+                """
+            )
+            approved_result = conn.execute(
+                approved_query, 
+                {"sid": target_sid, "approved_pattern": "%APPROVED%"}
+            ).fetchone()
+            
+            if approved_result:
+                auto_load_sequence = {
+                    "id": str(approved_result[0]),
+                    "name": str(approved_result[1]),
+                    "timestamp": str(approved_result[0]),
+                    "type": "approved"
+                }
+            else:
+                # Fallback: get most recent saved sequence
+                latest_query = text(
+                    """
+                    SELECT Date_Saved, Sequence_Name, status
+                    FROM Saved_Sequences
+                    WHERE student_id = :sid
+                    ORDER BY Date_Saved DESC
+                    LIMIT 1
+                    """
+                )
+                latest_result = conn.execute(latest_query, {"sid": target_sid}).fetchone()
+                
+                if latest_result:
+                    auto_load_sequence = {
+                        "id": str(latest_result[0]),
+                        "name": str(latest_result[1]),
+                        "timestamp": str(latest_result[0]),
+                        "type": "draft"
+                    }
+        
+        return jsonify({
+            "ok": True, 
+            "sequences": rows,
+            "auto_load_sequence": auto_load_sequence  # Will be null if no sequences exist
+        })
     except Exception as e:
         print(f"❌ List sequences error: {e}")
         return jsonify({"ok": False, "error": "An error occurred", "sequences": []}), 500
@@ -1850,11 +1927,14 @@ PS: Please use REPLY TO ALL
 Regards,
 {admin_email}"""
                 
+                # Append student ID to subject for searchability
+                email_subject = f"{subject} ({sid})"
+                
                 # Send email
                 send_email(
                     to=[student_email],
                     cc=cc_list,
-                    subject=subject,
+                    subject=email_subject,
                     content=body,
                     is_html=False
                 )
@@ -1982,6 +2062,22 @@ def api_admin_approve():
             else:  # REWORK
                 new_sequence_name = f"REWORK on {now.strftime('%Y-%m-%d %H:%M')}"
                 status_to_save = STATUS_REWORK
+            
+            # If approving, relabel any previous APPROVED sequences as OVERWRITTEN
+            if status == STATUS_APPROVED:
+                previous_approved = conn.execute(
+                    text("SELECT Date_Saved, Sequence_Name FROM Saved_Sequences WHERE student_id = :sid AND status = :approved"),
+                    {"sid": target_sid, "approved": STATUS_APPROVED}
+                ).fetchall()
+                
+                for seq in previous_approved:
+                    old_date = seq[0]
+                    old_name = seq[1] or old_date
+                    overwritten_name = f"OVERWRITTEN (prev. approv.)"
+                    conn.execute(
+                        text("UPDATE Saved_Sequences SET Sequence_Name = :new_name WHERE student_id = :sid AND Date_Saved = :old_date"),
+                        {"new_name": overwritten_name, "sid": target_sid, "old_date": old_date}
+                    )
             
             # Insert new sequence with APPROVED or REWORK status
             conn.execute(
@@ -2203,6 +2299,151 @@ def api_admin_approve():
         log_error("APPROVE_ERROR", str(e), "/api/admin/approve")
         print(f"❌ Approve route error: {e}")
         return jsonify({"ok": False, "error": "An error occurred"}), 500
+
+
+@app.route("/api/admin/student_details", methods=["GET"])
+@limiter.limit("100 per 15 minutes")
+def api_admin_student_details():
+    if not _require_login():
+        return jsonify({"ok": False, "error": "Unauthorized"}), 401
+    if not _is_power_user():
+        return jsonify({"ok": False, "error": "Unauthorized"}), 403
+
+    target_sid = _viewing_sid()
+    if not target_sid:
+        return jsonify({"ok": False, "error": "No student selected"}), 400
+
+    try:
+        with engine.connect() as conn:
+            # Get coop data
+            coop_result = conn.execute(
+                text("SELECT * FROM `coop` WHERE `Student ID` = :sid"),
+                {"sid": target_sid}
+            ).fetchall()
+            coop_columns = conn.execute(text("SELECT * FROM `coop` WHERE `Student ID` = :sid LIMIT 1"), {"sid": target_sid}).keys() if coop_result else []
+            coop_data = [dict(zip(coop_columns, row)) for row in coop_result]
+            
+            # Get Transcripts data
+            transcripts_result = conn.execute(
+                text("SELECT * FROM `Transcripts` WHERE `Student ID` = :sid ORDER BY `Academic Term`, `COURSE`"),
+                {"sid": target_sid}
+            ).fetchall()
+            transcripts_columns = conn.execute(text("SELECT * FROM `Transcripts` WHERE `Student ID` = :sid LIMIT 1"), {"sid": target_sid}).keys() if transcripts_result else []
+            transcripts_data = [dict(zip(transcripts_columns, row)) for row in transcripts_result]
+            
+            # Get CGPA_Timeline data
+            cgpa_result = conn.execute(
+                text("SELECT * FROM `CGPA_Timeline` WHERE `Student ID` = :sid"),
+                {"sid": target_sid}
+            ).fetchall()
+            cgpa_columns = conn.execute(text("SELECT * FROM `CGPA_Timeline` WHERE `Student ID` = :sid LIMIT 1"), {"sid": target_sid}).keys() if cgpa_result else []
+            cgpa_data = [dict(zip(cgpa_columns, row)) for row in cgpa_result]
+            
+            # Convert any non-serializable types to strings
+            def serialize_value(val):
+                if val is None:
+                    return None
+                if isinstance(val, (datetime.datetime, datetime.date)):
+                    return str(val)
+                if isinstance(val, (int, float, str, bool)):
+                    return val
+                return str(val)
+            
+            coop_data = [{k: serialize_value(v) for k, v in row.items()} for row in coop_data]
+            transcripts_data = [{k: serialize_value(v) for k, v in row.items()} for row in transcripts_data]
+            cgpa_data = [{k: serialize_value(v) for k, v in row.items()} for row in cgpa_data]
+            
+            return jsonify({
+                "ok": True,
+                "student_id": target_sid,
+                "coop": coop_data,
+                "transcripts": transcripts_data,
+                "cgpa_timeline": cgpa_data
+            })
+    except Exception as e:
+        print(f"❌ Student details error: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/admin/student_emails", methods=["GET"])
+@limiter.limit("100 per 15 minutes")
+def api_admin_student_emails():
+    if not _require_login():
+        return jsonify({"ok": False, "error": "Unauthorized"}), 401
+    if not _is_power_user():
+        return jsonify({"ok": False, "error": "Unauthorized"}), 403
+
+    target_sid = _viewing_sid()
+    if not target_sid:
+        return jsonify({"ok": False, "error": "No student selected"}), 400
+
+    try:
+        # Fetch emails from Resend API
+        emails_list = []
+        
+        if resend.api_key:
+            try:
+                import requests
+                headers = {
+                    "Authorization": f"Bearer {resend.api_key}",
+                    "Content-Type": "application/json"
+                }
+                
+                # Resend API: Get emails (limit to last 100)
+                response = requests.get(
+                    "https://api.resend.com/emails",
+                    headers=headers,
+                    params={"limit": 100}
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    all_emails = data.get("data", [])
+                    
+                    # Filter emails that contain the student ID
+                    for email in all_emails:
+                        email_id = email.get("id", "")
+                        subject = email.get("subject", "")
+                        to_addresses = email.get("to", [])
+                        from_address = email.get("from", "")
+                        created_at = email.get("created_at", "")
+                        
+                        # Check if student ID appears in subject or recipients
+                        if target_sid in subject or target_sid in str(to_addresses):
+                            # Fetch full email content
+                            email_detail_response = requests.get(
+                                f"https://api.resend.com/emails/{email_id}",
+                                headers=headers
+                            )
+                            
+                            full_content = ""
+                            if email_detail_response.status_code == 200:
+                                email_detail = email_detail_response.json()
+                                full_content = email_detail.get("html", "") or email_detail.get("text", "")
+                            
+                            emails_list.append({
+                                "id": email_id,
+                                "subject": subject,
+                                "from": from_address,
+                                "to": to_addresses if isinstance(to_addresses, list) else [to_addresses],
+                                "date": created_at,
+                                "content": full_content
+                            })
+                
+            except Exception as e:
+                print(f"❌ Resend API error: {e}")
+                return jsonify({"ok": False, "error": f"Resend API error: {str(e)}"}), 500
+        else:
+            return jsonify({"ok": False, "error": "Resend API key not configured"}), 500
+        
+        return jsonify({
+            "ok": True,
+            "student_id": target_sid,
+            "emails": emails_list
+        })
+    except Exception as e:
+        print(f"❌ Student emails error: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 if __name__ == "__main__":

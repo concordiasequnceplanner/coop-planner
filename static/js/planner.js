@@ -423,12 +423,44 @@ document.addEventListener("DOMContentLoaded", () => {
                      ondragover="allowDrop(event)" ondrop="drop(event)"></div>
             </td>`;
         tbody.appendChild(trY0);
+        
+        // Add term name headers between Y0 and Y1
+        const headerY0Y1 = document.createElement('tr');
+        headerY0Y1.innerHTML = `
+            <td style="border:none;padding:0;height:18px;"></td>
+            <td style="background:#27ae60;border:none;padding:1px 0;text-align:center;height:18px;">
+                <span style="font-size:9px;color:#fff;font-weight:normal;">summer</span>
+            </td>
+            <td style="background:#d35400;border:none;padding:1px 0;text-align:center;height:18px;">
+                <span style="font-size:9px;color:#fff;font-weight:normal;">fall</span>
+            </td>
+            <td style="background:#2980b9;border:none;padding:1px 0;text-align:center;height:18px;">
+                <span style="font-size:9px;color:#fff;font-weight:normal;">winter</span>
+            </td>`;
+        tbody.appendChild(headerY0Y1);
 
         // helper: term order number for past/future comparison
         const seasonOrd = { Summer: 1, Fall: 2, Winter: 3 };
         const currentTermOrd = parseInt(currentAcaYearStr.split('-')[0]) * 10 + (seasonOrd[currentSeason] || 0);
 
         for (let y = 1; y <= 7; y++) {
+            // Add colored header row before each year (except Y1 since we added it after Y0)
+            if (y > 1) {
+                const headerTr = document.createElement('tr');
+                headerTr.innerHTML = `
+                    <td style="border:none;padding:0;height:18px;"></td>
+                    <td style="background:#27ae60;border:none;padding:1px 0;text-align:center;height:18px;">
+                        <span style="font-size:9px;color:#fff;font-weight:normal;">summer</span>
+                    </td>
+                    <td style="background:#d35400;border:none;padding:1px 0;text-align:center;height:18px;">
+                        <span style="font-size:9px;color:#fff;font-weight:normal;">fall</span>
+                    </td>
+                    <td style="background:#2980b9;border:none;padding:1px 0;text-align:center;height:18px;">
+                        <span style="font-size:9px;color:#fff;font-weight:normal;">winter</span>
+                    </td>`;
+                tbody.appendChild(headerTr);
+            }
+            
             const tr         = document.createElement('tr');
             const rowAcaYear = `${baseYear + y - 1}-${baseYear + y}`;
             let rowHtml = `<td class="year-label"><strong>Y ${y}</strong><span class="year-subtext">${rowAcaYear}</span></td>`;
@@ -1693,6 +1725,83 @@ document.addEventListener("DOMContentLoaded", () => {
         el.addEventListener('input', () => autosizeTextarea(el));
         autosizeTextarea(el);
     });
+    
+    // Auto-load most recent APPROVED sequence on page load
+    setTimeout(async () => {
+        try {
+            const res = await apiJson('/api/sequence/list');
+            if (res.ok && res.auto_load_sequence) {
+                const seq = res.auto_load_sequence;
+                const item = await apiJson(`/api/sequence/get/${encodeURIComponent(seq.id)}`);
+                if (item.plan) {
+                    item.plan.reason_code = item.reason_code;
+                    item.plan.justification = item.justification;
+                    window.applyLoadedPlan(item.plan);
+                    
+                    // Show banner notification
+                    const dt = String(seq.timestamp || '').replace('T', ' ').substring(0, 16);
+                    const isApproved = seq.type === 'approved';
+                    const bgColor = isApproved ? '#27ae60' : '#95a5a6';
+                    const label = isApproved ? 'APPROVED ON' : 'SAVED ON';
+                    
+                    const bannerText = `LOADED: ${seq.name} - ${label}: ${dt}`;
+                    console.log(`📄 ${bannerText}`);
+                    
+                    // Calculate top position based on existing banners
+                    let topPosition = 0;
+                    const debugBanner = document.querySelector('[style*="DEBUG MODE"]');
+                    const withdrawnBanner = document.querySelector('[style*="NOT IN CO-OP"]');
+                    const acsdBanner = document.getElementById('acsdBanner');
+                    
+                    if (debugBanner) topPosition += debugBanner.offsetHeight;
+                    if (withdrawnBanner) topPosition += withdrawnBanner.offsetHeight;
+                    if (acsdBanner && acsdBanner.style.display !== 'none') topPosition += acsdBanner.offsetHeight;
+                    
+                    // Create banner below existing banners
+                    const banner = document.createElement('div');
+                    banner.id = 'autoLoadBanner';
+                    banner.style.cssText = `position:sticky;top:${topPosition}px;left:0;right:0;background:${bgColor};color:#fff;padding:10px 20px;text-align:center;font-size:13px;font-weight:bold;z-index:9996;box-shadow:0 2px 8px rgba(0,0,0,0.2);`;
+                    banner.textContent = bannerText;
+                    document.body.insertBefore(banner, document.body.firstChild);
+                    
+                    // Remove banner function
+                    const removeBanner = () => {
+                        if (banner && banner.parentNode) {
+                            banner.style.transition = 'opacity 0.3s';
+                            banner.style.opacity = '0';
+                            setTimeout(() => banner.remove(), 300);
+                        }
+                    };
+                    
+                    // Remove on any button click
+                    document.addEventListener('click', (e) => {
+                        if (e.target.tagName === 'BUTTON' || e.target.closest('button')) {
+                            removeBanner();
+                        }
+                    }, { once: true });
+                    
+                    // Remove on any checkbox change
+                    document.addEventListener('change', (e) => {
+                        if (e.target.type === 'checkbox') {
+                            removeBanner();
+                        }
+                    }, { once: true });
+                    
+                    // Remove on any drag start (course dragging)
+                    document.addEventListener('dragstart', () => {
+                        removeBanner();
+                    }, { once: true });
+                    
+                    // Remove on any input change (text fields, selects, etc.)
+                    document.addEventListener('input', () => {
+                        removeBanner();
+                    }, { once: true });
+                }
+            }
+        } catch (e) {
+            console.error('Auto-load sequence failed:', e);
+        }
+    }, 500); // Small delay to ensure page is fully loaded
 });
 
 // =========================================================
@@ -4932,3 +5041,325 @@ window.openPendingApprovals = async function() {
     }
 };
 
+
+
+// =========================================================
+// STUDENT DETAILS POPUP
+// =========================================================
+window.showStudentDetails = async function() {
+    const studentId = window.APP_CONFIG?.viewingSid || window.APP_CONFIG?.studentId;
+    if (!studentId) {
+        alert('No student selected');
+        return;
+    }
+    
+    try {
+        const res = await apiJson('/api/admin/student_details');
+        if (!res.ok) {
+            alert('Failed to load student details: ' + (res.error || 'Unknown error'));
+            return;
+        }
+        
+        // Create popup window
+        const popup = window.open('', 'StudentDetails', 'width=1200,height=800,scrollbars=yes,resizable=yes');
+        if (!popup) {
+            alert('Popup blocked. Please allow popups for this site.');
+            return;
+        }
+        
+        // Build HTML for the popup
+        const html = `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Student Details - ${res.student_id}</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 20px;
+            background: #f5f5f5;
+        }
+        h1 {
+            color: #912338;
+            border-bottom: 3px solid #912338;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #333;
+            margin-top: 30px;
+            background: #912338;
+            color: white;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+        th {
+            background: #34495e;
+            color: white;
+            padding: 12px;
+            text-align: left;
+            font-weight: bold;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #ddd;
+        }
+        tr:hover {
+            background: #f8f9fa;
+        }
+        .empty {
+            text-align: center;
+            color: #999;
+            font-style: italic;
+            padding: 20px;
+        }
+        .count {
+            color: #666;
+            font-size: 14px;
+            margin-left: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>📊 Student Details: ${res.student_id}</h1>
+    
+    <h2>CO-OP Data <span class="count">(${res.coop.length} rows)</span></h2>
+    ${buildTable(res.coop)}
+    
+    <h2>Transcripts <span class="count">(${res.transcripts.length} rows)</span></h2>
+    ${buildTable(res.transcripts)}
+    
+    <h2>CGPA Timeline <span class="count">(${res.cgpa_timeline.length} rows)</span></h2>
+    ${buildTable(res.cgpa_timeline)}
+</body>
+</html>
+        `;
+        
+        popup.document.write(html);
+        popup.document.close();
+        
+    } catch (e) {
+        console.error('Student details error:', e);
+        alert('Error loading student details: ' + e.message);
+    }
+};
+
+function buildTable(data) {
+    if (!data || data.length === 0) {
+        return '<div class="empty">No data available</div>';
+    }
+    
+    // Get all unique column names
+    const columns = [...new Set(data.flatMap(row => Object.keys(row)))];
+    
+    let html = '<table><thead><tr>';
+    columns.forEach(col => {
+        html += `<th>${escapeHtml(col)}</th>`;
+    });
+    html += '</tr></thead><tbody>';
+    
+    data.forEach(row => {
+        html += '<tr>';
+        columns.forEach(col => {
+            const val = row[col];
+            html += `<td>${val !== null && val !== undefined ? escapeHtml(String(val)) : ''}</td>`;
+        });
+        html += '</tr>';
+    });
+    
+    html += '</tbody></table>';
+    return html;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+
+// =========================================================
+// STUDENT EMAIL HISTORY POPUP
+// =========================================================
+window.showStudentEmails = async function() {
+    const studentId = window.APP_CONFIG?.viewingSid || window.APP_CONFIG?.studentId;
+    if (!studentId) {
+        alert('No student selected');
+        return;
+    }
+    
+    try {
+        const res = await apiJson('/api/admin/student_emails');
+        if (!res.ok) {
+            alert('Failed to load email history: ' + (res.error || 'Unknown error'));
+            return;
+        }
+        
+        // Create popup window
+        const popup = window.open('', 'EmailHistory', 'width=1000,height=700,scrollbars=yes,resizable=yes');
+        if (!popup) {
+            alert('Popup blocked. Please allow popups for this site.');
+            return;
+        }
+        
+        // Build HTML for the popup
+        const html = `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Email History - ${res.student_id}</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 20px;
+            background: #f5f5f5;
+        }
+        h1 {
+            color: #912338;
+            border-bottom: 3px solid #912338;
+            padding-bottom: 10px;
+        }
+        .email-list {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .email-item {
+            padding: 15px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .email-item:hover {
+            background: #f8f9fa;
+        }
+        .email-item:last-child {
+            border-bottom: none;
+        }
+        .email-date {
+            color: #666;
+            font-size: 12px;
+            margin-bottom: 5px;
+        }
+        .email-subject {
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 5px;
+        }
+        .email-meta {
+            font-size: 12px;
+            color: #888;
+        }
+        .email-detail {
+            display: none;
+            margin-top: 15px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 4px;
+            border-left: 4px solid #912338;
+        }
+        .email-detail.active {
+            display: block;
+        }
+        .empty {
+            text-align: center;
+            color: #999;
+            font-style: italic;
+            padding: 40px;
+        }
+        .count {
+            color: #666;
+            font-size: 14px;
+            margin-left: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>📧 Email History: ${res.student_id} <span class="count">(${res.emails.length} emails)</span></h1>
+    
+    <div class="email-list">
+        ${buildEmailList(res.emails)}
+    </div>
+    
+    <script>
+        function toggleEmail(id) {
+            const detail = document.getElementById('detail-' + id);
+            if (detail) {
+                detail.classList.toggle('active');
+            }
+        }
+    </script>
+</body>
+</html>
+        `;
+        
+        popup.document.write(html);
+        popup.document.close();
+        
+    } catch (e) {
+        console.error('Email history error:', e);
+        alert('Error loading email history: ' + e.message);
+    }
+};
+
+function buildEmailList(emails) {
+    if (!emails || emails.length === 0) {
+        return '<div class="empty">No emails found for this student</div>';
+    }
+    
+    // Sort by date descending
+    emails.sort((a, b) => new Date(b.date) - new Date(a.date));
+    
+    let html = '';
+    emails.forEach((email, index) => {
+        const date = new Date(email.date);
+        const dateStr = date.toLocaleString();
+        const term = getTermFromDate(date);
+        
+        html += `
+            <div class="email-item" onclick="toggleEmail(${index})">
+                <div class="email-date">${dateStr} ${term ? `— ${term}` : ''}</div>
+                <div class="email-subject">${escapeHtml(email.subject)}</div>
+                <div class="email-meta">
+                    From: ${escapeHtml(email.from)} → To: ${escapeHtml(email.to.join(', '))}
+                </div>
+                <div id="detail-${index}" class="email-detail">
+                    ${email.content || '<em>No content available</em>'}
+                </div>
+            </div>
+        `;
+    });
+    
+    return html;
+}
+
+function getTermFromDate(date) {
+    const month = date.getMonth() + 1; // 1-12
+    const year = date.getFullYear();
+    
+    let term = '';
+    let acaYear = '';
+    
+    if (month >= 5 && month <= 8) {
+        term = 'Summer';
+        acaYear = `${year}-${year + 1}`;
+    } else if (month >= 9 && month <= 12) {
+        term = 'Fall';
+        acaYear = `${year}-${year + 1}`;
+    } else { // 1-4
+        term = 'Winter';
+        acaYear = `${year - 1}-${year}`;
+    }
+    
+    return `${term} ${acaYear}`;
+}

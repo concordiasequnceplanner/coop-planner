@@ -19,8 +19,11 @@
 {% endif %}
 
 {% if is_withdrawn %}
-<div style="background:#3498db;color:#fff;text-align:center;padding:10px 0;font-weight:900;font-size:16px;letter-spacing:1px;position:sticky;top:{% if is_debug %}20px{% else %}0{% endif %};z-index:9998;">
-    ⚠️ NOT IN CO-OP PROGRAM ⚠️
+<div style="background:#3498db;color:#fff;text-align:center;padding:15px 10px;font-weight:900;font-size:16px;letter-spacing:1px;position:sticky;top:{% if is_debug %}20px{% else %}0{% endif %};z-index:9998;">
+    <div>⚠️ NOT IN CO-OP PROGRAM ⚠️</div>
+    {% if withdrawal_details %}
+    <div style="font-size:13px;font-weight:normal;margin-top:8px;letter-spacing:0.5px;white-space:pre-line;">{{ withdrawal_details }}</div>
+    {% endif %}
 </div>
 {% endif %}
 
@@ -107,6 +110,16 @@
                         style="background:#8e44ad;color:#fff;border:none;padding:6px 10px;border-radius:20px;font-size:12px;font-weight:bold;cursor:pointer;">
                     🔍 ADMIN CHECK
                 </button>
+                <div style="display:flex;flex-direction:column;gap:4px;">
+                    <button onclick="window.showStudentDetails()"
+                            style="background:#3498db;color:#fff;border:none;padding:6px 10px;border-radius:20px;font-size:12px;font-weight:bold;cursor:pointer;">
+                        📊 Student Details
+                    </button>
+                    <button onclick="window.showStudentEmails()"
+                            style="background:#16a085;color:#fff;border:none;padding:6px 10px;border-radius:20px;font-size:12px;font-weight:bold;cursor:pointer;">
+                        📧 Email History
+                    </button>
+                </div>
                 {% endif %}
             </div>
         </div>

@@ -1727,7 +1727,12 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     
     // Auto-load most recent APPROVED sequence on page load
+    // Skip if loading from pending or if user manually loaded a sequence
     setTimeout(async () => {
+        if (sessionStorage.getItem('_skipAutoLoad') === '1') {
+            sessionStorage.removeItem('_skipAutoLoad');
+            return;
+        }
         try {
             const res = await apiJson('/api/sequence/list');
             if (res.ok && res.auto_load_sequence) {
@@ -1895,6 +1900,7 @@ window.openPendingItem = async function(seqId, studentId) {
         if (dropdown) dropdown.style.display = 'none';
         await apiJson('/api/admin/view_sid', 'POST', { student_id: studentId });
         sessionStorage.setItem('_pendingLoad', '1');
+        sessionStorage.setItem('_skipAutoLoad', '1'); // Disable auto-load when loading from pending
         sessionStorage.setItem('_pendingSeqId', seqId);
         window.location.href = `/planner?load_seq_id=${encodeURIComponent(seqId)}`;
     } catch(e) {
@@ -4770,6 +4776,10 @@ window.loadPlan = async function() {
         if (!item.plan) { hideSpinner(); alert('Selected sequence has no plan data.'); return; }
         item.plan.reason_code = item.reason_code;
         item.plan.justification = item.justification;
+        
+        // Disable auto-load on next page load (user manually loaded a sequence)
+        sessionStorage.setItem('_skipAutoLoad', '1');
+        
         window.applyLoadedPlan(item.plan);
 
         // Re-enable submit button after any manual load

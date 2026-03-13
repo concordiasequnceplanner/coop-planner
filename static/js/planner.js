@@ -1758,12 +1758,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 const seq = res.auto_load_sequence;
                 console.log(`[AUTOLOAD] Found ${seq.type} sequence: ${seq.name} (${seq.id})`);
                 
-                // Show debug banner
-                const banner = document.createElement('div');
-                banner.id = 'debugBanner';
-                banner.style.cssText = 'position:fixed;top:10px;left:50%;transform:translateX(-50%);background:#2196F3;color:white;padding:12px 24px;border-radius:6px;z-index:10000;font-weight:bold;box-shadow:0 4px 8px rgba(0,0,0,0.2);';
-                banner.textContent = `Loading ${seq.type} sequence: ${seq.name}`;
-                document.body.appendChild(banner);
+                // Show loading spinner
+                showSpinner('Loading sequence...');
                 
                 const item = await apiJson(`/api/sequence/get/${encodeURIComponent(seq.id)}`);
                 console.log('[AUTOLOAD] Received plan data:', item.plan ? 'YES' : 'NO', item.plan ? `(${Object.keys(item.plan).length} keys)` : '');
@@ -1776,8 +1772,18 @@ document.addEventListener("DOMContentLoaded", () => {
                     console.log('[AUTOLOAD] ERROR: No plan data in response');
                 }
                 
-                // Remove banner after 2 seconds
-                setTimeout(() => banner.remove(), 2000);
+                // Hide spinner
+                hideSpinner();
+                
+                // Show success banner
+                const banner = document.createElement('div');
+                banner.id = 'debugBanner';
+                banner.style.cssText = 'position:fixed;top:10px;left:50%;transform:translateX(-50%);background:#2196F3;color:white;padding:12px 24px;border-radius:6px;z-index:10000;font-weight:bold;box-shadow:0 4px 8px rgba(0,0,0,0.2);';
+                banner.textContent = `Sequence loaded: ${seq.name}`;
+                document.body.appendChild(banner);
+                
+                // Remove banner on first click anywhere
+                document.addEventListener('click', () => banner.remove(), { once: true });
             } else {
                 console.log('[AUTOLOAD] No auto_load_sequence found in response');
             }

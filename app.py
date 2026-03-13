@@ -595,6 +595,10 @@ def verify():
                     session["is_power_user"] = str(sid).startswith("9")
                     session["last_active"] = datetime.datetime.now().timestamp()
                     session.permanent = True
+                    
+                    # Log successful login
+                    print(f"✅ [LOGIN] {sid}")
+                    
                     return redirect(url_for("planner_page"))
 
                 # wrong code
@@ -1094,6 +1098,9 @@ def api_sequence_save():
     else:
         target_sid = cur_sid  # Students can only save their own sequences
 
+    # Debug logging
+    print(f"[SAVE] is_admin={is_admin}, cur_sid={cur_sid}, viewing_sid={viewing_sid}, target_sid={target_sid}")
+
     if (not is_admin) and target_sid != cur_sid:
         log_error(
             "UNAUTHORIZED_MISMATCH",
@@ -1101,8 +1108,10 @@ def api_sequence_save():
             "/api/sequence/save",
             extra_data={"target_sid": target_sid, "cur_sid": cur_sid, "viewing_sid": viewing_sid, "is_admin": is_admin}
         )
+        print(f"❌ [SAVE] UNAUTHORIZED: target_sid={target_sid} != cur_sid={cur_sid}")
         return jsonify({"ok": False, "error": "Unauthorized"}), 403
     if is_admin and target_sid not in (cur_sid, viewing_sid):
+        print(f"❌ [SAVE] Admin must switch view first: target_sid={target_sid}, cur_sid={cur_sid}, viewing_sid={viewing_sid}")
         return jsonify({"ok": False, "error": "Admin must switch view first"}), 400
 
     plan = data.get("plan") or {}

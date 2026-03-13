@@ -426,16 +426,17 @@ document.addEventListener("DOMContentLoaded", () => {
         
         // Add term name headers between Y0 and Y1
         const headerY0Y1 = document.createElement('tr');
+        headerY0Y1.className = 'term-names-row';
         headerY0Y1.innerHTML = `
-            <td style="border:none;padding:0;height:18px;"></td>
-            <td style="background:#27ae60;border:none;padding:1px 0;text-align:center;height:18px;">
-                <span style="font-size:9px;color:#fff;font-weight:normal;">summer</span>
+            <td style="padding:0;height:18px;background:#f8f9fa;"></td>
+            <td style="background:#f8f9fa;padding:1px 0;text-align:center;height:18px;">
+                <span style="font-size:9px;color:#27ae60;font-weight:bold;font-size:13px">Summer</span>
             </td>
-            <td style="background:#d35400;border:none;padding:1px 0;text-align:center;height:18px;">
-                <span style="font-size:9px;color:#fff;font-weight:normal;">fall</span>
+            <td style="background:#f8f9fa;padding:1px 0;text-align:center;height:18px;">
+                <span style="font-size:9px;color:#d35400;font-weight:bold;font-size:13px">Fall</span>
             </td>
-            <td style="background:#2980b9;border:none;padding:1px 0;text-align:center;height:18px;">
-                <span style="font-size:9px;color:#fff;font-weight:normal;">winter</span>
+            <td style="background:#f8f9fa;padding:1px 0;text-align:center;height:18px;">
+                <span style="font-size:9px;color:#2980b9;font-weight:bold;font-size:13px">Winter</span>
             </td>`;
         tbody.appendChild(headerY0Y1);
 
@@ -447,16 +448,17 @@ document.addEventListener("DOMContentLoaded", () => {
             // Add colored header row before each year (except Y1 since we added it after Y0)
             if (y > 1) {
                 const headerTr = document.createElement('tr');
+                headerTr.className = 'term-names-row';
                 headerTr.innerHTML = `
-                    <td style="border:none;padding:0;height:18px;"></td>
-                    <td style="background:#27ae60;border:none;padding:1px 0;text-align:center;height:18px;">
-                        <span style="font-size:9px;color:#fff;font-weight:normal;">summer</span>
+                    <td style="padding:0;height:18px;background:#f8f9fa;"></td>
+                    <td style="background:#f8f9fa;padding:1px 0;text-align:center;height:18px;">
+                        <span style="font-size:9px;color:#27ae60;font-weight:bold;font-size:13px;">Summer</span>
                     </td>
-                    <td style="background:#d35400;border:none;padding:1px 0;text-align:center;height:18px;">
-                        <span style="font-size:9px;color:#fff;font-weight:normal;">fall</span>
+                    <td style="background:#f8f9fa;padding:1px 0;text-align:center;height:18px;">
+                        <span style="font-size:9px;color:#d35400;font-weight:bold;font-size:13px;">Fall</span>
                     </td>
-                    <td style="background:#2980b9;border:none;padding:1px 0;text-align:center;height:18px;">
-                        <span style="font-size:9px;color:#fff;font-weight:normal;">winter</span>
+                    <td style="background:#f8f9fa;padding:1px 0;text-align:center;height:18px;">
+                        <span style="font-size:9px;color:#2980b9;font-weight:bold;font-size:13px;">Winter</span>
                     </td>`;
                 tbody.appendChild(headerTr);
             }
@@ -1205,7 +1207,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Auto-check CO-OP if student has co-op terms in transcript (and no plan loaded yet)
     // BUT: if student is withdrawn, force uncheck and disable
-    if (!window.APP_CONFIG?.initialPlan) {
+    // SKIP if we just loaded a plan (initialPlan exists OR _justLoadedPlan flag is set)
+    if (!window.APP_CONFIG?.initialPlan && !window._justLoadedPlan) {
         const hasCoopTerms = Array.isArray(window.APP_CONFIG?.coopTerms) && window.APP_CONFIG.coopTerms.length > 0;
         const isWithdrawn = window.APP_CONFIG?.isWithdrawn || false;
         
@@ -1214,11 +1217,14 @@ document.addEventListener("DOMContentLoaded", () => {
             const coopCb = document.getElementById('coopRegistered');
             if (coopCb) {
                 coopCb.checked = false;
-                window.rebuildGrid();
+                // rebuildGrid will be called by the onchange event
             }
         } else if (hasCoopTerms) {
             const coopCb = document.getElementById('coopRegistered');
-            if (coopCb && !coopCb.checked) { coopCb.checked = true; window.rebuildGrid(); }
+            if (coopCb && !coopCb.checked) { 
+                coopCb.checked = true; 
+                // rebuildGrid will be called by the onchange event
+            }
         }
     }
 
@@ -1729,84 +1735,56 @@ document.addEventListener("DOMContentLoaded", () => {
     // Auto-load most recent APPROVED sequence on page load
     // Skip if loading from pending or if user manually loaded a sequence
     setTimeout(async () => {
+        console.log('[AUTOLOAD] Starting autoload check...');
+        
         if (sessionStorage.getItem('_skipAutoLoad') === '1') {
+            console.log('[AUTOLOAD] SKIPPED: _skipAutoLoad flag is set');
             sessionStorage.removeItem('_skipAutoLoad');
             return;
         }
+        
+        // If page already has initialPlan (loaded via ?load_seq_id=), skip
+        if (window.APP_CONFIG?.initialPlan) {
+            console.log('[AUTOLOAD] SKIPPED: initialPlan already exists');
+            return;
+        }
+        
+        console.log('[AUTOLOAD] Fetching sequence list...');
         try {
             const res = await apiJson('/api/sequence/list');
+            console.log('[AUTOLOAD] API response:', res);
+            
             if (res.ok && res.auto_load_sequence) {
                 const seq = res.auto_load_sequence;
+                console.log(`[AUTOLOAD] Found ${seq.type} sequence: ${seq.name} (${seq.id})`);
+                
+                // Show debug banner
+                const banner = document.createElement('div');
+                banner.id = 'debugBanner';
+                banner.style.cssText = 'position:fixed;top:10px;left:50%;transform:translateX(-50%);background:#2196F3;color:white;padding:12px 24px;border-radius:6px;z-index:10000;font-weight:bold;box-shadow:0 4px 8px rgba(0,0,0,0.2);';
+                banner.textContent = `Loading ${seq.type} sequence: ${seq.name}`;
+                document.body.appendChild(banner);
+                
                 const item = await apiJson(`/api/sequence/get/${encodeURIComponent(seq.id)}`);
+                console.log('[AUTOLOAD] Received plan data:', item.plan ? 'YES' : 'NO', item.plan ? `(${Object.keys(item.plan).length} keys)` : '');
+                
                 if (item.plan) {
                     item.plan.reason_code = item.reason_code;
                     item.plan.justification = item.justification;
                     window.applyLoadedPlan(item.plan);
-                    
-                    // Show banner notification
-                    const dt = String(seq.timestamp || '').replace('T', ' ').substring(0, 16);
-                    const isApproved = seq.type === 'approved';
-                    const bgColor = isApproved ? '#27ae60' : '#95a5a6';
-                    const label = isApproved ? 'APPROVED ON' : 'SAVED ON';
-                    
-                    const bannerText = `LOADED: ${seq.name} - ${label}: ${dt}`;
-                    console.log(`📄 ${bannerText}`);
-                    
-                    // Calculate top position based on existing banners
-                    let topPosition = 0;
-                    const debugBanner = document.querySelector('[style*="DEBUG MODE"]');
-                    const withdrawnBanner = document.querySelector('[style*="NOT IN CO-OP"]');
-                    const acsdBanner = document.getElementById('acsdBanner');
-                    
-                    if (debugBanner) topPosition += debugBanner.offsetHeight;
-                    if (withdrawnBanner) topPosition += withdrawnBanner.offsetHeight;
-                    if (acsdBanner && acsdBanner.style.display !== 'none') topPosition += acsdBanner.offsetHeight;
-                    
-                    // Create banner below existing banners
-                    const banner = document.createElement('div');
-                    banner.id = 'autoLoadBanner';
-                    banner.style.cssText = `position:sticky;top:${topPosition}px;left:0;right:0;background:${bgColor};color:#fff;padding:10px 20px;text-align:center;font-size:13px;font-weight:bold;z-index:9996;box-shadow:0 2px 8px rgba(0,0,0,0.2);`;
-                    banner.textContent = bannerText;
-                    document.body.insertBefore(banner, document.body.firstChild);
-                    
-                    // Remove banner function
-                    const removeBanner = () => {
-                        if (banner && banner.parentNode) {
-                            banner.style.transition = 'opacity 0.3s';
-                            banner.style.opacity = '0';
-                            setTimeout(() => banner.remove(), 300);
-                        }
-                    };
-                    
-                    // Remove on any button click
-                    document.addEventListener('click', (e) => {
-                        if (e.target.tagName === 'BUTTON' || e.target.closest('button')) {
-                            removeBanner();
-                        }
-                    }, { once: true });
-                    
-                    // Remove on any checkbox change
-                    document.addEventListener('change', (e) => {
-                        if (e.target.type === 'checkbox') {
-                            removeBanner();
-                        }
-                    }, { once: true });
-                    
-                    // Remove on any drag start (course dragging)
-                    document.addEventListener('dragstart', () => {
-                        removeBanner();
-                    }, { once: true });
-                    
-                    // Remove on any input change (text fields, selects, etc.)
-                    document.addEventListener('input', () => {
-                        removeBanner();
-                    }, { once: true });
+                } else {
+                    console.log('[AUTOLOAD] ERROR: No plan data in response');
                 }
+                
+                // Remove banner after 2 seconds
+                setTimeout(() => banner.remove(), 2000);
+            } else {
+                console.log('[AUTOLOAD] No auto_load_sequence found in response');
             }
         } catch (e) {
-            console.error('Auto-load sequence failed:', e);
+            console.error('[AUTOLOAD] Error:', e);
         }
-    }, 500); // Small delay to ensure page is fully loaded
+    }, 1000); // Longer delay to ensure page is fully loaded
 });
 
 // =========================================================
@@ -2207,21 +2185,25 @@ window.processApproval = async function(action) {
     }
 
     try {
-        // If APPROVED, save the current plan state first
+        const payload = {
+            status: action,
+            student_id: viewingSid,
+            timestamp: seqId2,
+            public_comments: document.getElementById('publicNotes')?.value || '',
+            private_comments: document.getElementById('privateNotes')?.value || '',
+            student_name: window.APP_CONFIG.studentName || viewingSid,
+            program: document.getElementById('programSelect')?.value || '',
+            wt_summary: wtSummary,
+            term_summary: termSummary,
+            justification: document.getElementById('justificationText')?.value || '',
+            validation_errors: valErrors,
+            course_deviations: courseDeviations,
+            reason_code: getSelectedReasonCode(),
+            plan: collectPlanSnapshot()  // Include plan data for approve handler
+        };
+        
+        // Auto-prepend approval comment to public notes (only on APPROVED)
         if (action === 'APPROVED') {
-            const plan = collectPlanSnapshot();
-            const savePlanPayload = {
-                status: "APPROVED",
-                plan,
-                issues: window.latestIssues || [],
-                reason_code: null,
-                justification: document.getElementById('justificationText')?.value || '',
-                term_summary: termSummary,
-                student_id: viewingSid
-            };
-            await apiJson('/api/sequence/save', 'POST', savePlanPayload);
-            
-            // Auto-prepend approval comment to public notes
             try {
                 const now = new Date();
                 const pad = n => String(n).padStart(2, '0');
@@ -2236,22 +2218,7 @@ window.processApproval = async function(action) {
                 console.warn('Could not append approval comment to public notes:', ne.message);
             }
         }
-
-        const payload = {
-            status: action,
-            student_id: viewingSid,
-            timestamp: seqId2,
-            public_comments: document.getElementById('publicNotes')?.value || '',
-            private_comments: document.getElementById('privateNotes')?.value || '',
-            student_name: window.APP_CONFIG.studentName || viewingSid,
-            program: document.getElementById('programSelect')?.value || '',
-            wt_summary: wtSummary,
-            term_summary: termSummary,
-            justification: document.getElementById('justificationText')?.value || '',
-            validation_errors: valErrors,
-            course_deviations: courseDeviations,
-            reason_code: getSelectedReasonCode()
-        };
+        
         const res = await apiJson('/api/admin/approve', 'POST', payload);
         if (res.ok) {
             hideSpinner();
@@ -3477,7 +3444,6 @@ window._autoPlaceImpl = function() {
             iterations = 0;
             const assignment = solve();
             const result = scoreConfigWithValidation(assignment);
-            console.log(`Auto-place ${label}: score=${result.score}, valErrors=${result.validationErrorCount}, placed=${assignment.size}/${boxesToPlace.length}`);
             if (result.score < bestScore) {
                 bestScore       = result.score;
                 bestAssignment  = new Map(assignment);
@@ -3553,7 +3519,6 @@ window._autoPlaceImpl = function() {
                 });
 
                 const result = scoreConfigWithValidation(cleanAssignment);
-                console.log(`Auto-place retry-errored: score=${result.score}, valErrors=${result.validationErrorCount}, placed=${cleanAssignment.size}/${boxesToPlace.length}`);
                 if (result.score < bestScore) {
                     bestScore      = result.score;
                     bestAssignment = new Map(cleanAssignment);
@@ -4494,7 +4459,11 @@ function currentIssues() {
 }
 
 window.applyLoadedPlan = function(planObj) {
-    if (!planObj) return;
+    console.log('[applyLoadedPlan] CALLED with planObj:', planObj ? 'YES' : 'NO', planObj ? `(keys: ${Object.keys(planObj).length})` : '');
+    if (!planObj) {
+        console.log('[applyLoadedPlan] ABORT: planObj is null/undefined');
+        return;
+    }
 
     // =========================================================
     // COMPATIBILITY: detect old format (zone-based dict without 'version')
@@ -4566,9 +4535,29 @@ window.applyLoadedPlan = function(planObj) {
         planObj = converted;
     }
 
-    // Restore settings first
-    if (planObj.startYear && document.getElementById('startYear')) document.getElementById('startYear').value = planObj.startYear;
+    // Restore settings first (without triggering onchange events)
+    const startYearEl = document.getElementById('startYear');
     const coopCb = document.getElementById('coopRegistered');
+    const coopStartYearEl = document.getElementById('coopStartYear');
+    const coopStartTermEl = document.getElementById('coopStartTerm');
+    const programEl = document.getElementById('programSelect');
+    
+    // Store original inline handler code from HTML attributes
+    const startYearHandler = startYearEl?.getAttribute('onchange');
+    const coopHandler = coopCb?.getAttribute('onchange');
+    const coopStartYearHandler = coopStartYearEl?.getAttribute('onchange');
+    const coopStartTermHandler = coopStartTermEl?.getAttribute('onchange');
+    const programHandler = programEl?.getAttribute('onchange'); // programSelect DOES have inline handler: updateUnallocated()
+    
+    // Disable inline handlers using removeAttribute
+    if (startYearEl) startYearEl.removeAttribute('onchange');
+    if (coopCb) coopCb.removeAttribute('onchange');
+    if (coopStartYearEl) coopStartYearEl.removeAttribute('onchange');
+    if (coopStartTermEl) coopStartTermEl.removeAttribute('onchange');
+    if (programEl) programEl.removeAttribute('onchange');
+    
+    // Now set values without triggering rebuilds
+    if (planObj.startYear && startYearEl) startYearEl.value = planObj.startYear;
     if (coopCb) {
         const hasTranscriptCoop = Array.isArray(window.APP_CONFIG?.coopTerms) && window.APP_CONFIG.coopTerms.length > 0;
         const hasSavedWT = Array.isArray(planObj.placements) && planObj.placements.some(p =>
@@ -4583,9 +4572,9 @@ window.applyLoadedPlan = function(planObj) {
             coopCb.checked = true;
         }
     }
-    if (planObj.coopStartYear && document.getElementById('coopStartYear')) document.getElementById('coopStartYear').value = planObj.coopStartYear;
-    if (planObj.coopStartTerm && document.getElementById('coopStartTerm')) document.getElementById('coopStartTerm').value = planObj.coopStartTerm;
-    if (planObj.program && document.getElementById('programSelect')) document.getElementById('programSelect').value = planObj.program;
+    if (planObj.coopStartYear && coopStartYearEl) coopStartYearEl.value = planObj.coopStartYear;
+    if (planObj.coopStartTerm && coopStartTermEl) coopStartTermEl.value = planObj.coopStartTerm;
+    if (planObj.program && programEl) programEl.value = planObj.program;
 
     // Restore global limits
     if (planObj.globalLimits) {
@@ -4593,14 +4582,13 @@ window.applyLoadedPlan = function(planObj) {
         if (typeof planObj.globalLimits.maxCredits === 'number') window.setGlobalMaxCr(planObj.globalLimits.maxCredits);
     }
 
-    // Rebuild grid (recreates drop zones + re-creates unallocated list)
-    // NOTE: rebuildGrid resets termOverrides, so restore them after
+    // Rebuild grid with the new dropdown values (handlers are disabled, so this won't trigger cascading rebuilds)
     window.rebuildGrid();
 
     // Restore per-term overrides (must be after rebuildGrid)
     window.termOverrides = planObj.termOverrides || {};
 
-    // Map displayId -> box element
+    // Map displayId -> box element AFTER rebuildGrid (get fresh elements)
     const boxMap = new Map();
     document.querySelectorAll('.course-box').forEach(box => {
         boxMap.set(getBoxDisplayId(box), box);
@@ -4647,6 +4635,18 @@ window.applyLoadedPlan = function(planObj) {
         btnSubmit.style.opacity = '1';
         btnSubmit.style.cursor = 'pointer';
     }
+    
+    // Set flag to prevent auto-check CO-OP from triggering after load
+    window._justLoadedPlan = true;
+    setTimeout(() => { delete window._justLoadedPlan; }, 100);
+
+    
+    // Restore inline handlers using setAttribute
+    if (startYearEl && startYearHandler) startYearEl.setAttribute('onchange', startYearHandler);
+    if (coopCb && coopHandler) coopCb.setAttribute('onchange', coopHandler);
+    if (coopStartYearEl && coopStartYearHandler) coopStartYearEl.setAttribute('onchange', coopStartYearHandler);
+    if (coopStartTermEl && coopStartTermHandler) coopStartTermEl.setAttribute('onchange', coopStartTermHandler);
+    if (programEl && programHandler) programEl.setAttribute('onchange', programHandler);
 };
 
 async function apiJson(url, method = 'GET', body = null) {
@@ -4777,22 +4777,9 @@ window.loadPlan = async function() {
         item.plan.reason_code = item.reason_code;
         item.plan.justification = item.justification;
         
-        // Disable auto-load on next page load (user manually loaded a sequence)
         sessionStorage.setItem('_skipAutoLoad', '1');
-        
         window.applyLoadedPlan(item.plan);
-
-        // Re-enable submit button after any manual load
-        const btnSubmit = document.getElementById('btnSubmitApproval');
-        if (btnSubmit) {
-            btnSubmit.disabled = false;
-            btnSubmit.style.opacity = '1';
-            btnSubmit.style.cursor = 'pointer';
-        }
-
-        const dt = String(selected.updated_at || selected.id || '').replace('T', ' ').substring(0, 16);
         hideSpinner();
-        alert(`Loaded: "${selected.name}" — ${selected.status} — ${dt}`);
     } catch (e) {
         hideSpinner();
         console.error(e);

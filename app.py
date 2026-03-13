@@ -695,7 +695,7 @@ def planner_page():
                 r = conn.execute(
                     text(
                         """
-                        SELECT JSON_Data, Term_Json_data, status, cos_reason, student_comments
+                        SELECT JSON_Data, Term_Json_data, status, cos_reason, student_comments, sequence_Json_data
                         FROM Saved_Sequences
                         WHERE student_id = :sid AND Date_Saved = :ts
                         LIMIT 1
@@ -703,8 +703,14 @@ def planner_page():
                     ),
                     {"sid": target_sid, "ts": load_seq_id},
                 ).fetchone()
-                if r:
+                if (r):
                     plan_obj = _safe_json_load(r[0]) or {}
+                    
+                    # Fallback: if JSON_Data is empty but sequence_Json_data exists, extract planner_plan
+                    if not plan_obj and r[5]:
+                        seq_data = _safe_json_load(r[5]) or {}
+                        plan_obj = seq_data.get("planner_plan") or {}
+                    
                     plan_obj["reason_code"] = int(r[3] or 0)
                     plan_obj["justification"] = str(r[4] or "")
                     initial_plan = json.dumps(plan_obj)
@@ -1104,8 +1110,44 @@ def api_sequence_save():
     term_summary = data.get("term_summary") or []
     reason_code = int(data.get("reason_code") or data.get("cos_reason") or 0)
     justification = str(data.get("justification") or "")
-
+    
+    # Get status early so we can use it for validation
     status_in = str(data.get("status") or "DRAFT").strip().upper()
+    
+    # Validate that all original issues are present in student's justification
+    # If any are missing, prepend them with a warning marker
+    if status_in in ("PENDING_APPROVAL", STATUS_PENDING_APPROVAL) and issues and justification:
+        missing_issues = []
+        
+        for issue in issues:
+            # Build the issue text as it appears in the justification
+            prefix = '[ERROR]' if issue.get('sev') == 'error' else '[WARNING]' if issue.get('sev') == 'warning' else '[FYI]'
+            course_id = issue.get('courseId', '')
+            msg = issue.get('msg', '')
+            
+            # Build the expected issue text
+            if course_id:
+                issue_text = f"{prefix} {course_id}: {msg}"
+            else:
+                issue_text = f"{prefix} {msg}"
+            
+            # Check if first 20 characters of issue text are in justification
+            search_text = issue_text[:20] if len(issue_text) >= 20 else issue_text
+            
+            if search_text not in justification:
+                # Issue is missing - add to missing list
+                missing_issues.append(issue_text)
+        
+        # If there are missing issues, prepend them to justification
+        if missing_issues:
+            missing_section = "*** !!! *** --- NOT FOUND in student's answer --- *** !!! ***\n\n"
+            for missing in missing_issues:
+                missing_section += f"{missing}\nJustification: [Student did not provide justification]\n\n"
+            
+            missing_section += "*** !!! *** --- NOT FOUND in student's answer    --  END  --- *** !!! ***\n\n"
+            justification = missing_section + justification
+
+    # Determine database status
     if status_in == "DRAFT":
         status_db = STATUS_SAVED_DRAFT
     elif status_in in ("PENDING_APPROVAL", STATUS_PENDING_APPROVAL):
@@ -1139,9 +1181,9 @@ def api_sequence_save():
                     """
                     INSERT INTO Saved_Sequences
                         (Student_Email, Sequence_Name, Program, JSON_Data, Date_Saved, Term_Json_data, sequence_Json_data,
-                         status, student_comments, student_id, student_id_name, cos_reason)
+                         status, student_comments, student_id, student_id_name, cos_reason, validation_issues)
                     VALUES
-                        (:em, :name, :prog, :jdata, :ds, :tdata, :sdata, :stat, :comm, :sid, :sidname, :cosr)
+                        (:em, :name, :prog, :jdata, :ds, :tdata, :sdata, :stat, :comm, :sid, :sidname, :cosr, :vissues)
                     """
                 ),
                 {
@@ -1157,6 +1199,7 @@ def api_sequence_save():
                     "sid": target_sid,
                     "sidname": sid_name,
                     "cosr": reason_code,
+                    "vissues": json.dumps(issues) if issues else None,
                 },
             )
 
@@ -1402,7 +1445,7 @@ def api_sequence_get(seq_id):
             r = conn.execute(
                 text(
                     """
-                    SELECT JSON_Data, Term_Json_data, status, cos_reason, student_comments
+                    SELECT JSON_Data, Term_Json_data, status, cos_reason, student_comments, sequence_Json_data
                     FROM Saved_Sequences
                     WHERE student_id = :sid AND Date_Saved = :ts
                     LIMIT 1
@@ -1415,6 +1458,12 @@ def api_sequence_get(seq_id):
             return jsonify({"ok": False, "error": "Not found"}), 404
 
         plan = _safe_json_load(r[0]) or {}
+        
+        # Fallback: if JSON_Data is empty but sequence_Json_data exists, extract planner_plan
+        if not plan and r[5]:
+            seq_data = _safe_json_load(r[5]) or {}
+            plan = seq_data.get("planner_plan") or {}
+        
         issues = _safe_json_load(r[1]) or []
 
         return jsonify(
@@ -2049,9 +2098,23 @@ def api_admin_approve():
         with engine.begin() as conn:
             # Check if source sequence exists in pending (using Date_Saved as identifier)
             source_pending = conn.execute(
-                text("SELECT Date_Saved, Sequence_Name FROM Saved_Sequences WHERE student_id = :sid AND Date_Saved = :ts AND status = :pending"),
+                text("SELECT Date_Saved, Sequence_Name, JSON_Data, sequence_Json_data FROM Saved_Sequences WHERE student_id = :sid AND Date_Saved = :ts AND status = :pending"),
                 {"sid": target_sid, "ts": timestamp, "pending": STATUS_PENDING_APPROVAL}
             ).fetchone()
+            
+            # If plan_data is empty, try to get it from source pending sequence
+            if not plan_data and source_pending:
+                source_json = _safe_json_load(source_pending[2]) or {}  # JSON_Data
+                if not source_json:
+                    # Try sequence_Json_data
+                    source_seq_json = _safe_json_load(source_pending[3]) or {}
+                    source_json = source_seq_json.get("planner_plan") if source_seq_json else {}
+                if source_json:
+                    plan_data = source_json
+            
+            # If still no plan_data, log warning (frontend should always send it)
+            if not plan_data:
+                print(f"⚠️ WARNING: Approving sequence for {target_sid} without plan data! timestamp={timestamp}")
             
             # Create new APPROVED or REWORK sequence
             new_timestamp = now.strftime('%Y-%m-%d %H:%M:%S')

@@ -241,11 +241,11 @@ td { border: 1px solid #dee2e6; vertical-align: top; padding: 0; background-colo
 .th-fall   { background: #d35400; }
 .th-winter { background: #2980b9; }
 
-.year-label { font-weight: bold; text-align: center; vertical-align: middle; background: #f8f9fa !important; padding: 10px; border-top: 3px solid #800000 !important; border-bottom: 3px solid #800000 !important; }
+.year-label { font-weight: bold; text-align: center; vertical-align: middle; background: #f8f9fa !important; padding: 10px; }
 .year-subtext { display: block; font-size: 10px; color: #888; font-weight: normal; margin-top: 2px; }
 
-/* Apply thick borders to all cells in year rows */
-tr:has(.year-label) td { border-top: 3px solid #800000 !important; border-bottom: 3px solid #800000 !important; }
+/* Term names rows - no borders */
+tr.term-names-row td { border: none !important; }
 
 /* =========================================================
    TERM HEADERS

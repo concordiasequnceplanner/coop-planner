@@ -1381,10 +1381,12 @@ def api_sequence_list():
                 )
             
             # Auto-load logic: 
-            # 1. Try to find most recent APPROVED (status LIKE "%APPROVED%")
-            # 2. If none, find most recent saved (any status)
-            # 3. If none, return null
+            # 1. Check if there's a REWORK more recent than the latest APPROVED
+            # 2. If yes, load the REWORK
+            # 3. If no REWORK or REWORK is older, load the latest APPROVED
+            # 4. If no APPROVED, load most recent saved sequence
             
+            # Get most recent APPROVED
             approved_query = text(
                 """
                 SELECT Date_Saved, Sequence_Name, status
@@ -1400,14 +1402,62 @@ def api_sequence_list():
                 {"sid": target_sid, "approved_pattern": "%APPROVED%"}
             ).fetchone()
             
-            if approved_result:
+            # Get most recent REWORK
+            rework_query = text(
+                """
+                SELECT Date_Saved, Sequence_Name, status
+                FROM Saved_Sequences
+                WHERE student_id = :sid 
+                AND status = :rework_status
+                ORDER BY Date_Saved DESC
+                LIMIT 1
+                """
+            )
+            rework_result = conn.execute(
+                rework_query, 
+                {"sid": target_sid, "rework_status": "REWORK"}
+            ).fetchone()
+            
+            # Decide which one to load
+            auto_load_sequence = None
+            
+            if rework_result and approved_result:
+                # Both exist - load the more recent one
+                rework_date = rework_result[0]
+                approved_date = approved_result[0]
+                
+                if rework_date > approved_date:
+                    auto_load_sequence = {
+                        "id": str(rework_result[0]),
+                        "name": str(rework_result[1]),
+                        "timestamp": str(rework_result[0]),
+                        "type": "rework"
+                    }
+                else:
+                    auto_load_sequence = {
+                        "id": str(approved_result[0]),
+                        "name": str(approved_result[1]),
+                        "timestamp": str(approved_result[0]),
+                        "type": "approved"
+                    }
+            elif rework_result:
+                # Only REWORK exists
+                auto_load_sequence = {
+                    "id": str(rework_result[0]),
+                    "name": str(rework_result[1]),
+                    "timestamp": str(rework_result[0]),
+                    "type": "rework"
+                }
+            elif approved_result:
+                # Only APPROVED exists
                 auto_load_sequence = {
                     "id": str(approved_result[0]),
                     "name": str(approved_result[1]),
                     "timestamp": str(approved_result[0]),
                     "type": "approved"
                 }
-            else:
+            
+            if not auto_load_sequence:
                 # Fallback: get most recent saved sequence
                 latest_query = text(
                     """

@@ -1381,80 +1381,31 @@ def api_sequence_list():
                 )
             
             # Auto-load logic: 
-            # 1. Check if there's a REWORK more recent than the latest APPROVED
-            # 2. If yes, load the REWORK
-            # 3. If no REWORK or REWORK is older, load the latest APPROVED
-            # 4. If no APPROVED, load most recent saved sequence
+            # 1. Find most recent APPROVED, REWORK, or PENDING APPROVAL → load it
+            # 2. If none exists, load most recent saved sequence (fallback)
             
-            # Get most recent APPROVED
-            approved_query = text(
+            priority_query = text(
                 """
                 SELECT Date_Saved, Sequence_Name, status
                 FROM Saved_Sequences
                 WHERE student_id = :sid 
-                AND status LIKE :approved_pattern
+                AND (status LIKE '%APPROVED%' OR status = 'REWORK' OR status = 'PENDING APPROVAL')
                 ORDER BY Date_Saved DESC
                 LIMIT 1
                 """
             )
-            approved_result = conn.execute(
-                approved_query, 
-                {"sid": target_sid, "approved_pattern": "%APPROVED%"}
+            priority_result = conn.execute(
+                priority_query, {"sid": target_sid}
             ).fetchone()
             
-            # Get most recent REWORK
-            rework_query = text(
-                """
-                SELECT Date_Saved, Sequence_Name, status
-                FROM Saved_Sequences
-                WHERE student_id = :sid 
-                AND status = :rework_status
-                ORDER BY Date_Saved DESC
-                LIMIT 1
-                """
-            )
-            rework_result = conn.execute(
-                rework_query, 
-                {"sid": target_sid, "rework_status": "REWORK"}
-            ).fetchone()
-            
-            # Decide which one to load
-            auto_load_sequence = None
-            
-            if rework_result and approved_result:
-                # Both exist - load the more recent one
-                rework_date = rework_result[0]
-                approved_date = approved_result[0]
-                
-                if rework_date > approved_date:
-                    auto_load_sequence = {
-                        "id": str(rework_result[0]),
-                        "name": str(rework_result[1]),
-                        "timestamp": str(rework_result[0]),
-                        "type": "rework"
-                    }
-                else:
-                    auto_load_sequence = {
-                        "id": str(approved_result[0]),
-                        "name": str(approved_result[1]),
-                        "timestamp": str(approved_result[0]),
-                        "type": "approved"
-                    }
-            elif rework_result:
-                # Only REWORK exists
+            if priority_result:
+                seq_status = str(priority_result[2] or "").lower()
+                seq_type = "approved" if "approved" in seq_status else "rework" if "rework" in seq_status else "pending"
                 auto_load_sequence = {
-                    "id": str(rework_result[0]),
-                    "name": str(rework_result[1]),
-                    "timestamp": str(rework_result[0]),
-                    "type": "rework"
-                }
-            elif approved_result:
-                # Only APPROVED exists
-                auto_load_sequence = {
-                    "id": str(approved_result[0]),
-                    "name": str(approved_result[1]),
-                    "timestamp": str(approved_result[0]),
-                    "type": "approved"
+                    "id": str(priority_result[0]),
+                    "name": str(priority_result[1]),
+                    "timestamp": str(priority_result[0]),
+                    "type": seq_type
                 }
             
             if not auto_load_sequence:

@@ -1779,7 +1779,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 const banner = document.createElement('div');
                 banner.id = 'debugBanner';
                 banner.style.cssText = 'position:fixed;top:10px;left:50%;transform:translateX(-50%);background:#2196F3;color:white;padding:12px 24px;border-radius:6px;z-index:10000;font-weight:bold;box-shadow:0 4px 8px rgba(0,0,0,0.2);';
-                banner.textContent = `Sequence loaded: ${seq.name}`;
+                banner.textContent = `Sequence loaded: ${seq.name} - ${seq.type.toUpperCase()}`;
                 document.body.appendChild(banner);
                 
                 // Remove banner on first click anywhere

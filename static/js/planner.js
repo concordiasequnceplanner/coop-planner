@@ -1547,7 +1547,12 @@ document.addEventListener("DOMContentLoaded", () => {
         const ecpCr   = cats['ECP']   || 0;
         const otherCr = cats['OTHER'] || 0;
         const repCr   = cats['REP']   || 0;
-        const mainTotal = total - ecpCr - otherCr - repCr;
+
+        // For GRAD programs: include OTHER in main total (no separate CORE/TE breakdown)
+        const _isGradCredits = !!window.APP_CONFIG?.isGrad || (document.getElementById('programSelect')?.value || '').toUpperCase().includes('GRAD');
+        const mainTotal = _isGradCredits
+            ? total - ecpCr - repCr          // GRAD: OTHER counts in main total
+            : total - ecpCr - otherCr - repCr; // UGRD: OTHER excluded from main total
 
         // Get program requirements from Programs sheet
         const selectedProg = document.getElementById('programSelect')?.value || '';
@@ -1565,7 +1570,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // Combine all categories: from cats AND from progReqs
         const allCats = new Set([...Object.keys(cats), ...Object.keys(progReqs)]);
-        const mainCats = Array.from(allCats).filter(k => k !== 'ECP' && k !== 'OTHER' && k !== 'REP').sort();
+        let mainCats = Array.from(allCats).filter(k => k !== 'ECP' && k !== 'REP').sort();
+        // For UGRD: also exclude OTHER from main breakdown; for GRAD: keep OTHER in breakdown
+        if (!_isGradCredits) mainCats = mainCats.filter(k => k !== 'OTHER');
 
         // Summary line: Xcr CAT1 + Xcr CAT2 ... with required credits and red highlighting
         const parts = mainCats.map(k => {
@@ -1585,10 +1592,11 @@ document.addEventListener("DOMContentLoaded", () => {
         const addons = [];
         if (repCr)   addons.push(`${fmt(repCr)}cr REP`);
         if (ecpCr)   addons.push(`${fmt(ecpCr)}cr ECP`);
-        if (otherCr) addons.push(`${fmt(otherCr)}cr OTHER`);
+        if (otherCr && !_isGradCredits) addons.push(`${fmt(otherCr)}cr OTHER`);
         const addonNote = addons.length
             ? ` <span style="color:#888">(in addition to ${addons.join(', ')})</span>` : '';
 
+        // For GRAD: show "Total: Xcr OTHER" if all credits are OTHER
         panel.innerHTML = `<b>Total: ${fmt(mainTotal)}cr</b>${parts.length ? ' = ' + parts.join(' + ') : ''}${addonNote}`;
 
         // Breakdown → separate panel, one course per line (all cats including REP/ECP/OTHER)
@@ -3798,8 +3806,9 @@ window.validateGrid = function() {
             });
         });
 
-        // WT1 checks — study terms + credits
-        if (wtPos.WT1) {
+        // WT1 checks — study terms + credits (skip for GRAD programs)
+        const _isGradProg = !!window.APP_CONFIG?.isGrad || (document.getElementById('programSelect')?.value || '').toUpperCase().includes('GRAD');
+        if (wtPos.WT1 && !_isGradProg) {
             let studyTermsBefore = 0, coreCrBefore = 0;
             allZones.forEach(({ ord, el }) => {
                 if (ord >= wtPos.WT1.ord) return;
@@ -4259,7 +4268,11 @@ window.validateGrid = function() {
     })();
 
     // Check: Standard sequence deviation — list courses placed in a different term than std seq
+    // Skip for GRAD programs (no standard sequence)
     (function() {
+        const _isGradProg2 = !!window.APP_CONFIG?.isGrad || (document.getElementById('programSelect')?.value || '').toUpperCase().includes('GRAD');
+        if (_isGradProg2) return;
+
         const sequencesDb = window.APP_CONFIG?.sequencesDb;
         if (!sequencesDb || !sequencesDb.length) return;
 

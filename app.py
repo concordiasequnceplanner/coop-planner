@@ -82,10 +82,26 @@ def check_session_timeout():
     timeout = SESSION_TIMEOUT_POWER if is_power else SESSION_TIMEOUT_STUDENT
 
     if now - last_active > timeout:
+        sid = session.get('student_id', 'UNKNOWN')
+        elapsed = int(now - last_active)
+        print(f"⏰ [SESSION_EXPIRED] {sid} after {elapsed}s (limit={int(timeout)}s)")
         session.clear()
+        # For API calls, return JSON instead of redirect
+        if request.path.startswith('/api/'):
+            return jsonify({"ok": False, "error": "Session expired", "session_expired": True}), 401
         return redirect(url_for('login'))
 
     session['last_active'] = now
+
+@app.after_request
+def log_api_requests(response):
+    """Log all API calls (skip health checks, static files, and keepalive)"""
+    if request.path in ('/health', '/api/keepalive') or request.path.startswith('/static/'):
+        return response
+    if request.path.startswith('/api/'):
+        sid = session.get('student_id', '-')
+        print(f"📡 [{request.method}] {request.path} → {response.status_code} (sid={sid})")
+    return response
 
 # =========================================================
 # RATE LIMITING
@@ -453,6 +469,14 @@ def favicon():
 @app.route("/health")
 def health():
     return "ok", 200
+
+@app.route("/api/keepalive", methods=["POST"])
+def api_keepalive():
+    """Lightweight ping to refresh session last_active (called by frontend on user activity)"""
+    if "student_id" not in session:
+        return jsonify({"ok": False}), 401
+    return jsonify({"ok": True}), 200
+
 # =========================================================
 # AUTH ROUTES
 # =========================================================

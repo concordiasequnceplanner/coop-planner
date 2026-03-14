@@ -1791,6 +1791,21 @@ document.addEventListener("DOMContentLoaded", () => {
             console.error('[AUTOLOAD] Error:', e);
         }
     }, 1000); // Longer delay to ensure page is fully loaded
+
+    // =========================================================
+    // SESSION KEEPALIVE — ping server every 5 min if user is active
+    // =========================================================
+    let _userActive = false;
+    ['mousemove', 'click', 'keydown', 'scroll', 'touchstart'].forEach(evt => {
+        document.addEventListener(evt, () => { _userActive = true; }, { passive: true });
+    });
+    setInterval(async () => {
+        if (!_userActive) return;
+        _userActive = false;
+        try {
+            await fetch('/api/keepalive', { method: 'POST', credentials: 'same-origin' });
+        } catch (_) { /* ignore */ }
+    }, 5 * 60 * 1000); // every 5 minutes
 });
 
 // =========================================================
@@ -4660,6 +4675,16 @@ async function apiJson(url, method = 'GET', body = null) {
     if (body) opts.body = JSON.stringify(body);
     const resp = await fetch(url, opts);
     if (!resp.ok) {
+        // Session expired — redirect to login
+        if (resp.status === 401) {
+            let data = {};
+            try { data = JSON.parse(await resp.text()); } catch(_) {}
+            if (data.session_expired) {
+                alert('Your session has expired. You will be redirected to login.\nYour work has NOT been lost — after logging in, use Load to recover your latest draft.');
+                window.location.href = '/login';
+                throw new Error('Session expired');
+            }
+        }
         const t = await resp.text();
         throw new Error(`HTTP ${resp.status}: ${t}`);
     }

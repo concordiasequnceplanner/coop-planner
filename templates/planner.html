@@ -44,12 +44,15 @@
         <div class="header-divider"></div>
 
         <div class="header-section">
-            <span class="header-label">
-                <input type="checkbox" id="coopRegistered" onchange="rebuildGrid()" style="accent-color: #912338; vertical-align: middle;"> CO-OP Start
-                &nbsp;&nbsp;
-                <input type="checkbox" id="acsdRegistered" onchange="window.validateGrid && window.validateGrid()" style="accent-color: #8e44ad; vertical-align: middle;"> ACSD
-            </span>
-            <div style="display: flex; gap: 5px;">
+            <div style="display:flex;flex-direction:column;gap:2px;">
+                <span class="header-label">
+                    <input type="checkbox" id="coopRegistered" onchange="rebuildGrid()" style="accent-color: #912338; vertical-align: middle;"> CO-OP
+                </span>
+                <span class="header-label">
+                    <input type="checkbox" id="acsdRegistered" onchange="window.validateGrid && window.validateGrid()" style="accent-color: #8e44ad; vertical-align: middle;"> ACSD
+                </span>
+            </div>
+            <div style="display:none;">
                 <select id="coopStartYear" onchange="rebuildGrid()"></select>
                 <select id="coopStartTerm" onchange="rebuildGrid()">
                     <option value="Summer">Summer</option>
@@ -84,13 +87,23 @@
         {% endif %}
 
         <!-- Save / Load -->
-        <div style="display:flex; gap:4px; align-items:flex-start; flex-direction:column;">
-            <div style="display:flex; gap:4px;">
+        <div style="display:flex; gap:8px; align-items:stretch;">
+            <div style="display:flex; gap:4px; flex-direction:column; justify-content:center; align-items:center;">
                 <button onclick="window.saveDraft()"
                         style="background:#7f8c8d;color:#fff;border:none;padding:6px 10px;border-radius:4px;font-size:12px;font-weight:bold;cursor:pointer;">
                     💾 Save
                 </button>
-                {% if is_power_user %}
+                <button onclick="window.loadPlan()"
+                        style="background:#27ae60;color:#fff;border:none;padding:8px 14px;border-radius:20px;font-size:14px;font-weight:bold;cursor:pointer;">
+                    📂 Load
+                </button>
+            </div>
+            {% if is_power_user %}
+            <div style="display:flex; gap:4px; flex-direction:column; justify-content:center; align-items:center;">
+                <button onclick="window.open('/admin_checks', '_blank')"
+                        style="background:#8e44ad;color:#fff;border:none;padding:6px 10px;border-radius:20px;font-size:12px;font-weight:bold;cursor:pointer;">
+                    🔍 ADMIN CHECK
+                </button>
                 <div style="position:relative;">
                     <button id="btnPendingHeader" onclick="window.openPendingMenu()"
                             style="background:#e74c3c;color:#fff;border:none;padding:8px 14px;border-radius:20px;font-size:14px;font-weight:bold;cursor:pointer;">
@@ -98,30 +111,18 @@
                     </button>
                     <div id="pendingMenuDropdown" style="display:none;position:absolute;top:100%;right:0;background:#fff;border:1px solid #ddd;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.15);min-width:300px;max-height:350px;overflow-y:auto;z-index:9999;"></div>
                 </div>
-                {% endif %}
             </div>
-            <div style="display:flex; gap:4px;">
-                <button onclick="window.loadPlan()"
-                        style="background:#27ae60;color:#fff;border:none;padding:6px 10px;border-radius:4px;font-size:12px;font-weight:bold;cursor:pointer;">
-                    📂 Load
+            <div style="display:flex;flex-direction:column;gap:4px;justify-content:center;align-items:center;">
+                <button onclick="window.showStudentDetails()"
+                        style="background:#3498db;color:#fff;border:none;padding:6px 10px;border-radius:20px;font-size:12px;font-weight:bold;cursor:pointer;">
+                    📊 Student Details
                 </button>
-                {% if is_power_user %}
-                <button onclick="window.open('/admin_checks', '_blank')"
-                        style="background:#8e44ad;color:#fff;border:none;padding:6px 10px;border-radius:20px;font-size:12px;font-weight:bold;cursor:pointer;">
-                    🔍 ADMIN CHECK
+                <button onclick="window.showStudentEmails()"
+                        style="background:#16a085;color:#fff;border:none;padding:6px 10px;border-radius:20px;font-size:12px;font-weight:bold;cursor:pointer;">
+                    📧 Email History
                 </button>
-                <div style="display:flex;flex-direction:column;gap:4px;">
-                    <button onclick="window.showStudentDetails()"
-                            style="background:#3498db;color:#fff;border:none;padding:6px 10px;border-radius:20px;font-size:12px;font-weight:bold;cursor:pointer;">
-                        📊 Student Details
-                    </button>
-                    <button onclick="window.showStudentEmails()"
-                            style="background:#16a085;color:#fff;border:none;padding:6px 10px;border-radius:20px;font-size:12px;font-weight:bold;cursor:pointer;">
-                        📧 Email History
-                    </button>
-                </div>
-                {% endif %}
             </div>
+            {% endif %}
         </div>
 
         <!-- User info + logout -->

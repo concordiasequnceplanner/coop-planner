@@ -27,6 +27,25 @@ loglevel = "info"
 # Simplified format (only used if accesslog is re-enabled)
 access_log_format = '%(h)s %(t)s "%(r)s" %(s)s %(b)s'
 
+# Filter out /health noise from gunicorn's own logger
+import logging
+
+class HealthCheckFilter(logging.Filter):
+    def filter(self, record):
+        msg = record.getMessage()
+        if '/health' in msg or '/favicon.ico' in msg:
+            return False
+        return True
+
+def on_starting(server):
+    """Add health check filter to gunicorn's error logger to suppress /health noise."""
+    server.log.error_log.addFilter(HealthCheckFilter())
+
+def post_fork(server, worker):
+    """Also filter in each worker process."""
+    server.log.error_log.addFilter(HealthCheckFilter())
+    server.log.access_log.addFilter(HealthCheckFilter())
+
 # Process naming
 proc_name = "concordia_sequence_planner"
 

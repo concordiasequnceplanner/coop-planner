@@ -2050,6 +2050,7 @@ window.sendEmailToStudent = function() {
 // =========================================================
 window.processApproval = async function(action) {
     if (!window.APP_CONFIG?.isPowerUser) { alert('Unauthorized'); return; }
+    if (window._approvalInProgress) return; // prevent double-click
     const viewingSid = window.APP_CONFIG.viewingSid;
     const seqId2 = sessionStorage.getItem('_pendingSeqId') || (window.APP_CONFIG.initialPlanId ? String(window.APP_CONFIG.initialPlanId).replace(/"/g,'') : '');
     if (!seqId2) {
@@ -2060,6 +2061,7 @@ window.processApproval = async function(action) {
     const conf = confirm(`Are you sure you want to ${action} this sequence for ${viewingSid}?`);
     if (!conf) return;
 
+    window._approvalInProgress = true;
     showSpinner(`${action === 'APPROVED' ? 'Approving' : 'Sending rework'}…`);
 
     const termSummary = buildEmailTermSummary();
@@ -2263,6 +2265,8 @@ window.processApproval = async function(action) {
         hideSpinner();
         console.error(e);
         alert(`Error: ${e.message}`);
+    } finally {
+        window._approvalInProgress = false;
     }
 };
 
@@ -3843,6 +3847,51 @@ window.validateGrid = function() {
                 flagBox(wtPos.WT3.el, [{ msg: 'WT3 must be in a later term than WT2', sev: 'error' }]);
         }
 
+        // Check 8b2: UGRD only — 200-level ENG CORE courses must have ≥ C- before each WT
+        if (!_isGradProg) {
+            // Collect all taken 200-level ENG CORE courses with grades (keep most recent per course)
+            const engCore200Grades = {}; // { courseId: { grade, ord } }
+            allZones.forEach(({ ord, el }) => {
+                Array.from(el.children).forEach(box => {
+                    if (!box.classList.contains('course-box') || box.classList.contains('wt')) return;
+                    const cid = (box.dataset.courseId || '').toUpperCase();
+                    const grade = (box.dataset.grade || '').trim().toUpperCase();
+                    if (!grade) return; // no grade = not yet taken
+                    const db = lookupCourse(cid) || {};
+                    const coreType = String(db['CORE_TE'] || '').toUpperCase();
+                    if (!coreType.includes('ENG') || !coreType.includes('CORE')) return; // must be ENG CORE
+                    // Check if 200-level: course number starts with 2
+                    const numMatch = cid.match(/(\d)/);
+                    if (!numMatch || numMatch[1] !== '2') return;
+                    // Keep most recent (highest ord)
+                    if (!engCore200Grades[cid] || ord > engCore200Grades[cid].ord) {
+                        engCore200Grades[cid] = { grade, ord };
+                    }
+                });
+            });
+
+            // Grades that are ≥ C-: A+, A, A-, B+, B, B-, C+, C, C-
+            const passingGrades = new Set(['A+','A','A-','B+','B','B-','C+','C','C-']);
+
+            // For each WT, check if any 200-level ENG CORE before it has grade < C-
+            ['WT1','WT2','WT3'].forEach(wtKey => {
+                if (!wtPos[wtKey]) return;
+                const failedCourses = [];
+                Object.entries(engCore200Grades).forEach(([cid, info]) => {
+                    if (info.ord >= wtPos[wtKey].ord) return; // only courses before this WT
+                    if (!passingGrades.has(info.grade)) {
+                        failedCourses.push(`${cid} (${info.grade})`);
+                    }
+                });
+                if (failedCourses.length > 0) {
+                    flagBox(wtPos[wtKey].el, [{
+                        msg: `Cannot go on ${wtKey}: 200-level ENG CORE grade < C-: ${failedCourses.join(', ')}`,
+                        sev: 'error'
+                    }]);
+                }
+            });
+        }
+
         // Check 8c: Term immediately before last WT must be full-time (≥Credits_FT)
         // Find the last (highest) WT
         const lastWt = [wtPos.WT1, wtPos.WT2, wtPos.WT3]
@@ -4688,15 +4737,11 @@ async function apiJson(url, method = 'GET', body = null) {
     if (body) opts.body = JSON.stringify(body);
     const resp = await fetch(url, opts);
     if (!resp.ok) {
-        // Session expired — redirect to login
+        // Any 401 from API = session expired or not logged in → redirect to login
         if (resp.status === 401) {
-            let data = {};
-            try { data = JSON.parse(await resp.text()); } catch(_) {}
-            if (data.session_expired) {
-                alert('Your session has expired. You will be redirected to login.\nYour work has NOT been lost — after logging in, use Load to recover your latest draft.');
-                window.location.href = '/login';
-                throw new Error('Session expired');
-            }
+            alert('Your session has expired. You will be redirected to login.\nYour work has NOT been lost — after logging in, use Load to recover your latest draft.');
+            window.location.href = '/login';
+            throw new Error('Session expired');
         }
         const t = await resp.text();
         throw new Error(`HTTP ${resp.status}: ${t}`);
@@ -4892,6 +4937,7 @@ function buildEmailTermSummary() {
 }
 
 window.submitForApproval = async function() {
+    if (window._submitInProgress) return; // prevent double-submit
     const reason = getSelectedReasonCode();
     const just = getJustificationText();
     const issues = currentIssues();
@@ -4914,6 +4960,7 @@ window.submitForApproval = async function() {
         }
     }
 
+    window._submitInProgress = true;
     showSpinner('Submitting for approval…');
     try {
         const plan = collectPlanSnapshot();
@@ -4962,6 +5009,8 @@ window.submitForApproval = async function() {
         hideSpinner();
         console.error(e);
         alert(`Submit failed: ${e.message}`);
+    } finally {
+        window._submitInProgress = false;
     }
 };
 

@@ -94,13 +94,12 @@ def check_session_timeout():
     session['last_active'] = now
 
 @app.after_request
-def log_api_requests(response):
-    """Log all API calls (skip health checks, static files, and keepalive)"""
-    if request.path in ('/health', '/api/keepalive') or request.path.startswith('/static/'):
+def log_requests(response):
+    """Log all requests (skip health checks, static files, keepalive, and favicon)"""
+    if request.path in ('/health', '/api/keepalive', '/favicon.ico') or request.path.startswith('/static/'):
         return response
-    if request.path.startswith('/api/'):
-        sid = session.get('student_id', '-')
-        print(f"📡 [{request.method}] {request.path} → {response.status_code} (sid={sid})")
+    sid = session.get('student_id', '-')
+    print(f"📡 [{request.method}] {request.path} → {response.status_code} (sid={sid})")
     return response
 
 # =========================================================
@@ -557,6 +556,23 @@ def login():
                             return render_template("verify.html", email=email, message=msg)
 
                 # Generate new OTP
+                # Guard against duplicate requests (race condition with multiple workers)
+                # Re-check if a code was just generated in the last 5 seconds
+                recheck = conn.execute(
+                    text("SELECT time FROM logins WHERE email = :email AND used < 2 ORDER BY time DESC LIMIT 1"),
+                    {"email": email},
+                ).fetchone()
+                if recheck and recheck[0]:
+                    rc_time = recheck[0]
+                    if isinstance(rc_time, str):
+                        try: rc_time = datetime.datetime.strptime(rc_time, "%Y-%m-%d %H:%M:%S")
+                        except: rc_time = None
+                    if isinstance(rc_time, datetime.datetime) and (now - rc_time).total_seconds() < 5:
+                        session["pre_auth_email"] = email
+                        session["temp_sid"] = sid
+                        session["attempts"] = 0
+                        return render_template("verify.html", email=email, message="Access code was just sent. Please check your email.")
+
                 otp = str(random.randint(100000, 999999))
                 timestamp_str = now.strftime("%Y-%m-%d %H:%M:%S")
 

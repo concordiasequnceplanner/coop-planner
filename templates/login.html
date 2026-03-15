@@ -14,7 +14,7 @@
         {% endif %}
 
         {% if not ask_student_id %}
-        <form method="POST">
+        <form method="POST" onsubmit="this.querySelector('button').disabled=true; this.querySelector('button').textContent='Sending…';">
             <input type="hidden" name="action" value="check_email">
             <input type="email" name="email" placeholder="student@concordia.ca" required autofocus>
             <button type="submit">Send Access Code</button>
@@ -23,7 +23,7 @@
         {% else %}
         <div class="guest-section">
             <p><strong>Email not recognized.</strong> Please enter your Student ID to find your registered email:</p>
-            <form method="POST">
+            <form method="POST" onsubmit="this.querySelector('button').disabled=true; this.querySelector('button').textContent='Searching…';">
                 <input type="hidden" name="action" value="recover_email">
                 <input type="text" name="student_id" placeholder="Student ID (8 digits)" required pattern="\d{8}">
                 <button type="submit" class="btn-secondary">Find Email</button>

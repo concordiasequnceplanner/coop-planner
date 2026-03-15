@@ -7,7 +7,8 @@ bind = "0.0.0.0:" + str(os.getenv("PORT", "10000"))
 backlog = 2048
 
 # Worker processes
-workers = multiprocessing.cpu_count() * 2 + 1
+# Use 2 workers to avoid duplicate request issues with Render's load balancer
+workers = 2
 worker_class = "sync"
 worker_connections = 1000
 max_requests = 1000
@@ -18,11 +19,13 @@ timeout = 120  # 120 seconds (was default 30)
 graceful_timeout = 120
 keepalive = 5
 
-# Logging
-accesslog = "-"
+# Logging — disable gunicorn access log (Flask after_request handles API logging, skips /health)
+accesslog = None
 errorlog = "-"
 loglevel = "info"
-access_log_format = '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s"'
+
+# Simplified format (only used if accesslog is re-enabled)
+access_log_format = '%(h)s %(t)s "%(r)s" %(s)s %(b)s'
 
 # Process naming
 proc_name = "concordia_sequence_planner"

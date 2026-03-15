@@ -18,7 +18,7 @@
         <div class="error">{{ error }}</div>
         {% endif %}
 
-        <form method="POST" action="/verify">
+        <form method="POST" action="/verify" onsubmit="this.querySelector('button').disabled=true; this.querySelector('button').textContent='Verifying…';">
             <input type="hidden" name="email" value="{{ email }}">
             <input type="text" class="otp-input" name="code" placeholder="------" required pattern="\d{6}" maxlength="6" autocomplete="off" autofocus>
             <button type="submit">Verify Code</button>

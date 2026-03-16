@@ -2307,12 +2307,12 @@ def api_admin_approve():
                 if is_changed:
                     wts_changed = True
 
-                wt_color = "#ff0000" if is_changed else "#f8071b"   # bright green if changed, normal green if no change
+                wt_color = "#1565C0" if is_changed else "#27ae60"   # blue if changed, green if no change
                 wt_label = f"<span style='color:{wt_color};font-weight:800;'>{wt}</span>"
                 term_txt = escape(str(info.get("new_term", "") or ""))
 
                 change_span = (
-                    f"<span style='color:#00c853;font-weight:800;'> — {escape(ct)}</span>"
+                    f"<span style='color:#1565C0;font-weight:800;'> — {escape(ct)}</span>"
                     if is_changed else
                     "<span style='color:#27ae60;font-weight:800;'> — NO CHANGE</span>"
                 )

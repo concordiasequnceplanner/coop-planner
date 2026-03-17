@@ -29,6 +29,12 @@ from utils import (
     debug_no_emails,
 ) 
 
+
+from sre_rams_search import sre_bp
+app.register_blueprint(sre_bp)
+
+
+
 # =========================================================
 # STATUS CONSTANTS
 # =========================================================

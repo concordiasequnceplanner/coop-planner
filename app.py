@@ -30,11 +30,6 @@ from utils import (
 ) 
 
 
-from sre_rams_search import sre_bp
-app.register_blueprint(sre_bp)
-
-
-
 # =========================================================
 # STATUS CONSTANTS
 # =========================================================
@@ -65,6 +60,11 @@ def _get_priority1_email_db(target_sid: str) -> str:
 
 app = Flask(__name__)
 app.secret_key = "SVsecretKEY_MIAE_2024"
+
+
+from sre_rams_search import sre_bp
+app.register_blueprint(sre_bp)
+
 
 # =========================================================
 # SESSION TIMEOUT (auto-logoff)

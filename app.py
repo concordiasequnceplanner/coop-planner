@@ -65,6 +65,10 @@ app.secret_key = "SVsecretKEY_MIAE_2024"
 from sre_rams_search import sre_bp
 app.register_blueprint(sre_bp)
 
+@app.route("/SRE_MONTREAL")
+def sre_montreal_page():
+    return render_template("sre_montreal.html")
+
 
 # =========================================================
 # SESSION TIMEOUT (auto-logoff)

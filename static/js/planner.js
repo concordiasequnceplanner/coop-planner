@@ -4173,12 +4173,13 @@ window.validateGrid = function() {
         const last = history[history.length - 1];
         const recentMatch = String(last.info || '').match(/<b>([\d.]+)<\/b>/);
         const cgpaMatch   = String(last.info || '').match(/CGPA\s+([\d.]+)/);
+        const isNA        = String(last.info || '').includes('N/A');
         const recentGpa   = recentMatch ? parseFloat(recentMatch[1]) : null;
         const cgpa        = cgpaMatch   ? parseFloat(cgpaMatch[1])   : null;
         const termLabel   = `${last.year} ${last.season}`;
 
         [{ val: recentGpa, name: 'GPA past 24.5cr' }, { val: cgpa, name: 'CGPA' }].forEach(({ val, name }) => {
-            if (val === null) return;
+            if (val === null || isNA) return;
             if (val < threshold) {
                 allIssues.push({ courseId: '', msg: `LOW ${name} (${val}) in ${termLabel} — cannot schedule a WT in next 2 terms`, sev: 'error' });
             } else if (val < threshold + 0.2) {

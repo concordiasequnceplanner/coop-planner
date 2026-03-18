@@ -1580,24 +1580,23 @@ document.addEventListener("DOMContentLoaded", () => {
             const required = progReqs[k];
             const isLow = required !== undefined && current < required;
             const color = isLow ? '#c0392b' : '#333';
-            const weight = isLow ? 'bold' : 'normal';
             
             if (required !== undefined) {
-                return `<span style="color:${color}; font-weight:${weight};">${fmt(current)}/${fmt(required)}cr</span> ${k}`;
+                return `<span style="color:${color};"><span style="font-size:15px; font-weight:bold;">${fmt(current)}</span>/${fmt(required)}cr</span> ${k}`;
             } else {
-                return `${fmt(current)}cr ${k}`;
+                return `<span style="font-size:15px; font-weight:bold;">${fmt(current)}</span>cr ${k}`;
             }
         }).filter(p => p);  // Remove empty parts
 
         const addons = [];
-        if (repCr)   addons.push(`${fmt(repCr)}cr REP`);
-        if (ecpCr)   addons.push(`${fmt(ecpCr)}cr ECP`);
-        if (otherCr && !_isGradCredits) addons.push(`${fmt(otherCr)}cr OTHER`);
+        if (repCr)   addons.push(`<span style="font-size:15px; font-weight:bold;">${fmt(repCr)}</span>cr REP`);
+        if (ecpCr)   addons.push(`<span style="font-size:15px; font-weight:bold;">${fmt(ecpCr)}</span>cr ECP`);
+        if (otherCr && !_isGradCredits) addons.push(`<span style="font-size:15px; font-weight:bold;">${fmt(otherCr)}</span>cr OTHER`);
         const addonNote = addons.length
             ? ` <span style="color:#888">(in addition to ${addons.join(', ')})</span>` : '';
 
         // For GRAD: show "Total: Xcr OTHER" if all credits are OTHER
-        panel.innerHTML = `<b>Total: ${fmt(mainTotal)}cr</b>${parts.length ? ' = ' + parts.join(' + ') : ''}${addonNote}`;
+        panel.innerHTML = `<b>Total: <span style="font-size:15px;">${fmt(mainTotal)}</span>cr</b>${parts.length ? ' = ' + parts.join(' + ') : ''}${addonNote}`;
 
         // Breakdown → separate panel, one course per line (all cats including REP/ECP/OTHER)
         const breakdownPanel = document.getElementById('creditBreakdownContent');
@@ -1641,8 +1640,7 @@ document.addEventListener("DOMContentLoaded", () => {
         };
 
         if (issues.length === 0 && !reasonCode) {
-            // No issues and no reason — don't auto-format, leave as-is or clear system text
-            if (justText.value.includes('ISSUES & JUSTIFICATIONS:')) {
+            if (justText.value.includes('ERRORS & WARNINGS:') || justText.value.includes('ISSUES & JUSTIFICATIONS:') || justText.value.includes('Submission Reason:')) {
                 justText.value = '';
             }
             justText.dataset.originalText = '';
@@ -1654,17 +1652,17 @@ document.addEventListener("DOMContentLoaded", () => {
         const answersMap = {};
         const blocks = currentText.split(/(?=\d+\.\s)/);
         blocks.forEach(block => {
-            const m = block.match(/^\d+\.\s*([^\n]+)\n(?:Justification|DETAILS):\s*([\s\S]*)/);
+            const m = block.match(/^\d+\.\s*([^\n]+)\n(?:Justification|DETAILS|Details \(optional\)):\s*([\s\S]*)/);
             if (m) answersMap[m[1].trim()] = m[2].trim();
         });
 
         // Build new interleaved text
-        let newContent = 'ISSUES & JUSTIFICATIONS:\n\n';
+        let newContent = '';
         let itemNumber = 1;
 
         // Add reason code as first item if selected
         if (reasonCode && reasonLabels[reasonCode]) {
-            const reasonText = `Submission Reason: ${reasonLabels[reasonCode]}`;
+            const reasonText = `Submission Reason: ${reasonCode}) ${reasonLabels[reasonCode]}`;
             const savedAnswer = answersMap[reasonText] || '';
             const labelText = (reasonCode === 4 || reasonCode === 5 || reasonCode === 6 || reasonCode === 10) ? 'DETAILS' : 'DETAILS (optional)';
             newContent += `${itemNumber}. ${reasonText}\n${labelText}: ${savedAnswer}\n\n`;
@@ -1677,8 +1675,10 @@ document.addEventListener("DOMContentLoaded", () => {
             const isFyi = issue.msg.startsWith('FYI');
             const errText = issue.courseId ? `${issue.courseId}: ${issue.msg}` : issue.msg;
             if (isFyi) {
-                // FYI items: no justification needed, just show the info
                 newContent += `${itemNumber}. ${prefix} ${errText}\n\n`;
+            } else if (issue.sev === 'warning') {
+                const savedAnswer = answersMap[errText] || '';
+                newContent += `${itemNumber}. ${prefix} ${errText}\nDetails (optional): ${savedAnswer}\n\n`;
             } else {
                 const savedAnswer = answersMap[errText] || '';
                 newContent += `${itemNumber}. ${prefix} ${errText}\nJustification: ${savedAnswer}\n\n`;
@@ -4417,16 +4417,6 @@ window.validateGrid = function() {
 
         // Sort by absolute deviation descending
         deviations.sort((a, b) => b.absDiff - a.absDiff);
-
-        // Build one single FYI warning with all deviations listed
-        const lines = deviations.map(d =>
-            `${d.courseId} ${d.sign}: std.seq. ${d.stdLabel} → ${d.actualLabel}`
-        );
-        allIssues.push({
-            courseId: '',
-            msg: `FYI — ${deviations.length} course(s) differ from standard sequence:\n${lines.join('\n')}`,
-            sev: 'warning'
-        });
     })();
 
     // Apply all badges
@@ -4454,7 +4444,7 @@ window.validateGrid = function() {
             if (errCount > 0)  parts.push(`<span style="color:#c0392b; font-weight:bold;">${errCount} Error${errCount > 1 ? 's' : ''}</span>`);
             if (warnCount > 0) parts.push(`<span style="color:#2980b9; font-weight:bold;">${warnCount} Warning${warnCount > 1 ? 's' : ''}</span>`);
             if (fyi > 0)       parts.push(`<span style="color:#7f8c8d;">${fyi} FYI</span>`);
-            title.innerHTML = `⚠ ${total} Issue${total > 1 ? 's' : ''} (${parts.join(', ')})`;
+            title.innerHTML = `⚠ ${total} (${parts.join(', ')})`;
 
             // Show ALL issues in the body (expandable)
             allIssues.forEach(({ courseId, msg, sev }) => {
@@ -4949,24 +4939,26 @@ window.submitForApproval = async function() {
     const reason = getSelectedReasonCode();
     const just = getJustificationText();
     const issues = currentIssues();
-    const hasIssues = issues && issues.length > 0;
+    const hasErrors = issues && issues.some(i => i.sev === 'error');
 
     if (!reason) {
         alert('Please select a submission reason (1–9).');
         return;
     }
-    if ((reason === 9 || hasIssues) && !just) {
-        alert('Justification is required (because you selected reason #9 or there are Issues).');
+    if ((reason === 9 || hasErrors) && !just) {
+        alert('Justification is required (because you selected reason #9 or there are Errors).');
         return;
     }
 
-    if (hasIssues) {
+    if (hasErrors) {
         const origText = String(document.getElementById('justificationText')?.dataset?.originalText || '');
         if (Math.abs(just.length - origText.length) < 4) {
             alert('Please add your justification comments after each issue. Your text must differ from the auto-generated template.');
             return;
         }
     }
+
+    if (!confirm('Are you sure you want to submit for approval?')) return;
 
     window._submitInProgress = true;
     showSpinner('Submitting for approval…');

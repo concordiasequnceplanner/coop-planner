@@ -160,7 +160,9 @@
                 📋 How to Use This Tool
             </summary>
             <div style="font-size: 13px; line-height: 1.6; color: #495057;">
-                <ol style="margin: 10px 0; padding-left: 20px;">
+                <p style="margin-bottom: 10px;"><span style="font-weight: 600; color: #2980b9;">Standard sequence:</span><br>click CEGEP (yellow) → Standard sequence (green) → place TEs → select reason 1 → submit</p>
+                <p style="margin-bottom: 10px;"><span style="font-weight: 600; color: #2980b9;">Change of Sequence:</span><br></p>
+                <ul style="margin: 10px 0; padding-left: 20px; list-style-type: disc;">
                     <li style="margin-bottom: 8px;">Your completed courses are already loaded in the system - you'll find them pre-populated.
                         <ul style="margin-top: 4px; padding-left: 20px;">
                             <li style="margin-bottom: 4px;"><strong>CEGEP students:</strong> Click <strong>CEGEP ECP→Y0</strong> (yellow button on the right) to place all ECP courses.</li>
@@ -178,7 +180,7 @@
                     <li style="margin-bottom: 8px;">Select the appropriate <strong>"Sequence Submission Reason"</strong></li>
                     <li style="margin-bottom: 8px;">Click <strong>SUBMIT</strong> even if you're not completely sure - your MIAE CO-OP AD will review and provide feedback or approval.</li>
                     <li style="margin-bottom: 8px;">If you encounter errors you cannot resolve or the tool is not working/gives error messages, take a screenshot and email it to <a href="mailto:coop_miae@concordia.ca" style="color: #007bff; text-decoration: none;">coop_miae@concordia.ca</a></li>
-                </ol>
+                </ul>
             </div>
         </details>
         
@@ -275,9 +277,9 @@
                 <div style="flex:1; display:flex; flex-direction:column; gap:6px;">
 
                     <!-- Justification with interleaved issues -->
-                    <label style="font-size:10px; font-weight:bold; color:#555; text-transform:uppercase; margin-bottom:0;">Student Message & Justification</label>
+                    <label style="font-size:10px; font-weight:bold; color:#555; text-transform:uppercase; margin-bottom:0;">Errors and Warnings</label>
                     <textarea id="justificationText"
-                              placeholder="Your issues and justifications will appear here. Add your comments after each issue."
+                              placeholder="Please enter your comments and/or justification if needed"
                               style="width:100%; min-height:120px; border-radius:6px; border:1px solid #ddd; padding:8px; font-size:11px; resize:none; overflow:hidden;"></textarea>
 
                     <button class="btn-submit" id="btnSubmitApproval" onclick="window.submitForApproval()"
@@ -371,7 +373,7 @@
         <!-- ===== ERROR PANEL (expandable) ===== -->
         <div id="errPanel" class="ep-box" style="display:none;">
             <div class="ep-header" onclick="this.nextElementSibling.classList.toggle('ep-open')">
-                <span id="errPanelTitle">⚠ Issues</span> <span class="ep-arrow">▼</span>
+                <span id="errPanelTitle">⚠ Errors and Warnings</span> <span class="ep-arrow">▼</span>
             </div>
             <div class="ep-body" id="errPanelBody"></div>
         </div>

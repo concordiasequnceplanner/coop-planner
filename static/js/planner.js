@@ -4958,9 +4958,16 @@ window.submitForApproval = async function() {
         }
     }
 
-    if (!confirm('Are you sure you want to submit for approval?')) return;
-
     window._submitInProgress = true;
+    const btnEl = document.getElementById('btnSubmitApproval');
+    if (btnEl) btnEl.disabled = true;
+
+    if (!confirm('Are you sure you want to submit for approval?')) {
+        window._submitInProgress = false;
+        if (btnEl) btnEl.disabled = false;
+        return;
+    }
+
     showSpinner('Submitting for approval…');
     try {
         const plan = collectPlanSnapshot();
@@ -5011,6 +5018,8 @@ window.submitForApproval = async function() {
         alert(`Submit failed: ${e.message}`);
     } finally {
         window._submitInProgress = false;
+        const btnEl2 = document.getElementById('btnSubmitApproval');
+        if (btnEl2) btnEl2.disabled = false;
     }
 };
 

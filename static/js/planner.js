@@ -934,18 +934,22 @@ document.addEventListener("DOMContentLoaded", () => {
         })();
 
         // LOW GPA next-2-terms visual warning (2 terms after current term)
+        // UGRAD: GPA past 24.5cr < threshold+0.2 (e.g. < 2.7) OR CGPA < threshold (e.g. < 2.5)
+        // GRAD: CGPA < 3.3
         (function() {
-            const progNamesDb  = window.APP_CONFIG?.programNamesDb || [];
-            const selectedProg = document.getElementById('programSelect')?.value || '';
-            const progRow      = progNamesDb.find(r => String(r['Program'] || '').trim() === selectedProg);
-            const threshold    = progRow ? parseFloat(progRow['GPA_2_terms']) : NaN;
-            const history      = window.APP_CONFIG?.cgpaHistory || [];
-
             // remove any previous low-gpa-next-term divs
             document.querySelectorAll('.low-gpa-next-term').forEach(el => el.remove());
 
+            const _isGradProg2 = !!window.APP_CONFIG?.isGrad || (document.getElementById('programSelect')?.value || '').toUpperCase().includes('GRAD');
+            const progNamesDb  = window.APP_CONFIG?.programNamesDb || [];
+            const selectedProg = document.getElementById('programSelect')?.value || '';
+            const progRow      = progNamesDb.find(r => String(r['Program'] || '').trim() === selectedProg);
+            const threshold    = _isGradProg2 ? 3.3 : (progRow ? parseFloat(progRow['GPA_2_terms']) : NaN);
+            const history      = window.APP_CONFIG?.cgpaHistory || [];
+
             if (isNaN(threshold) || !history.length) return;
 
+            const gpaThreshold = _isGradProg2 ? 3.3 : threshold + 0.2; // GRAD: 3.3, UGRAD: 2.7
             const last      = history[history.length - 1];
             const recentM   = String(last.info || '').match(/<b>([\d.]+)<\/b>/);
             const cgpaM     = String(last.info || '').match(/CGPA\s+([\d.]+)/);
@@ -955,11 +959,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
             // build a descriptive reason string for any failing metric
             const reasons = [];
-            if (recentGpa !== null && recentGpa < threshold) reasons.push(`GPA past 24.5cr = ${recentGpa}`);
-            if (cgpa      !== null && cgpa      < threshold) reasons.push(`CGPA = ${cgpa}`);
+            if (recentGpa !== null && recentGpa < gpaThreshold) reasons.push(`GPA past 24.5cr = ${recentGpa} (< ${gpaThreshold})`);
+            if (cgpa      !== null && cgpa      < threshold)    reasons.push(`CGPA = ${cgpa} (< ${threshold})`);
             if (!reasons.length) return;
 
-            const reasonStr = reasons.join(' or ') + ` (< ${threshold}) in ${termLabel}`;
+            const reasonStr = reasons.join(' or ') + ` in ${termLabel}`;
 
             // Use current term as anchor (not the low-GPA term)
             const currentZoneKey = `${currentAcaYearStr}-${{ Summer:1, Fall:2, Winter:3 }[currentSeason] || 0}`;
@@ -3855,50 +3859,18 @@ window.validateGrid = function() {
                 flagBox(wtPos.WT3.el, [{ msg: 'WT3 must be in a later term than WT2', sev: 'error' }]);
         }
 
-        // Check 8b2: UGRD only — 200-level ENG CORE courses must have ≥ C- before each WT
-        if (!_isGradProg) {
-            // Collect all taken 200-level ENG CORE courses with grades (keep most recent per course)
-            const engCore200Grades = {}; // { courseId: { grade, ord } }
-            allZones.forEach(({ ord, el }) => {
-                Array.from(el.children).forEach(box => {
-                    if (!box.classList.contains('course-box') || box.classList.contains('wt')) return;
-                    const cid = (box.dataset.courseId || '').toUpperCase();
-                    const grade = (box.dataset.grade || '').trim().toUpperCase();
-                    if (!grade) return; // no grade = not yet taken
-                    const db = lookupCourse(cid) || {};
-                    const coreType = String(db['CORE_TE'] || '').toUpperCase();
-                    if (!coreType.includes('ENG') || !coreType.includes('CORE')) return; // must be ENG CORE
-                    // Check if 200-level: course number starts with 2
-                    const numMatch = cid.match(/(\d)/);
-                    if (!numMatch || numMatch[1] !== '2') return;
-                    // Keep most recent (highest ord)
-                    if (!engCore200Grades[cid] || ord > engCore200Grades[cid].ord) {
-                        engCore200Grades[cid] = { grade, ord };
-                    }
-                });
-            });
-
-            // Grades that are ≥ C-: A+, A, A-, B+, B, B-, C+, C, C-
-            const passingGrades = new Set(['A+','A','A-','B+','B','B-','C+','C','C-']);
-
-            // For each WT, check if any 200-level ENG CORE before it has grade < C-
-            ['WT1','WT2','WT3'].forEach(wtKey => {
-                if (!wtPos[wtKey]) return;
-                const failedCourses = [];
-                Object.entries(engCore200Grades).forEach(([cid, info]) => {
-                    if (info.ord >= wtPos[wtKey].ord) return; // only courses before this WT
-                    if (!passingGrades.has(info.grade)) {
-                        failedCourses.push(`${cid} (${info.grade})`);
-                    }
-                });
-                if (failedCourses.length > 0) {
-                    flagBox(wtPos[wtKey].el, [{
-                        msg: `Cannot go on ${wtKey}: 200-level ENG CORE grade < C-: ${failedCourses.join(', ')}`,
-                        sev: 'error'
-                    }]);
-                }
-            });
-        }
+        // Check: WT placed in a low-GPA restricted term
+        ['WT1','WT2','WT3'].forEach(wtKey => {
+            if (!wtPos[wtKey]) return;
+            const wtZone = wtPos[wtKey].el.parentElement;
+            if (!wtZone) return;
+            const restContainer = document.getElementById(`restrictions_${wtZone.id}`);
+            if (!restContainer) return;
+            const hasLowGpaRestriction = restContainer.querySelector('.low-gpa-next-term');
+            if (hasLowGpaRestriction) {
+                flagBox(wtPos[wtKey].el, [{ msg: `${wtKey} placed in a restricted term — ${hasLowGpaRestriction.textContent}`, sev: 'error' }]);
+            }
+        });
 
         // Check 8c: Term immediately before last WT must be full-time (≥Credits_FT)
         // Find the last (highest) WT
@@ -4170,6 +4142,10 @@ window.validateGrid = function() {
 
         // Add issues to error panel for the LAST (most recent) term only
         if (!history.length || isNaN(threshold)) return;
+        const _isGradGpa = !!window.APP_CONFIG?.isGrad || (document.getElementById('programSelect')?.value || '').toUpperCase().includes('GRAD');
+        const gpaLimit = _isGradGpa ? 3.3 : threshold + 0.2;
+        const cgpaLimit = _isGradGpa ? 3.3 : threshold;
+
         const last = history[history.length - 1];
         const recentMatch = String(last.info || '').match(/<b>([\d.]+)<\/b>/);
         const cgpaMatch   = String(last.info || '').match(/CGPA\s+([\d.]+)/);
@@ -4178,11 +4154,11 @@ window.validateGrid = function() {
         const cgpa        = cgpaMatch   ? parseFloat(cgpaMatch[1])   : null;
         const termLabel   = `${last.year} ${last.season}`;
 
-        [{ val: recentGpa, name: 'GPA past 24.5cr' }, { val: cgpa, name: 'CGPA' }].forEach(({ val, name }) => {
+        [{ val: recentGpa, name: 'GPA past 24.5cr', limit: gpaLimit }, { val: cgpa, name: 'CGPA', limit: cgpaLimit }].forEach(({ val, name, limit }) => {
             if (val === null || isNA) return;
-            if (val < threshold) {
-                allIssues.push({ courseId: '', msg: `LOW ${name} (${val}) in ${termLabel} — cannot schedule a WT in next 2 terms`, sev: 'error' });
-            } else if (val < threshold + 0.2) {
+            if (val < limit) {
+                allIssues.push({ courseId: '', msg: `LOW ${name} (${val} < ${limit}) in ${termLabel} — cannot schedule a WT in next 2 terms after current term`, sev: 'error' });
+            } else if (!_isGradGpa && val < threshold + 0.2) {
                 allIssues.push({ courseId: '', msg: `${name} (${val}) in low range — must recover prior to next WT`, sev: 'warning' });
             }
         });
@@ -4272,7 +4248,7 @@ window.validateGrid = function() {
                 allIssues.push({
                     courseId: '',
                     msg: `Not full-time: ${label} has ${cr}cr < FT minimum of ${creditsFT}cr — add justification`,
-                    sev: 'warning'
+                    sev: 'error'
                 });
             });
         }
@@ -4538,6 +4514,7 @@ function getJustificationText() {
 
 // Strip warning blocks from justification text before submission.
 // If the student added a comment after a warning, keep only the comment.
+// GPA/CGPA warnings are always kept (they are important for approval).
 function stripWarningsFromJustification(text) {
     if (!text) return '';
     // Split into numbered blocks: "1. ...\n\n2. ..." etc.
@@ -4547,6 +4524,12 @@ function stripWarningsFromJustification(text) {
     for (const block of blocks) {
         // Detect warning blocks: line starts with "N. [WARNING]"
         if (/^\d+\.\s*\[WARNING\]/i.test(block)) {
+            // Always keep GPA/CGPA warnings
+            if (/GPA|CGPA/i.test(block)) {
+                kept.push(block.replace(/^\d+\./, `${newNum}.`));
+                newNum++;
+                continue;
+            }
             // Check if student added a comment after "Details (optional):"
             const m = block.match(/Details\s*\(optional\):\s*([\s\S]*)/i);
             const comment = m ? m[1].trim() : '';

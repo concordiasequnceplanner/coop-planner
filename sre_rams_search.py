@@ -20,6 +20,7 @@ from pathlib import Path
 
 from flask import Blueprint, render_template, request, jsonify
 from openai import OpenAI
+import resend
 
 sre_bp = Blueprint(
     "sre_rams",
@@ -254,3 +255,34 @@ def rams_search_api():
             "or leave your email and we'll look into it."
         ),
     }), 200
+
+
+@sre_bp.route("/SRE/api/notify_search", methods=["POST"])
+def rams_notify_search():
+    """Send email notification when a search query is not found."""
+    data = request.get_json()
+    user_name = (data.get("name") or "").strip()
+    user_email = (data.get("email") or "").strip()
+    user_query = (data.get("query") or "").strip()
+
+    if not user_email or "@" not in user_email:
+        return jsonify({"error": "Invalid email"}), 400
+
+    try:
+        resend.api_key = os.environ.get("RESEND_API_KEY", "")
+        resend.Emails.send({
+            "from": "RAMS Search <onboarding@resend.dev>",
+            "to": ["sorin.voiculescu@concordia.ca"],
+            "subject": f"RAMS Search — query not found: {user_query[:80]}",
+            "html": (
+                f"<p>A user searched for a topic that was not found in the RAMS database.</p>"
+                f"<p><strong>Search query:</strong> {user_query}</p>"
+                f"<p><strong>Name:</strong> {user_name}</p>"
+                f"<p><strong>Email:</strong> {user_email}</p>"
+                f"<p>Please review and consider adding relevant papers or queries.</p>"
+            ),
+        })
+    except Exception as e:
+        print(f"[RAMS] Email notification error: {e}")
+
+    return jsonify({"status": "ok"}), 200

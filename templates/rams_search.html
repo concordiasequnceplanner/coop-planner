@@ -48,11 +48,11 @@
 <body>
     <div class="top-bar">
         <span class="sre-brand"><img src="/static/images/sre_logo.png" alt="SRE">Search supported by SRE Montreal Chapter 6</span>
-        <a class="home-btn" href="http://sremontreal.org/">🏠 HOME</a>
+        <a class="home-btn" href="/SRE_MONTREAL">🏠 HOME</a>
     </div>
     <div class="header">
         <h1>R.A.M.S. Symposium Paper Search</h1>
-        <p>Search through R.A.M.S. 2020–2025 symposium papers by topic</p>
+        <p>Search through R.A.M.S. 2020–2025 paper summaries by topic</p>
         <p style="font-size:0.8rem; margin-top:0.5rem; opacity:0.7;">Powered by AI analysis of paper summaries and conclusions</p>
     </div>
     <div class="container">
@@ -94,7 +94,8 @@
             });
             const data = await resp.json();
             if (data.status === 'blocked') {
-                resultsArea.innerHTML = `<div class="msg-blocked">${esc(data.message)}</div>`;
+                const msg = data.message.replace('sorin.voiculescu@concordia.ca', '<a href="mailto:sorin.voiculescu@concordia.ca" style="color:#742a2a;font-weight:600;">sorin.voiculescu@concordia.ca</a>');
+                resultsArea.innerHTML = `<div class="msg-blocked">${msg}</div>`;
             } else if (data.status === 'not_found') {
                 resultsArea.innerHTML = `<div class="msg-not-found"><p>${esc(data.message)}</p>
                     <div style="margin-top:0.75rem;">

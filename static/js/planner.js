@@ -933,7 +933,7 @@ document.addEventListener("DOMContentLoaded", () => {
             });
         })();
 
-        // LOW GPA next-3-terms visual warning
+        // LOW GPA next-2-terms visual warning (2 terms after current term)
         (function() {
             const progNamesDb  = window.APP_CONFIG?.programNamesDb || [];
             const selectedProg = document.getElementById('programSelect')?.value || '';
@@ -961,8 +961,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
             const reasonStr = reasons.join(' or ') + ` (< ${threshold}) in ${termLabel}`;
 
-            // find the low-GPA term's sort key
-            const lowZoneKey = `${last.year}-${{ Summer:1, Fall:2, Winter:3 }[last.season] || 0}`;
+            // Use current term as anchor (not the low-GPA term)
+            const currentZoneKey = `${currentAcaYearStr}-${{ Summer:1, Fall:2, Winter:3 }[currentSeason] || 0}`;
 
             // collect all grid zones sorted chronologically
             const allZones = Array.from(document.querySelectorAll('.drop-zone'))
@@ -974,13 +974,13 @@ document.addEventListener("DOMContentLoaded", () => {
                 .filter(Boolean)
                 .sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
 
-            // find the 3 zones immediately after the low-GPA term
-            const afterIdx = allZones.findIndex(z => z.key > lowZoneKey);
+            // find the 2 zones immediately after the current term
+            const afterIdx = allZones.findIndex(z => z.key > currentZoneKey);
             if (afterIdx === -1) return;
-            const nextThree = allZones.slice(afterIdx, afterIdx + 3);
+            const nextTwo = allZones.slice(afterIdx, afterIdx + 2);
 
-            // Show restriction in next 3 terms, even if WT is already placed
-            nextThree.forEach(({ zone }) => {
+            // Show restriction in next 2 terms after current
+            nextTwo.forEach(({ zone }) => {
                 const restContainer = document.getElementById(`restrictions_${zone.id}`);
                 if (!restContainer) return;
                 const div = document.createElement('div');

@@ -693,6 +693,11 @@ def logout():
 @app.route("/")
 @app.route("/planner")
 def planner_page():
+    # If accessed via sremontreal.org, redirect to SRE Montreal page
+    host = request.host.lower()
+    if 'sremontreal.org' in host and request.path == '/':
+        return redirect(url_for("sre_montreal_page"))
+
     if "student_id" not in session:
         return redirect(url_for("login"))
 

@@ -908,7 +908,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 });
             }
 
-            const FYI_MSG = 'might not be full time (< 12CR) except for international students';
+            const FYI_MSG = 'might not be full time (< 12CR accepted). Note: International students - check with ISO';
 
             allGridZones.forEach(z => {
                 const restContainer = document.getElementById(`restrictions_${z.id}`);
@@ -4536,6 +4536,35 @@ function getJustificationText() {
     return String(document.getElementById('justificationText')?.value || '').trim();
 }
 
+// Strip warning blocks from justification text before submission.
+// If the student added a comment after a warning, keep only the comment.
+function stripWarningsFromJustification(text) {
+    if (!text) return '';
+    // Split into numbered blocks: "1. ...\n\n2. ..." etc.
+    const blocks = text.split(/\n{2,}/).filter(b => b.trim());
+    const kept = [];
+    let newNum = 1;
+    for (const block of blocks) {
+        // Detect warning blocks: line starts with "N. [WARNING]"
+        if (/^\d+\.\s*\[WARNING\]/i.test(block)) {
+            // Check if student added a comment after "Details (optional):"
+            const m = block.match(/Details\s*\(optional\):\s*([\s\S]*)/i);
+            const comment = m ? m[1].trim() : '';
+            if (comment) {
+                // Keep only the student's comment, re-numbered
+                kept.push(`${newNum}. [Student comment]: ${comment}`);
+                newNum++;
+            }
+            // else: no comment → drop the whole block
+            continue;
+        }
+        // Re-number non-warning blocks
+        kept.push(block.replace(/^\d+\./, `${newNum}.`));
+        newNum++;
+    }
+    return kept.join('\n\n').trim();
+}
+
 function currentIssues() {
     return Array.isArray(window.latestIssues) ? window.latestIssues : [];
 }
@@ -4972,12 +5001,14 @@ window.submitForApproval = async function() {
     showSpinner('Submitting for approval…');
     try {
         const plan = collectPlanSnapshot();
+        // Strip warning lines from justification (keep student comments if any)
+        const cleanedJust = stripWarningsFromJustification(just);
         const payload = {
             status: "PENDING_APPROVAL",
             plan,
             issues,
             reason_code: reason,
-            justification: just,
+            justification: cleanedJust,
             term_summary: buildEmailTermSummary()
         };
         const res = await apiJson('/api/sequence/save', 'POST', payload);
@@ -4986,7 +5017,7 @@ window.submitForApproval = async function() {
 
         // Backend now handles adding justification to public notes before sending email
         // Update the UI to show the justification was added
-        if (just) {
+        if (cleanedJust) {
             try {
                 const now = new Date();
                 const pad = n => String(n).padStart(2, '0');
@@ -4994,11 +5025,11 @@ window.submitForApproval = async function() {
                 const name = window.APP_CONFIG?.studentName || window.APP_CONFIG?.viewingSid || '';
                 
                 // Format justification based on reason code
-                let formattedJust = just;
+                let formattedJust = cleanedJust;
                 if (reason === 4 || reason === 5 || reason === 6 || reason === 10) {
-                    formattedJust = `DETAILS:\n${just}`;
+                    formattedJust = `DETAILS:\n${cleanedJust}`;
                 } else {
-                    formattedJust = `Justification:\n${just}`;
+                    formattedJust = `Justification:\n${cleanedJust}`;
                 }
                 
                 const existing = String(document.getElementById('publicNotes')?.value || '').trim();

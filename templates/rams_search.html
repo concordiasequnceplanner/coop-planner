@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RAMS Paper Search — SRE Montreal</title>
+    <title>R.A.M.S. Paper Search — SRE Montreal</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7fa; color: #333; min-height: 100vh; }
@@ -51,8 +51,8 @@
         <a class="home-btn" href="http://sremontreal.org/">🏠 HOME</a>
     </div>
     <div class="header">
-        <h1>RAMS Conference Paper Search</h1>
-        <p>Search through RAMS 2020–2025 conference papers by topic</p>
+        <h1>R.A.M.S. Symposium Paper Search</h1>
+        <p>Search through R.A.M.S. 2020–2025 symposium papers by topic</p>
         <p style="font-size:0.8rem; margin-top:0.5rem; opacity:0.7;">Powered by AI analysis of paper summaries and conclusions</p>
     </div>
     <div class="container">
@@ -97,7 +97,9 @@
                 resultsArea.innerHTML = `<div class="msg-blocked">${esc(data.message)}</div>`;
             } else if (data.status === 'not_found') {
                 resultsArea.innerHTML = `<div class="msg-not-found"><p>${esc(data.message)}</p>
-                    <div><input type="email" id="emailInput" placeholder="your@email.com">
+                    <div style="margin-top:0.75rem;">
+                    <input type="text" id="nameInput" placeholder="Your name" style="padding:0.5rem 0.75rem;border:2px solid #e2e8f0;border-radius:6px;font-size:0.95rem;width:280px;margin-bottom:0.5rem;display:block;">
+                    <input type="email" id="emailInput" placeholder="your@email.com" style="padding:0.5rem 0.75rem;border:2px solid #e2e8f0;border-radius:6px;font-size:0.95rem;width:280px;">
                     <button onclick="submitEmail()">Submit</button></div>
                     <div id="emailStatus"></div></div>`;
             } else if (data.status === 'found') {
@@ -149,10 +151,24 @@
             ttl?.classList.add('expanded');
         }
     }
-    function submitEmail() {
+    async function submitEmail() {
+        const name = document.getElementById('nameInput')?.value.trim();
         const email = document.getElementById('emailInput')?.value.trim();
+        if (!name) { document.getElementById('emailStatus').innerHTML='<p style="color:#e53e3e;">Please enter your name.</p>'; return; }
         if (!email || !email.includes('@')) { document.getElementById('emailStatus').innerHTML='<p style="color:#e53e3e;">Please enter a valid email.</p>'; return; }
-        document.getElementById('emailStatus').innerHTML='<p class="email-sent">Thank you! We\'ll send results to '+esc(email)+' when ready.</p>';
+        try {
+            const resp = await fetch('/SRE/api/notify_search', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({name: name, email: email, query: searchInput.value.trim()}),
+            });
+            if (resp.ok) {
+                document.getElementById('emailStatus').innerHTML='<p class="email-sent">Thank you! We\'ll look into your query and get back to you.</p>';
+            } else {
+                document.getElementById('emailStatus').innerHTML='<p class="email-sent">Thank you! We\'ll look into it.</p>';
+            }
+        } catch(e) {
+            document.getElementById('emailStatus').innerHTML='<p class="email-sent">Thank you! We\'ll look into it.</p>';
+        }
     }
     </script>
 </body>

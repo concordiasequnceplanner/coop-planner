@@ -2270,7 +2270,9 @@ window.processApproval = async function(action) {
             alert(`${action} successfully.`);
             sessionStorage.removeItem('_pendingLoad');
             sessionStorage.removeItem('_pendingSeqId');
-            // Approve/rework buttons remain visible for power users
+            // Reset to admin's own view and reload
+            try { await apiJson('/api/admin/reset_view', 'POST'); } catch(_) {}
+            window.location.href = '/planner';
         } else {
             hideSpinner();
             alert(`Failed: ${res.error || 'Unknown error'}`);

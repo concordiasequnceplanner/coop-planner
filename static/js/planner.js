@@ -4404,6 +4404,27 @@ window.validateGrid = function() {
     // Apply all badges
     boxIssues.forEach((issues, box) => addWarningBadge(box, issues));
 
+    // List OTHER (unknown) courses placed on the grid
+    (function() {
+        const otherCourses = [];
+        document.querySelectorAll('.drop-zone .course-box').forEach(box => {
+            const zone = box.parentElement;
+            if (!zone || zone.id === 'zone_Unallocated') return;
+            if (box.classList.contains('wt')) return;
+            const cid = (box.dataset.courseId || '').toUpperCase();
+            const db = lookupCourse(cid);
+            const coreTE = db ? String(db['CORE_TE'] || '').trim().toUpperCase() : '';
+            // OTHER = unknown course OR empty CORE_TE OR explicitly 'OTHER'
+            if (!db || db._unknown || !coreTE || coreTE === 'OTHER') {
+                const displayId = box.dataset.displayId || cid;
+                if (displayId && !otherCourses.includes(displayId)) otherCourses.push(displayId);
+            }
+        });
+        if (otherCourses.length) {
+            allIssues.push({ courseId: '', msg: `[OTHER] course(s) taken: ${otherCourses.join(', ')}`, sev: 'warning' });
+        }
+    })();
+
     // Update error panel
     const epBox   = document.getElementById('errPanel');
     const title   = document.getElementById('errPanelTitle');
@@ -4517,40 +4538,10 @@ function getJustificationText() {
     return String(document.getElementById('justificationText')?.value || '').trim();
 }
 
-// Strip warning blocks from justification text before submission.
-// If the student added a comment after a warning, keep only the comment.
-// GPA/CGPA warnings are always kept (they are important for approval).
+// Clean justification text before submission.
+// Warnings are no longer included in the textarea, so this is a simple passthrough.
 function stripWarningsFromJustification(text) {
-    if (!text) return '';
-    // Split into numbered blocks: "1. ...\n\n2. ..." etc.
-    const blocks = text.split(/\n{2,}/).filter(b => b.trim());
-    const kept = [];
-    let newNum = 1;
-    for (const block of blocks) {
-        // Detect warning blocks: line starts with "N. [WARNING]"
-        if (/^\d+\.\s*\[WARNING\]/i.test(block)) {
-            // Always keep GPA/CGPA warnings
-            if (/GPA|CGPA/i.test(block)) {
-                kept.push(block.replace(/^\d+\./, `${newNum}.`));
-                newNum++;
-                continue;
-            }
-            // Check if student added a comment after "Details (optional):"
-            const m = block.match(/Details\s*\(optional\):\s*([\s\S]*)/i);
-            const comment = m ? m[1].trim() : '';
-            if (comment) {
-                // Keep only the student's comment, re-numbered
-                kept.push(`${newNum}. [Student comment]: ${comment}`);
-                newNum++;
-            }
-            // else: no comment → drop the whole block
-            continue;
-        }
-        // Re-number non-warning blocks
-        kept.push(block.replace(/^\d+\./, `${newNum}.`));
-        newNum++;
-    }
-    return kept.join('\n\n').trim();
+    return (text || '').trim();
 }
 
 function currentIssues() {

@@ -2,6 +2,7 @@ import os
 import re
 import pandas as pd
 import resend
+from sqlalchemy import text
 
 
 
@@ -343,8 +344,50 @@ def send_otp_email(recipient, otp):
 # =========================================================
 # 4. FUNCȚIE CALCUL ISTORIC GPA
 # =========================================================
-def calculate_cgpa(ts_df):
+def calculate_cgpa(ts_df, student_id=None, db_engine=None):
+    """Read CGPA data from CGPA_Timeline table (pre-calculated by 0_master).
+       Falls back to local calculation only if DB read fails."""
     cgpa_history = []
+
+    # --- Try DB first ---
+    if student_id and db_engine:
+        try:
+            with db_engine.connect() as conn:
+                rows = conn.execute(
+                    text("SELECT `Academic Term`, CGPA, CGPA_Total_Credits, GPA_X_CR, GPA_X_CR_Actual_Credits "
+                         "FROM `CGPA_Timeline` WHERE `Student ID` = :sid ORDER BY `Academic Term`"),
+                    {"sid": student_id}
+                ).fetchall()
+            for row in rows:
+                term_str = str(row[0])
+                cgpa = float(row[1]) if row[1] is not None else 0.0
+                total_cr = float(row[2]) if row[2] is not None else 0.0
+                gpa_xcr = float(row[3]) if row[3] is not None else -1
+                xcr_credits = float(row[4]) if row[4] is not None else 0.0
+
+                y, s = parse_term(term_str)
+                if y == "UNKNOWN":
+                    continue
+
+                # GPA_X_CR = -1 means not enough credits yet
+                if gpa_xcr < 0:
+                    info_html = f"GPA past {xcr_credits}cr: <b>N/A</b><br>(CGPA {cgpa} / {total_cr}cr total)"
+                else:
+                    is_low = gpa_xcr < 2.5 or cgpa < 2.5
+                    if is_low:
+                        info_html = (f"<span style='font-size:14px;font-weight:bold;color:#c0392b;'>"
+                                     f"GPA past {xcr_credits}cr: {gpa_xcr}<br>"
+                                     f"(CGPA {cgpa} / {total_cr}cr total)</span>")
+                    else:
+                        info_html = f"GPA past {xcr_credits}cr: <b>{gpa_xcr}</b><br>(CGPA {cgpa} / {total_cr}cr total)"
+                cgpa_history.append({"year": y, "season": s, "info": info_html})
+
+            if cgpa_history:
+                return cgpa_history
+        except Exception as e:
+            print(f"[CGPA] DB read failed, falling back to local calc: {e}")
+
+    # --- Fallback: local calculation from transcript dataframe ---
     grade_pts = {'A+':4.3, 'A':4.0, 'A-':3.7, 'B+':3.3, 'B':3.0, 'B-':2.7, 'C+':2.3, 'C':2.0, 'C-':1.7, 'D+':1.3, 'D':1.0, 'D-':0.7, 'F':0, 'FNS':0}
     
     def get_sort_val(t_str):
@@ -354,7 +397,6 @@ def calculate_cgpa(ts_df):
         return f"{y_val}-{s_num}"
         
     if not ts_df.empty and 'Academic Term' in ts_df.columns:
-        # Filter: exclude NULL grades, DISC, and courses without valid grades
         valid_ts = ts_df[
             ts_df['Academic Term'].notna() & 
             ts_df['GRADE'].notna() & 
@@ -364,19 +406,13 @@ def calculate_cgpa(ts_df):
         
         valid_ts['sort_col'] = valid_ts['Academic Term'].apply(get_sort_val)
         valid_ts = valid_ts.sort_values('sort_col')
-        
-        # Deduplicate: keep only last occurrence of each course
         valid_ts = valid_ts.drop_duplicates(subset=['COURSE'], keep='last')
-        
-        # Re-sort after deduplication
         valid_ts = valid_ts.sort_values('sort_col')
         
         unique_terms = valid_ts['Academic Term'].unique()
         for term in unique_terms:
-            # All courses up to and including this term
             subset = valid_ts[valid_ts['sort_col'] <= get_sort_val(term)]
             
-            # Calculate CGPA (all courses up to this term)
             total_cr = 0
             total_pts = 0
             for _, row in subset.iterrows():
@@ -388,7 +424,6 @@ def calculate_cgpa(ts_df):
                     
             cgpa = round(total_pts / total_cr, 2) if total_cr > 0 else 0.0
             
-            # Calculate GPA for last X credits (up to 24.5cr, going backwards)
             recent_cr = 0
             recent_pts = 0
             for _, row in subset.iloc[::-1].iterrows():
@@ -408,7 +443,6 @@ def calculate_cgpa(ts_df):
             
             y, s = parse_term(term)
             if y != "UNKNOWN":
-                # Check if GPA or CGPA is below threshold (2.5)
                 is_low = recent_gpa < 2.5 or cgpa < 2.5
                 if is_low:
                     info_html = f"<span style='font-size:14px;font-weight:bold;color:#c0392b;'>GPA past {recent_cr}cr: {recent_gpa}<br>(CGPA {cgpa} / {total_cr}cr total)</span>"

@@ -809,7 +809,7 @@ def planner_page():
 
         # utils.py does transcript parsing + program detection
         is_grad, student_courses, detected_program, coop_terms = process_student_data(ts_df, coop_df)
-        cgpa_history = calculate_cgpa(ts_df)
+        cgpa_history = calculate_cgpa(ts_df, student_id=viewing_sid or cur_sid, db_engine=engine)
         
         # Get DISCIPLINE1_DESCR from latest term (first when ordered desc)
         discipline_descr = ""
@@ -2123,9 +2123,9 @@ def api_admin_approve():
     if status not in (STATUS_APPROVED, STATUS_REWORK):
         return jsonify({"ok": False, "error": "Invalid status"}), 400
     
-    # Check if reason_code is selected (mandatory only for APPROVE, not for REWORK)
-    if status == STATUS_APPROVED and reason_code == 0:
-        return jsonify({"ok": False, "error": "Submission reason not selected. Please select a reason before approving."}), 400
+    # Check if reason_code is selected (mandatory for both APPROVE and REWORK)
+    if reason_code == 0:
+        return jsonify({"ok": False, "error": "Submission reason not selected. Please select a reason before proceeding."}), 400
 
     try:
         # Frontend already adds the auto-comment, so we just use the received comments

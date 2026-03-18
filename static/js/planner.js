@@ -2061,6 +2061,13 @@ window.processApproval = async function(action) {
     const conf = confirm(`Are you sure you want to ${action} this sequence for ${viewingSid}?`);
     if (!conf) return;
 
+    // Client-side reason_code validation (mandatory for both APPROVED and REWORK)
+    const reasonCode = getSelectedReasonCode();
+    if (!reasonCode) {
+        alert('Submission reason not selected. Please select a reason before proceeding.');
+        return;
+    }
+
     window._approvalInProgress = true;
     showSpinner(`${action === 'APPROVED' ? 'Approving' : 'Sending rework'}…`);
 
@@ -2229,25 +2236,26 @@ window.processApproval = async function(action) {
             justification: document.getElementById('justificationText')?.value || '',
             validation_errors: valErrors,
             course_deviations: courseDeviations,
-            reason_code: getSelectedReasonCode(),
+            reason_code: reasonCode,
             plan: collectPlanSnapshot()  // Include plan data for approve handler
         };
         
-        // Auto-prepend approval comment to public notes (only on APPROVED)
-        if (action === 'APPROVED') {
-            try {
-                const now = new Date();
-                const pad = n => String(n).padStart(2, '0');
-                const dt = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
-                const email = window.APP_CONFIG?.adminEmail || window.APP_CONFIG?.studentId || '';
-                const existing = String(document.getElementById('publicNotes')?.value || '').trim();
-                const newComment = `[${dt}, ${email}]: Sequence APPROVED${existing ? '\n\n' + existing : ''}`;
-                await apiJson('/api/comments/append', 'POST', { text: newComment });
-                const pubEl = document.getElementById('publicNotes');
-                if (pubEl) pubEl.value = newComment;
-            } catch (ne) {
-                console.warn('Could not append approval comment to public notes:', ne.message);
-            }
+        // Auto-prepend approval/rework comment to public notes
+        try {
+            const now = new Date();
+            const pad = n => String(n).padStart(2, '0');
+            const dt = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+            const email = window.APP_CONFIG?.adminEmail || window.APP_CONFIG?.studentId || '';
+            const actionLabel = action === 'APPROVED' ? 'Sequence APPROVED' : 'Sequence REWORK';
+            const existing = String(document.getElementById('publicNotes')?.value || '').trim();
+            const newComment = `[${dt}, ${email}]: ${actionLabel}${existing ? '\n\n' + existing : ''}`;
+            await apiJson('/api/comments/append', 'POST', { text: newComment });
+            const pubEl = document.getElementById('publicNotes');
+            if (pubEl) pubEl.value = newComment;
+            // Update payload with the new public_comments
+            payload.public_comments = newComment;
+        } catch (ne) {
+            console.warn('Could not append approval comment to public notes:', ne.message);
         }
         
         const res = await apiJson('/api/admin/approve', 'POST', payload);

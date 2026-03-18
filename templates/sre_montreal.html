@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SRE Montreal — Society of Reliability Engineers</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7fa; color: #333; min-height: 100vh; }
+        .hero { background: linear-gradient(135deg, #1a5e2a 0%, #2d8a4e 50%, #1a365d 100%); color: white; padding: 3rem 2rem; text-align: center; }
+        .hero img { width: 160px; height: 160px; border-radius: 50%; background: white; padding: 8px; margin-bottom: 1.5rem; }
+        .hero h1 { font-size: 2.2rem; margin-bottom: 0.3rem; letter-spacing: 1px; }
+        .hero h2 { font-size: 1.1rem; font-weight: 400; opacity: 0.9; }
+        .container { max-width: 800px; margin: 2.5rem auto; padding: 0 1.5rem; }
+        .goals { background: white; border-radius: 12px; padding: 2rem; box-shadow: 0 2px 12px rgba(0,0,0,0.08); margin-bottom: 2rem; }
+        .goals h3 { font-size: 1.3rem; color: #1a5e2a; margin-bottom: 1.2rem; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.5rem; }
+        .goals ul { list-style: none; padding: 0; }
+        .goals li { padding: 0.7rem 0; padding-left: 1.8rem; position: relative; font-size: 1.02rem; line-height: 1.5; border-bottom: 1px solid #f0f0f0; }
+        .goals li:last-child { border-bottom: none; }
+        .goals li::before { content: '✦'; position: absolute; left: 0; color: #1a5e2a; font-size: 0.9rem; }
+        .contact { background: white; border-radius: 12px; padding: 2rem; box-shadow: 0 2px 12px rgba(0,0,0,0.08); text-align: center; }
+        .contact h3 { font-size: 1.2rem; color: #1a5e2a; margin-bottom: 1rem; }
+        .contact a { color: #2d5a87; text-decoration: none; font-weight: 600; }
+        .contact a:hover { text-decoration: underline; }
+        .contact .email { font-size: 1.05rem; margin-bottom: 1rem; }
+        .contact .linkedin { display: inline-block; margin-top: 0.5rem; padding: 0.6rem 1.5rem; background: #0077b5; color: white; border-radius: 8px; font-size: 0.95rem; }
+        .contact .linkedin:hover { background: #005f8d; color: white; text-decoration: none; }
+        .footer { text-align: center; padding: 2rem; color: #999; font-size: 0.85rem; }
+        .ticker { background: #1a5e2a; color: white; overflow: hidden; white-space: nowrap; padding: 0.6rem 0; font-size: 1rem; font-weight: 600; letter-spacing: 0.5px; }
+        .ticker span { display: inline-block; animation: scroll-left 18s linear infinite; padding-left: 100%; }
+        @keyframes scroll-left { 0% { transform: translateX(0); } 100% { transform: translateX(-100%); } }
+    </style>
+</head>
+<body>
+    <a href="/SRE/RAMS_summary_search" style="text-decoration:none;display:block;"><div class="ticker"><span>🎉 Exciting news to be announced soon — stay tuned! &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 🎉 Exciting news to be announced soon — stay tuned!</span></div></a>
+    <div class="hero">
+        <img src="/static/images/sre_logo.png" alt="SRE Montreal Logo">
+        <h1>SRE Montreal</h1>
+        <h2>Society of Reliability Engineers — Montreal Chapter</h2>
+    </div>
+    <div class="container">
+        <div class="goals">
+            <h3>Our Goal</h3>
+            <ul>
+                <li>Bring together RAMS experts from the Montreal area</li>
+                <li>Share expertise across domains</li>
+                <li>Promote RAMS in the Montreal region</li>
+                <li>Network Montreal practitioners with world-wide experts</li>
+                <li>Produce and disseminate high quality RAMS education, training and research</li>
+                <li>Increase strategic and corporate partnerships (external, academic)</li>
+            </ul>
+        </div>
+        <div class="contact">
+            <h3>Get in Touch</h3>
+            <div class="email">Contact: <a href="mailto:sorin.voiculescu@concordia.ca">sorin.voiculescu@concordia.ca</a></div>
+            <div>Follow <strong>#sremontreal</strong> for updates</div>
+            <a class="linkedin" href="https://lnkd.in/d4FUvzU" target="_blank" rel="noopener">Follow us on LinkedIn</a>
+        </div>
+    </div>
+    <div class="footer">&copy; SRE Montreal</div>
+</body>
+</html>

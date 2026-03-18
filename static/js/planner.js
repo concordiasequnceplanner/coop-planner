@@ -951,8 +951,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
             const gpaThreshold = _isGradProg2 ? 3.3 : threshold + 0.2; // GRAD: 3.3, UGRAD: 2.7
             const last      = history[history.length - 1];
-            const recentM   = String(last.info || '').match(/<b>([\d.]+)<\/b>/);
-            const cgpaM     = String(last.info || '').match(/CGPA\s+([\d.]+)/);
+            const infoStr   = String(last.info || '');
+            // Extract GPA past Xcr value — handles both <b>val</b> and plain text formats
+            const recentM   = infoStr.match(/<b>([\d.]+)<\/b>/) || infoStr.match(/GPA past [\d.]+cr:\s*([\d.]+)/);
+            const cgpaM     = infoStr.match(/CGPA\s+([\d.]+)/);
             const recentGpa = recentM ? parseFloat(recentM[1]) : null;
             const cgpa      = cgpaM   ? parseFloat(cgpaM[1])   : null;
             const termLabel = `${last.year} ${last.season}`;
@@ -4116,7 +4118,7 @@ window.validateGrid = function() {
         // Colour every past-term cgpa-info div based on its own GPA values
         document.querySelectorAll('.cgpa-info').forEach(div => {
             const info = div.innerHTML || '';
-            const recentM = info.match(/<b>([\d.]+)<\/b>/);
+            const recentM = info.match(/<b>([\d.]+)<\/b>/) || info.match(/GPA past [\d.]+cr:\s*([\d.]+)/);
             const cgpaM   = info.match(/CGPA\s+([\d.]+)/);
             const rv = recentM ? parseFloat(recentM[1]) : null;
             const cv = cgpaM   ? parseFloat(cgpaM[1])   : null;
@@ -4147,9 +4149,10 @@ window.validateGrid = function() {
         const cgpaLimit = _isGradGpa ? 3.3 : threshold;
 
         const last = history[history.length - 1];
-        const recentMatch = String(last.info || '').match(/<b>([\d.]+)<\/b>/);
-        const cgpaMatch   = String(last.info || '').match(/CGPA\s+([\d.]+)/);
-        const isNA        = String(last.info || '').includes('N/A');
+        const _infoStr2 = String(last.info || '');
+        const recentMatch = _infoStr2.match(/<b>([\d.]+)<\/b>/) || _infoStr2.match(/GPA past [\d.]+cr:\s*([\d.]+)/);
+        const cgpaMatch   = _infoStr2.match(/CGPA\s+([\d.]+)/);
+        const isNA        = _infoStr2.includes('N/A');
         const recentGpa   = recentMatch ? parseFloat(recentMatch[1]) : null;
         const cgpa        = cgpaMatch   ? parseFloat(cgpaMatch[1])   : null;
         const termLabel   = `${last.year} ${last.season}`;

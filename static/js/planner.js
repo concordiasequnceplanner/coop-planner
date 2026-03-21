@@ -1507,6 +1507,11 @@ document.addEventListener("DOMContentLoaded", () => {
         return results;
     };
 
+    // Re-run updateCredits if an initial plan was loaded before checkRestrictions was defined
+    if (window.APP_CONFIG?.initialPlan) {
+        window.updateCredits();
+    }
+
     // =========================================================
     // CREDIT SUMMARY (before submit)
     // =========================================================
@@ -4970,12 +4975,6 @@ window.submitForApproval = async function() {
     window._submitInProgress = true;
     const btnEl = document.getElementById('btnSubmitApproval');
     if (btnEl) btnEl.disabled = true;
-
-    if (!confirm('Are you sure you want to submit for approval?')) {
-        window._submitInProgress = false;
-        if (btnEl) btnEl.disabled = false;
-        return;
-    }
 
     showSpinner('Submitting for approval…');
     try {

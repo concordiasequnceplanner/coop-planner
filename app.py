@@ -2222,7 +2222,7 @@ def api_admin_approve():
                     "json_data": json.dumps(plan_data) if plan_data else None,
                     "term_json": term_summary_json,
                     "who": power_user_email,
-                    "reason": reason_code if reason_code else None,
+                    "reason": reason_code if reason_code is not None else None,
                     "comments": justification
                 }
             )

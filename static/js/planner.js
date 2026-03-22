@@ -2063,25 +2063,31 @@ window.sendEmailToStudent = function() {
 window.processApproval = async function(action) {
     if (!window.APP_CONFIG?.isPowerUser) { alert('Unauthorized'); return; }
     if (window._approvalInProgress) return; // prevent double-click
+    window._approvalInProgress = true; // lock immediately before any confirm dialogs
+
     const viewingSid = window.APP_CONFIG.viewingSid;
     const seqId2 = sessionStorage.getItem('_pendingSeqId') || (window.APP_CONFIG.initialPlanId ? String(window.APP_CONFIG.initialPlanId).replace(/"/g,'') : '');
     if (!seqId2) {
         const proceed = confirm('No sequence loaded to approve.\n\nPress OK to proceed anyway, or Cancel to abort.');
-        if (!proceed) return;
+        if (!proceed) { window._approvalInProgress = false; return; }
     }
 
     const conf = confirm(`Are you sure you want to ${action} this sequence for ${viewingSid}?`);
-    if (!conf) return;
+    if (!conf) { window._approvalInProgress = false; return; }
 
     // Client-side reason_code validation (mandatory for both APPROVED and REWORK)
     const reasonCode = getSelectedReasonCode();
     if (reasonCode === null) {
+        window._approvalInProgress = false;
         alert('Submission reason not selected. Please select a reason before proceeding.');
         return;
     }
-
-    window._approvalInProgress = true;
     showSpinner(`${action === 'APPROVED' ? 'Approving' : 'Sending rework'}…`);
+    // Disable buttons to prevent any further clicks
+    const btnApprove = document.getElementById('btnApprove');
+    const btnRework = document.getElementById('btnRework');
+    if (btnApprove) btnApprove.disabled = true;
+    if (btnRework) btnRework.disabled = true;
 
     const termSummary = buildEmailTermSummary();
 
@@ -2289,6 +2295,10 @@ window.processApproval = async function(action) {
         alert(`Error: ${e.message}`);
     } finally {
         window._approvalInProgress = false;
+        const btnApprove = document.getElementById('btnApprove');
+        const btnRework = document.getElementById('btnRework');
+        if (btnApprove) btnApprove.disabled = false;
+        if (btnRework) btnRework.disabled = false;
     }
 };
 

@@ -377,6 +377,7 @@ def render_sequence_email(mode, student_email, student_name, target_sid, program
     if mode == "PENDING":
         # Map reason codes to text
         reason_text = {
+            0: "0) I found an internship on my own (I have one in hand)",
             1: "1) I have not yet started / I was asked by COOP AD but there are no changes",
             2: "2) I want to reduce summer load",
             3: "3) I want to reduce overall load",
@@ -394,7 +395,7 @@ def render_sequence_email(mode, student_email, student_name, target_sid, program
                 <p style="margin:0;"><b>Submission Reason:</b></p>
                 <p style="margin:5px 0 0 0;color:#856404;">{escape(reason_text)}</p>
             </div>
-        """ if reason_code > 0 else ""
+        """ if reason_code >= 0 and reason_text != "Not specified" else ""
         
         return f"""
         <div style="font-family:Arial,sans-serif;color:#333;max-width:750px;margin:0 auto;border:1px solid #e0e0e0;padding:20px;border-radius:8px;">
@@ -1125,7 +1126,7 @@ def api_sequence_save():
                             "prog": program,
                             "status": "ERROR_RECOVERY",
                             "comments": str(data.get("justification") or ""),
-                            "reason": int(data.get("reason_code") or 0),
+                            "reason": int(data.get("reason_code") if data.get("reason_code") is not None else -1),
                             "json_data": json.dumps(data)
                         }
                     )
@@ -1172,7 +1173,7 @@ def api_sequence_save():
     plan = data.get("plan") or {}
     issues = data.get("issues") or []
     term_summary = data.get("term_summary") or []
-    reason_code = int(data.get("reason_code") or data.get("cos_reason") or 0)
+    reason_code = int(data.get("reason_code") if data.get("reason_code") is not None else (data.get("cos_reason") if data.get("cos_reason") is not None else -1))
     justification = str(data.get("justification") or "")
     
     # Get status early so we can use it for validation
@@ -2106,7 +2107,7 @@ def api_admin_approve():
     wt_summary = data.get("wt_summary") or {}
     term_summary = data.get("term_summary") or []
     justification = str(data.get("justification", "") or "")
-    reason_code = int(data.get("reason_code") or 0)
+    reason_code = int(data.get("reason_code") if data.get("reason_code") is not None else -1)
     
     # Get program from database (more reliable than frontend data)
     program_from_db = program  # Default to what was provided
@@ -2133,7 +2134,7 @@ def api_admin_approve():
         return jsonify({"ok": False, "error": "Invalid status"}), 400
     
     # Check if reason_code is selected (mandatory for both APPROVE and REWORK)
-    if reason_code == 0:
+    if reason_code < 0:
         return jsonify({"ok": False, "error": "Submission reason not selected. Please select a reason before proceeding."}), 400
 
     try:

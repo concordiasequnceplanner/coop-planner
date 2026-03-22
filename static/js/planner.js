@@ -1638,6 +1638,7 @@ document.addEventListener("DOMContentLoaded", () => {
         // Get selected reason code
         const reasonCode = getSelectedReasonCode();
         const reasonLabels = {
+            0: "I found an internship on my own (I have one in hand)",
             1: "I have not yet started / I was asked by COOP AD but there are no changes",
             2: "I want to reduce summer load",
             3: "I want to reduce overall load",
@@ -1650,7 +1651,7 @@ document.addEventListener("DOMContentLoaded", () => {
             10: "Other personal reasons: see my comments"
         };
 
-        if (issues.length === 0 && !reasonCode) {
+        if (issues.length === 0 && reasonCode === null) {
             if (justText.value.includes('ERRORS & WARNINGS:') || justText.value.includes('ISSUES & JUSTIFICATIONS:') || justText.value.includes('Submission Reason:')) {
                 justText.value = '';
             }
@@ -1672,7 +1673,7 @@ document.addEventListener("DOMContentLoaded", () => {
         let itemNumber = 1;
 
         // Add reason code as first item if selected
-        if (reasonCode && reasonLabels[reasonCode]) {
+        if (reasonCode !== null && reasonLabels[reasonCode] !== undefined) {
             const reasonText = `Submission Reason: ${reasonCode}) ${reasonLabels[reasonCode]}`;
             const savedAnswer = answersMap[reasonText] || '';
             const labelText = (reasonCode === 4 || reasonCode === 5 || reasonCode === 6 || reasonCode === 10) ? 'DETAILS' : 'DETAILS (optional)';
@@ -2074,7 +2075,7 @@ window.processApproval = async function(action) {
 
     // Client-side reason_code validation (mandatory for both APPROVED and REWORK)
     const reasonCode = getSelectedReasonCode();
-    if (!reasonCode) {
+    if (reasonCode === null) {
         alert('Submission reason not selected. Please select a reason before proceeding.');
         return;
     }
@@ -4955,8 +4956,8 @@ window.submitForApproval = async function() {
     const issues = currentIssues();
     const hasErrors = issues && issues.some(i => i.sev === 'error');
 
-    if (!reason) {
-        alert('Please select a submission reason (1–9).');
+    if (reason === null) {
+        alert('Please select a submission reason (0–10).');
         return;
     }
     if ((reason === 9 || hasErrors) && !just) {

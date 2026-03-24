@@ -920,6 +920,17 @@ def admin_checks_page():
     except Exception as e:
         print(f"❌ Error loading ADMIN_checks: {e}")
     
+    # Ensure Check 8 (WT Movement Analysis) exists even if not in DB
+    check_ids = {c["id"] for c in checks}
+    if 8 not in check_ids:
+        checks.append({
+            "id": 8,
+            "what": "WT Movement Analysis (Approved Sequences)",
+            "msg": "",
+            "short": "",
+            "disabled": False
+        })
+    
     return render_template("admin_checks.html", checks=checks)
 
 
@@ -1954,6 +1965,302 @@ def api_admin_run_check():
         return jsonify([]), 500  # Return empty array on error
 
 
+@app.route("/api/admin_check_wt_movements", methods=["POST"])
+@limiter.limit("100 per 15 minutes")
+def api_admin_check_wt_movements():
+    """Check #8: WT movement analysis across approved sequences within a date range."""
+    if not _require_login():
+        return jsonify({"ok": False, "error": "Unauthorized"}), 401
+    if not _is_power_user():
+        return jsonify({"ok": False, "error": "Unauthorized"}), 403
+
+    try:
+        data = request.get_json(silent=True) or {}
+        date_from = data.get("date_from")  # "YYYY-MM-DD" or None
+        date_to = data.get("date_to")      # "YYYY-MM-DD" or None
+
+        with engine.connect() as conn:
+            # Build date filter
+            where_clauses = ["status = 'APPROVED'", "student_id NOT LIKE '8%'", "student_id NOT LIKE '9%'"]
+            params = {}
+            if date_from:
+                where_clauses.append("Date_Saved >= :dfrom")
+                params["dfrom"] = date_from
+            if date_to:
+                where_clauses.append("Date_Saved <= :dto")
+                params["dto"] = date_to + " 23:59:59"
+
+            where_sql = " AND ".join(where_clauses)
+
+            # Get ALL approved sequences in range (including multiple per student)
+            rows = conn.execute(
+                text(f"""
+                    SELECT student_id, Date_Saved, JSON_Data, Sequence_Name, Original_WT_JSON
+                    FROM Saved_Sequences
+                    WHERE {where_sql}
+                    ORDER BY Date_Saved DESC
+                """),
+                params
+            ).fetchall()
+
+            if not rows:
+                return jsonify({"ok": True, "total_approved": 0, "wt_movements": {"WT1": [], "WT2": [], "WT3": []}})
+
+            # Collect all unique student IDs
+            student_ids = list(set(str(r[0]).strip() for r in rows))
+
+            # Build original WT map from Original_WT_JSON (saved at approval time)
+            # For rows without it, fall back to coop table
+            original_wt = {}  # sid -> { "WT1": "2025-2026 Fall", ... }
+            sids_needing_coop = []
+
+            # Deduplicate: keep only the most recent approval per student
+            seen_sids = set()
+            unique_rows = []
+            for row in rows:
+                sid = str(row[0]).strip()
+                if sid in seen_sids:
+                    continue
+                seen_sids.add(sid)
+                unique_rows.append(row)
+                # Try Original_WT_JSON first (column index 4)
+                owt_raw = _safe_json_load(row[4])
+                if owt_raw and isinstance(owt_raw, dict):
+                    original_wt[sid] = owt_raw
+                else:
+                    sids_needing_coop.append(sid)
+
+            # Fallback: query coop for students without Original_WT_JSON
+            if sids_needing_coop:
+                placeholders_coop = ','.join([f':csid{i}' for i in range(len(sids_needing_coop))])
+                csid_params = {f'csid{i}': sid for i, sid in enumerate(sids_needing_coop)}
+                coop_rows = conn.execute(
+                    text(f"SELECT `Student ID`, `Term`, `Term number Sx or Wx` FROM `coop` WHERE `Student ID` IN ({placeholders_coop})"),
+                    csid_params
+                ).fetchall()
+                for cr in coop_rows:
+                    sid = str(cr[0]).strip()
+                    term_raw = str(cr[1]).strip() if cr[1] else ""
+                    term_type = str(cr[2]).strip() if cr[2] else ""
+                    if not term_type.upper().startswith('W-'):
+                        continue
+                    wt_num = term_type.upper().replace('W-', '')
+                    wt_key = f"WT{wt_num}"
+                    year_range, season = parse_term(term_raw)
+                    if year_range == "UNKNOWN":
+                        continue
+                    if sid not in original_wt:
+                        original_wt[sid] = {}
+                    original_wt[sid][wt_key] = f"{year_range} {season}"
+
+            # Batch query: get DISCIPLINE1_DESCR + PROG_LINK from Transcripts for all students
+            placeholders = ','.join([f':sid{i}' for i in range(len(student_ids))])
+            sid_params = {f'sid{i}': sid for i, sid in enumerate(student_ids)}
+            disc_rows = conn.execute(
+                text(f"SELECT `Student ID`, DISCIPLINE1_DESCR, PROG_LINK FROM Transcripts WHERE `Student ID` IN ({placeholders}) AND DISCIPLINE1_DESCR IS NOT NULL ORDER BY `Academic Term` DESC"),
+                sid_params
+            ).fetchall()
+
+            # Build prog_map: student_id -> short label
+            # Prefer engineering disciplines over generic ones like "Co-Op"
+            prog_map = {}
+            eng_keywords = ["mechanical", "aerospace", "industrial", "electrical", "software", "computer", "civil", "building"]
+            for dr in disc_rows:
+                dsid = str(dr[0]).strip()
+                disc = str(dr[1] or "").strip().lower()
+                prog_link = str(dr[2] or "").upper()
+                is_eng = any(kw in disc for kw in eng_keywords)
+                # Skip non-engineering if we already have an engineering match
+                if dsid in prog_map and not is_eng:
+                    continue
+                # If we already have engineering, skip another engineering (keep first = most recent)
+                if dsid in prog_map and is_eng:
+                    existing = prog_map[dsid]
+                    if existing not in ("Unknown",):
+                        continue
+                is_grad = "GRAD" in prog_link and "UGRD" not in prog_link
+                if "industrial" in disc:
+                    prog_map[dsid] = "INDU grad" if is_grad else "INDU"
+                elif "mechanical" in disc:
+                    prog_map[dsid] = "MECH grad" if is_grad else "MECH"
+                elif "aerospace" in disc:
+                    if is_grad:
+                        prog_map[dsid] = "AERO grad"
+                    else:
+                        if "AVIONICS" in prog_link or "AERO C" in prog_link:
+                            prog_map[dsid] = "AERO C"
+                        elif "STRUCTURE" in prog_link or "AERO B" in prog_link:
+                            prog_map[dsid] = "AERO B"
+                        else:
+                            prog_map[dsid] = "AERO A"
+                elif dsid not in prog_map:
+                    prog_map[dsid] = disc.title() if disc else "Unknown"
+
+            # Parse JSON_Data from each approved sequence to find WT placements
+            movements = {"WT1": {}, "WT2": {}, "WT3": {}}  # key = (from_term, to_term, prog_cat), value = { count, sids }
+
+            total_approved = len(unique_rows)
+
+            for row in unique_rows:
+                sid = str(row[0]).strip()
+                json_data = _safe_json_load(row[2]) or {}
+                prog_label = prog_map.get(sid, "Unknown")
+
+                # Find WT placements in JSON_Data (handle both new and old format)
+                approved_wt = {}
+                placements = json_data.get("placements") or []
+
+                if placements:
+                    # New format: { placements: [ { displayId, courseId, zoneId }, ... ] }
+                    for p in placements:
+                        did = str(p.get("displayId") or "").upper()
+                        m = None
+                        if did.startswith("WT"):
+                            m = did
+                        else:
+                            cid = str(p.get("courseId") or p.get("course_id") or "").upper()
+                            if cid.startswith("WT"):
+                                m = cid
+                        if m and m in ("WT1", "WT2", "WT3"):
+                            zone_id = p.get("zoneId") or ""
+                            parts = zone_id.replace("zone_", "").split("_")
+                            if len(parts) >= 2:
+                                approved_wt[m] = f"{parts[0]} {parts[1]}"
+                else:
+                    # Old format: { "Y2_FALL": ["ENGR213", "WT1"], startYear: "2024-2025", ... }
+                    start_year_str = json_data.get("startYear") or ""
+                    base_year = 0
+                    if start_year_str:
+                        try:
+                            base_year = int(str(start_year_str).split('-')[0])
+                        except:
+                            pass
+                    if base_year:
+                        season_map = {"SUMMER": "Summer", "FALL": "Fall", "WINTER": "Winter"}
+                        for key, courses in json_data.items():
+                            if not isinstance(courses, list):
+                                continue
+                            m = None
+                            # key format: "Y2_FALL"
+                            km = re.match(r'^Y(\d+)_(\w+)$', key)
+                            if not km:
+                                continue
+                            y_num = int(km.group(1))
+                            season_raw = km.group(2).upper()
+                            season = season_map.get(season_raw)
+                            if not season:
+                                continue
+                            yr = base_year + y_num - 1
+                            year_range = f"{yr}-{yr+1}"
+                            for c in courses:
+                                cu = str(c).upper().replace(" ", "")
+                                if cu in ("WT1", "WT2", "WT3"):
+                                    approved_wt[cu] = f"{year_range} {season}"
+
+                # Compare original vs approved for each WT
+                orig = original_wt.get(sid, {})
+                prog_cat = prog_label
+                for wt_key in ["WT1", "WT2", "WT3"]:
+                    from_term = orig.get(wt_key)
+                    to_term = approved_wt.get(wt_key)
+                    if from_term and to_term:
+                        pair = (from_term, to_term, prog_cat)
+                        if pair not in movements[wt_key]:
+                            movements[wt_key][pair] = {"count": 0, "sids": []}
+                        movements[wt_key][pair]["count"] += 1
+                        if sid not in movements[wt_key][pair]["sids"]:
+                            movements[wt_key][pair]["sids"].append(sid)
+
+            # Format output
+            result = {}
+            for wt_key in ["WT1", "WT2", "WT3"]:
+                entries = []
+                for (from_term, to_term, prog_cat), data in sorted(movements[wt_key].items()):
+                    entries.append({
+                        "from_term": from_term,
+                        "to_term": to_term,
+                        "prog": prog_cat,
+                        "count": data["count"],
+                        "sids": data["sids"]
+                    })
+                result[wt_key] = entries
+
+            return jsonify({"ok": True, "total_approved": total_approved, "wt_movements": result})
+
+    except Exception as e:
+        print(f"❌ Error in check_wt_movements: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/admin_backfill_original_wt", methods=["POST"])
+@limiter.limit("5 per 15 minutes")
+def api_admin_backfill_original_wt():
+    """One-time backfill: populate Original_WT_JSON for all existing APPROVED sequences that don't have it."""
+    if not _require_login():
+        return jsonify({"ok": False, "error": "Unauthorized"}), 401
+    if not _is_power_user():
+        return jsonify({"ok": False, "error": "Unauthorized"}), 403
+
+    try:
+        with engine.begin() as conn:
+            # Find all APPROVED rows missing Original_WT_JSON
+            rows = conn.execute(
+                text("SELECT student_id, Date_Saved FROM Saved_Sequences WHERE status = 'APPROVED' AND (Original_WT_JSON IS NULL OR Original_WT_JSON = '')")
+            ).fetchall()
+
+            if not rows:
+                return jsonify({"ok": True, "updated": 0, "message": "All APPROVED sequences already have Original_WT_JSON"})
+
+            # Get all unique student IDs
+            sids = list(set(str(r[0]).strip() for r in rows))
+            placeholders = ','.join([f':sid{i}' for i in range(len(sids))])
+            sid_params = {f'sid{i}': sid for i, sid in enumerate(sids)}
+
+            # Batch fetch coop WT data
+            coop_rows = conn.execute(
+                text(f"SELECT `Student ID`, `Term`, `Term number Sx or Wx` FROM `coop` WHERE `Student ID` IN ({placeholders})"),
+                sid_params
+            ).fetchall()
+
+            # Build WT map per student
+            wt_map = {}
+            for cr in coop_rows:
+                sid = str(cr[0]).strip()
+                term_raw = str(cr[1]).strip() if cr[1] else ""
+                term_type = str(cr[2]).strip() if cr[2] else ""
+                if not term_type.upper().startswith('W-'):
+                    continue
+                wt_num = term_type.upper().replace('W-', '')
+                wt_key = f"WT{wt_num}"
+                yr, sn = parse_term(term_raw)
+                if yr == "UNKNOWN":
+                    continue
+                if sid not in wt_map:
+                    wt_map[sid] = {}
+                wt_map[sid][wt_key] = f"{yr} {sn}"
+
+            # Update each row
+            updated = 0
+            for r in rows:
+                sid = str(r[0]).strip()
+                date_saved = r[1]
+                wt_snap = wt_map.get(sid)
+                if wt_snap:
+                    conn.execute(
+                        text("UPDATE Saved_Sequences SET Original_WT_JSON = :owt WHERE student_id = :sid AND Date_Saved = :ds"),
+                        {"owt": json.dumps(wt_snap), "sid": sid, "ds": date_saved}
+                    )
+                    updated += 1
+
+            return jsonify({"ok": True, "updated": updated, "total": len(rows)})
+
+    except Exception as e:
+        print(f"❌ Error in backfill_original_wt: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/api/admin_bulk_email", methods=["POST"])
 @limiter.limit("100 per 15 minutes")
 def api_admin_bulk_email():
@@ -2209,11 +2516,35 @@ def api_admin_approve():
                     )
             
             # Insert new sequence with APPROVED or REWORK status
+            # Fetch original WT terms from coop table (snapshot at approval time)
+            original_wt_json = None
+            if status == STATUS_APPROVED:
+                try:
+                    coop_wt_rows = conn.execute(
+                        text("SELECT `Term`, `Term number Sx or Wx` FROM `coop` WHERE `Student ID` = :sid"),
+                        {"sid": target_sid}
+                    ).fetchall()
+                    wt_snap = {}
+                    for cr in coop_wt_rows:
+                        term_raw = str(cr[0]).strip() if cr[0] else ""
+                        term_type = str(cr[1]).strip() if cr[1] else ""
+                        if not term_type.upper().startswith('W-'):
+                            continue
+                        wt_num = term_type.upper().replace('W-', '')
+                        wt_key = f"WT{wt_num}"
+                        yr, sn = parse_term(term_raw)
+                        if yr != "UNKNOWN":
+                            wt_snap[wt_key] = f"{yr} {sn}"
+                    if wt_snap:
+                        original_wt_json = json.dumps(wt_snap)
+                except Exception as wt_err:
+                    print(f"⚠️ Could not snapshot original WT: {wt_err}")
+
             conn.execute(
                 text("""
                     INSERT INTO Saved_Sequences 
-                    (student_id, Date_Saved, Sequence_Name, status, JSON_Data, Term_Json_data, who_sent_it, cos_reason, student_comments)
-                    VALUES (:sid, NOW(), :seq_name, :stat, :json_data, :term_json, :who, :reason, :comments)
+                    (student_id, Date_Saved, Sequence_Name, status, JSON_Data, Term_Json_data, who_sent_it, cos_reason, student_comments, Original_WT_JSON)
+                    VALUES (:sid, NOW(), :seq_name, :stat, :json_data, :term_json, :who, :reason, :comments, :owt)
                 """),
                 {
                     "sid": target_sid,
@@ -2223,7 +2554,8 @@ def api_admin_approve():
                     "term_json": term_summary_json,
                     "who": power_user_email,
                     "reason": reason_code if reason_code is not None else None,
-                    "comments": justification
+                    "comments": justification,
+                    "owt": original_wt_json
                 }
             )
             

@@ -4589,7 +4589,7 @@ window.applyLoadedPlan = function(planObj) {
             globalLimits: planObj.globalLimits || null,
             termOverrides: planObj.termOverrides || {},
             placements: [],
-            reason_code: planObj.reason_code || planObj.cos_reason || 0,
+            reason_code: planObj.reason_code !== undefined && planObj.reason_code !== null ? planObj.reason_code : (planObj.cos_reason !== undefined && planObj.cos_reason !== null ? planObj.cos_reason : 0),
             justification: planObj.justification || planObj.student_comments || ''
         };
 
@@ -4723,7 +4723,7 @@ window.applyLoadedPlan = function(planObj) {
     });
 
     // Restore reason + justification if present
-    if (planObj.reason_code) {
+    if (planObj.reason_code !== undefined && planObj.reason_code !== null) {
         const r = document.querySelector(`input[name="submissionReason"][value="${planObj.reason_code}"]`);
         if (r) r.checked = true;
     }

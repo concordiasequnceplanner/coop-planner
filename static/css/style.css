@@ -565,6 +565,9 @@ tr.term-names-row td { border: none !important; }
 }
 .admin-send-btn:hover { background: #219a52; }
 
+.wt-movement-table td,
+.wt-movement-table th { height: auto !important; padding: 3px 10px !important; }
+
 .student-count { color: #c0392b; display: none; }
 
 .notes-cell-vis { 

@@ -269,6 +269,7 @@ async function runCheck7() {
                 <th style="${thStyle}">WT1</th>
                 <th style="${thStyle}">WT2</th>
                 <th style="${thStyle}">WT3</th>
+                <th style="${thStyle}width:80px;">Seq Status</th>
             </tr></thead><tbody>`;
             students.forEach((s, i) => {
                 const bg = i % 2 === 0 ? '#fff' : '#f9f9f9';
@@ -280,6 +281,8 @@ async function runCheck7() {
                 const wt3Future = s.wts.WT3 ? s.wts.WT3.future : false;
                 const pastStyle = 'color:#bbb;';
                 const futureStyle = 'color:#2980b9;font-weight:bold;';
+                const seqStatus = s.seq_status || 'NONE';
+                const seqColor = seqStatus === 'NONE' ? '#e74c3c' : seqStatus === 'DRAFT' ? '#e67e22' : seqStatus === 'PENDING' ? '#2980b9' : seqStatus === 'REWORK' ? '#8e44ad' : '#888';
                 const tdS = 'padding:4px 10px;border-bottom:1px solid #eee;';
                 html += `<tr style="background:${bg};">
                     <td style="${tdS}"><input type="checkbox" name="studentCheck" value="${s.sid}" checked></td>
@@ -292,6 +295,7 @@ async function runCheck7() {
                     <td style="${tdS}${wt1Future ? futureStyle : pastStyle}">${wt1}</td>
                     <td style="${tdS}${wt2Future ? futureStyle : pastStyle}">${wt2}</td>
                     <td style="${tdS}${wt3Future ? futureStyle : pastStyle}">${wt3}</td>
+                    <td style="${tdS}color:${seqColor};font-weight:bold;font-size:11px;">${seqStatus}</td>
                 </tr>`;
             });
             html += '</tbody></table>';

@@ -2089,6 +2089,29 @@ def api_admin_check_wt_attention():
             if not students_wt:
                 return jsonify({"ok": True, "students": []})
 
+            # Get best sequence status per student (for sorting: PENDING > DRAFT > none)
+            sids_list = list(students_wt.keys())
+            placeholders = ','.join([f':sid{i}' for i in range(len(sids_list))])
+            sid_params = {f'sid{i}': sid for i, sid in enumerate(sids_list)}
+            seq_status_rows = conn.execute(
+                text(f"SELECT student_id, status FROM Saved_Sequences WHERE student_id IN ({placeholders})"),
+                sid_params
+            ).fetchall()
+            # Build best status per student: PENDING APPROVAL > SAVED DRAFT > (none)
+            seq_status_map = {}  # sid -> best status string
+            for sr in seq_status_rows:
+                ssid = str(sr[0]).strip()
+                st = str(sr[1] or "").strip().upper()
+                cur = seq_status_map.get(ssid, "")
+                if "PENDING" in st:
+                    seq_status_map[ssid] = "PENDING"
+                elif "DRAFT" in st and cur != "PENDING":
+                    seq_status_map[ssid] = "DRAFT"
+                elif "REWORK" in st and cur not in ("PENDING", "DRAFT"):
+                    seq_status_map[ssid] = "REWORK"
+                elif not cur:
+                    seq_status_map[ssid] = st if st else ""
+
             # Get names
             sids_list = list(students_wt.keys())
             placeholders = ','.join([f':sid{i}' for i in range(len(sids_list))])
@@ -2141,6 +2164,9 @@ def api_admin_check_wt_attention():
             result = []
             for sid, wts in students_wt.items():
                 gpa_info = gpa_map.get(sid, {})
+                seq_st = seq_status_map.get(sid, "NONE")
+                if not seq_st:
+                    seq_st = "NONE"
                 result.append({
                     "sid": sid,
                     "name": name_map.get(sid, ""),
@@ -2148,12 +2174,15 @@ def api_admin_check_wt_attention():
                     "wts": wts,
                     "gpa24": gpa_info.get("gpa24", ""),
                     "cgpa": gpa_info.get("cgpa", ""),
-                    "credits": gpa_info.get("credits", 0)
+                    "credits": gpa_info.get("credits", 0),
+                    "seq_status": seq_st
                 })
 
             # Sort: first by number of future WTs descending (3 first, then 2, then 1),
-            # then by earliest future WT term ascending
+            # then by earliest future WT term ascending,
+            # then by seq_status (NONE first, DRAFT, REWORK, PENDING last)
             season_ord = {"Summer": 1, "Fall": 2, "Winter": 3}
+            status_ord = {"NONE": 0, "DRAFT": 1, "REWORK": 2, "PENDING": 3}
             def sort_key(x):
                 wts = x["wts"]
                 future_count = sum(1 for v in wts.values() if v.get("future"))
@@ -2168,7 +2197,8 @@ def api_admin_check_wt_attention():
                         sort_t = f"{yr}-{sn}"
                         if sort_t < earliest:
                             earliest = sort_t
-                return (-future_count, earliest)
+                st_ord = status_ord.get(x.get("seq_status", "NONE"), 0)
+                return (-future_count, earliest, st_ord)
             result.sort(key=sort_key)
 
             return jsonify({"ok": True, "students": result})
@@ -2904,7 +2934,27 @@ def api_admin_approve():
             except Exception as ne:
                 print(f"⚠ Could not fetch Public_comments for email: {ne}")
 
+            # Build reason snippet for subject line
+            reason_labels = {
+                0: "0) Found internship on my own",
+                1: "1) No changes / asked by AD",
+                2: "2) Reduce summer load",
+                3: "3) Reduce overall load",
+                4: "4) Off sequence (repeat)",
+                5: "5) No place in courses",
+                6: "6) Change program",
+                7: "7) Not placed for WT",
+                8: "8) WT extended",
+                9: "9) LOW GPA",
+                10: "10) Other personal reasons",
+            }
+            reason_snippet = reason_labels.get(reason_code, "")
+            if reason_snippet:
+                reason_snippet = reason_snippet[:27] + "..."
+
             subject = f"Approved sequence for {student_name} {target_sid} {program}"
+            if reason_snippet:
+                subject += f" — {reason_snippet}"
             html_body = render_sequence_email(
                 mode="APPROVED",
                 student_email=student_email,

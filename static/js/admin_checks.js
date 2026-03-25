@@ -15,8 +15,24 @@ async function loadCheckData() {
 
     const checkId = selected.value;
 
-    // Check 8 is special — show date panel, hide normal table
+    // Check 7 and 8 are special — show their panels, hide normal table
+    const check7Panel = document.getElementById('check7Panel');
     const check8Panel = document.getElementById('check8Panel');
+    check7Panel.style.display = 'none';
+    check8Panel.style.display = 'none';
+
+    if (checkId === '7') {
+        check7Panel.style.display = 'block';
+        document.getElementById('resultsTable').style.display = 'none';
+        document.getElementById('studentCountDisplay').style.display = 'none';
+        document.querySelector('.admin-email-panel').style.display = '';
+        document.getElementById('loadingOverlay').style.display = 'none';
+        // Pre-fill email fields from data attributes
+        document.getElementById('emailTitle').value   = selected.getAttribute('data-what') || '';
+        document.getElementById('emailMessage').value  = selected.getAttribute('data-msg') || '';
+        document.getElementById('shortMessage').value  = selected.getAttribute('data-short') || '';
+        return;
+    }
     if (checkId === '8') {
         check8Panel.style.display = 'block';
         document.getElementById('resultsTable').style.display = 'none';
@@ -25,7 +41,6 @@ async function loadCheckData() {
         document.getElementById('loadingOverlay').style.display = 'none';
         return;
     }
-    check8Panel.style.display = 'none';
     document.querySelector('.admin-email-panel').style.display = '';
 
     // Pre-fill editable text fields from data attributes
@@ -210,6 +225,87 @@ async function sendBulkEmails() {
     }
 }
 
+
+// =========================================================
+// CHECK 7: Students Needing WT Attention
+// =========================================================
+async function runCheck7() {
+    document.getElementById('loadingOverlay').style.display = 'flex';
+    document.getElementById('check7Results').style.display = 'none';
+
+    try {
+        const res = await fetch('/api/admin_check_wt_attention', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        const data = await res.json();
+        if (!data.ok) {
+            alert('Error: ' + (data.error || 'Unknown error'));
+            return;
+        }
+
+        const resultsEl = document.getElementById('check7Results');
+        resultsEl.innerHTML = '';
+
+        const students = data.students || [];
+        const summary = document.createElement('div');
+        summary.style.cssText = 'font-weight:bold; color:#2c3e50; margin-bottom:10px;';
+        summary.innerHTML = `🔍 Found <span style="color:#912338;">${students.length}</span> student${students.length !== 1 ? 's' : ''} with 2 or 3 WTs in the future, no approved sequence`;
+        resultsEl.appendChild(summary);
+
+        if (students.length === 0) {
+            resultsEl.innerHTML += '<p style="color:#888; font-style:italic;">All students with future WTs have an approved sequence.</p>';
+        } else {
+            const thStyle = 'padding:6px 10px;text-align:left;border-bottom:2px solid #bdc3c7;font-size:12px;';
+            let html = `<table class="wt-movement-table" style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:#ecf0f1;">
+                <th style="${thStyle}width:30px;"><input type="checkbox" checked onclick="document.querySelectorAll('#check7Results input[name=studentCheck]').forEach(c=>c.checked=this.checked)"></th>
+                <th style="${thStyle}width:100px;">Student ID</th>
+                <th style="${thStyle}">Name</th>
+                <th style="${thStyle}">Email</th>
+                <th style="${thStyle}width:70px;">GPA24</th>
+                <th style="${thStyle}width:70px;">CGPA</th>
+                <th style="${thStyle}width:70px;">Credits</th>
+                <th style="${thStyle}">WT1</th>
+                <th style="${thStyle}">WT2</th>
+                <th style="${thStyle}">WT3</th>
+            </tr></thead><tbody>`;
+            students.forEach((s, i) => {
+                const bg = i % 2 === 0 ? '#fff' : '#f9f9f9';
+                const wt1 = s.wts.WT1 ? s.wts.WT1.term : '-';
+                const wt2 = s.wts.WT2 ? s.wts.WT2.term : '-';
+                const wt3 = s.wts.WT3 ? s.wts.WT3.term : '-';
+                const wt1Future = s.wts.WT1 ? s.wts.WT1.future : false;
+                const wt2Future = s.wts.WT2 ? s.wts.WT2.future : false;
+                const wt3Future = s.wts.WT3 ? s.wts.WT3.future : false;
+                const pastStyle = 'color:#bbb;';
+                const futureStyle = 'color:#2980b9;font-weight:bold;';
+                const tdS = 'padding:4px 10px;border-bottom:1px solid #eee;';
+                html += `<tr style="background:${bg};">
+                    <td style="${tdS}"><input type="checkbox" name="studentCheck" value="${s.sid}" checked></td>
+                    <td style="${tdS}color:#2980b9;font-weight:bold;cursor:pointer;" onclick="window.open('/planner?switch_to=${s.sid}','_blank')">${s.sid}</td>
+                    <td style="${tdS}">${s.name}</td>
+                    <td style="${tdS}font-size:11px;">${s.email || ''}</td>
+                    <td style="${tdS}">${s.gpa24 || '-'}</td>
+                    <td style="${tdS}">${s.cgpa || '-'}</td>
+                    <td style="${tdS}">${s.credits || '-'}</td>
+                    <td style="${tdS}${wt1Future ? futureStyle : pastStyle}">${wt1}</td>
+                    <td style="${tdS}${wt2Future ? futureStyle : pastStyle}">${wt2}</td>
+                    <td style="${tdS}${wt3Future ? futureStyle : pastStyle}">${wt3}</td>
+                </tr>`;
+            });
+            html += '</tbody></table>';
+            resultsEl.innerHTML += html;
+        }
+
+        resultsEl.style.display = 'block';
+
+    } catch (e) {
+        alert('Error: ' + e.message);
+    } finally {
+        document.getElementById('loadingOverlay').style.display = 'none';
+    }
+}
 
 // =========================================================
 // CHECK 8: WT Movement Analysis

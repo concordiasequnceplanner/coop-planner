@@ -731,6 +731,12 @@ def planner_page():
     except Exception as e:
         print(f"⚠️ Program_names load error: {e}")
 
+    # Handle ?switch_to= parameter (power user opens planner for a specific student)
+    switch_to = request.args.get("switch_to", "").strip()
+    if switch_to and is_power_user:
+        session["admin_view_sid"] = switch_to
+        viewing_sid = switch_to
+
     # Determine which SID to load transcript/coop data for
     target_sid = viewing_sid
 
@@ -920,8 +926,18 @@ def admin_checks_page():
     except Exception as e:
         print(f"❌ Error loading ADMIN_checks: {e}")
     
-    # Ensure Check 8 (WT Movement Analysis) exists even if not in DB
+    # Ensure Check 7 and 8 exist even if not in DB
     check_ids = {c["id"] for c in checks}
+
+    if 7 not in check_ids:
+        checks.append({
+            "id": 7,
+            "what": "No sequence but WT left in the future",
+            "msg": "",
+            "short": "",
+            "disabled": False
+        })
+
     if 8 not in check_ids:
         checks.append({
             "id": 8,
@@ -1963,6 +1979,205 @@ def api_admin_run_check():
         return jsonify({"error": "An error occurred while running the check"}), 500
         traceback.print_exc()
         return jsonify([]), 500  # Return empty array on error
+
+
+@app.route("/api/admin_check_wt_attention", methods=["POST"])
+@limiter.limit("100 per 15 minutes")
+def api_admin_check_wt_attention():
+    """Check #7: Students with 3 WTs planned, at least 1 future, no approved sequence, not grad."""
+    if not _require_login():
+        return jsonify({"ok": False, "error": "Unauthorized"}), 401
+    if not _is_power_user():
+        return jsonify({"ok": False, "error": "Unauthorized"}), 403
+
+    try:
+        with engine.connect() as conn:
+            all_coop = conn.execute(
+                text("SELECT `Student ID`, `Term`, `Term number Sx or Wx`, `Transferred Withdrawn OK` FROM `coop`")
+            ).fetchall()
+
+            # Collect withdrawn/moved students (any row with "Withdr" or "Moved" in status)
+            excluded_sids = set()
+            for cr in all_coop:
+                status = str(cr[3] or "").strip().lower()
+                if "withdr" in status or "moved" in status:
+                    excluded_sids.add(str(cr[0]).strip())
+
+            now = datetime.datetime.now()
+
+            def term_start_date(year_range, season):
+                try:
+                    first_year = int(year_range.split('-')[0])
+                except:
+                    return None
+                if season == "Summer":
+                    return datetime.datetime(first_year, 5, 1)
+                elif season == "Fall":
+                    return datetime.datetime(first_year, 9, 1)
+                elif season == "Winter":
+                    return datetime.datetime(first_year + 1, 1, 1)
+                return None
+
+            # Build all W-x per student
+            all_wt = {}  # sid -> { wt_key: { term_str, is_future } }
+            for cr in all_coop:
+                sid = str(cr[0]).strip()
+                if sid[0:1] >= '8':
+                    continue
+                if sid in excluded_sids:
+                    continue
+                term_raw = str(cr[1]).strip() if cr[1] else ""
+                term_type = str(cr[2]).strip() if cr[2] else ""
+                if not term_type.upper().startswith('W-'):
+                    continue
+                wt_num = term_type.upper().replace('W-', '')
+                wt_key = f"WT{wt_num}"
+                yr, sn = parse_term(term_raw)
+                if yr == "UNKNOWN":
+                    continue
+                td = term_start_date(yr, sn)
+                is_future = td is not None and td > now
+                if sid not in all_wt:
+                    all_wt[sid] = {}
+                all_wt[sid][wt_key] = {"term": f"{yr} {sn}", "future": is_future}
+
+            # Filter: must have at least 2 W-x terms and at least 1 future
+            students_wt = {}
+            for sid, wts in all_wt.items():
+                if len(wts) < 2:
+                    continue
+                has_future = any(v["future"] for v in wts.values())
+                if has_future:
+                    students_wt[sid] = {k: {"term": v["term"], "future": v["future"]} for k, v in wts.items()}
+
+            if not students_wt:
+                return jsonify({"ok": True, "students": []})
+
+            # Exclude grad
+            sids_list = list(students_wt.keys())
+            placeholders = ','.join([f':sid{i}' for i in range(len(sids_list))])
+            sid_params = {f'sid{i}': sid for i, sid in enumerate(sids_list)}
+
+            prog_rows = conn.execute(
+                text(f"SELECT DISTINCT `Student ID`, PROG_LINK FROM Transcripts WHERE `Student ID` IN ({placeholders}) AND PROG_LINK IS NOT NULL"),
+                sid_params
+            ).fetchall()
+            grad_sids = set()
+            for pr in prog_rows:
+                plink = str(pr[1] or "").upper()
+                if "GRAD" in plink and "UGRD" not in plink:
+                    grad_sids.add(str(pr[0]).strip())
+            for gsid in grad_sids:
+                students_wt.pop(gsid, None)
+
+            if not students_wt:
+                return jsonify({"ok": True, "students": []})
+
+            # Exclude those who already have an APPROVED sequence
+            sids_list = list(students_wt.keys())
+            placeholders = ','.join([f':sid{i}' for i in range(len(sids_list))])
+            sid_params = {f'sid{i}': sid for i, sid in enumerate(sids_list)}
+
+            approved_sids_rows = conn.execute(
+                text(f"SELECT DISTINCT student_id FROM Saved_Sequences WHERE student_id IN ({placeholders}) AND status = 'APPROVED'"),
+                sid_params
+            ).fetchall()
+            approved_sids = set(str(r[0]).strip() for r in approved_sids_rows)
+            for asid in approved_sids:
+                students_wt.pop(asid, None)
+
+            if not students_wt:
+                return jsonify({"ok": True, "students": []})
+
+            # Get names
+            sids_list = list(students_wt.keys())
+            placeholders = ','.join([f':sid{i}' for i in range(len(sids_list))])
+            sid_params = {f'sid{i}': sid for i, sid in enumerate(sids_list)}
+            name_rows = conn.execute(
+                text(f"SELECT `Student ID`, `Name` FROM `login vs id` WHERE `Student ID` IN ({placeholders})"),
+                sid_params
+            ).fetchall()
+            name_map = {str(nr[0]).strip(): str(nr[1] or "").strip() for nr in name_rows}
+
+            # Get emails
+            email_rows = conn.execute(
+                text(f"SELECT `Student ID`, `Primary Email` FROM `Sid_Email_Admission` WHERE `Student ID` IN ({placeholders}) ORDER BY `email_priority` ASC"),
+                sid_params
+            ).fetchall()
+            email_map = {}
+            for er in email_rows:
+                esid = str(er[0]).strip()
+                if esid not in email_map:
+                    email_map[esid] = str(er[1] or "").strip()
+
+            # Batch GPA/CGPA from CGPA_Timeline (pre-calculated by 0_master)
+            # Get the latest term row per student in one query
+            gpa_rows = conn.execute(
+                text(f"""
+                    SELECT g.`Student ID`, g.CGPA, g.CGPA_Total_Credits, g.GPA_X_CR, g.GPA_X_CR_Actual_Credits
+                    FROM `CGPA_Timeline` g
+                    INNER JOIN (
+                        SELECT `Student ID`, MAX(`Academic Term`) AS max_term
+                        FROM `CGPA_Timeline`
+                        WHERE `Student ID` IN ({placeholders})
+                        GROUP BY `Student ID`
+                    ) latest ON g.`Student ID` = latest.`Student ID` AND g.`Academic Term` = latest.max_term
+                """),
+                sid_params
+            ).fetchall()
+
+            gpa_map = {}
+            for gr in gpa_rows:
+                gsid = str(gr[0]).strip()
+                cgpa_val = float(gr[1]) if gr[1] is not None else 0.0
+                total_cr = float(gr[2]) if gr[2] is not None else 0.0
+                gpa24_val = float(gr[3]) if gr[3] is not None else 0.0
+                gpa_map[gsid] = {
+                    "cgpa": f"{cgpa_val:.2f}",
+                    "gpa24": f"{gpa24_val:.2f}" if gpa24_val >= 0 else "N/A",
+                    "credits": total_cr
+                }
+
+            result = []
+            for sid, wts in students_wt.items():
+                gpa_info = gpa_map.get(sid, {})
+                result.append({
+                    "sid": sid,
+                    "name": name_map.get(sid, ""),
+                    "email": email_map.get(sid, ""),
+                    "wts": wts,
+                    "gpa24": gpa_info.get("gpa24", ""),
+                    "cgpa": gpa_info.get("cgpa", ""),
+                    "credits": gpa_info.get("credits", 0)
+                })
+
+            # Sort: first by number of future WTs descending (3 first, then 2, then 1),
+            # then by earliest future WT term ascending
+            season_ord = {"Summer": 1, "Fall": 2, "Winter": 3}
+            def sort_key(x):
+                wts = x["wts"]
+                future_count = sum(1 for v in wts.values() if v.get("future"))
+                # Find earliest future WT term for secondary sort
+                earliest = "9999-9999 Z"
+                for wt_key in ["WT1", "WT2", "WT3"]:
+                    if wt_key in wts and wts[wt_key].get("future"):
+                        t = wts[wt_key]["term"]
+                        parts = t.split(" ")
+                        yr = parts[0] if parts else "9999-9999"
+                        sn = season_ord.get(parts[1], 9) if len(parts) > 1 else 9
+                        sort_t = f"{yr}-{sn}"
+                        if sort_t < earliest:
+                            earliest = sort_t
+                return (-future_count, earliest)
+            result.sort(key=sort_key)
+
+            return jsonify({"ok": True, "students": result})
+
+    except Exception as e:
+        print(f"❌ Error in check_wt_attention: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/api/admin_check_wt_movements", methods=["POST"])

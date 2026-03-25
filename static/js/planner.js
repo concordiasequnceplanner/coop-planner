@@ -3861,6 +3861,18 @@ window.validateGrid = function() {
                 flagBox(wtPos.WT1.el, [{ msg: 'Must have ≥2 study terms before WT1', sev: 'error' }]);
             else if (coreCrBefore < 30)
                 flagBox(wtPos.WT1.el, [{ msg: `Only ${coreCrBefore} CORE/TE credits before WT1 (need ≥30)`, sev: 'error' }]);
+
+            // ENCS 282 must be taken before WT1
+            let encs282Before = false;
+            allZones.forEach(({ ord, el }) => {
+                if (ord >= wtPos.WT1.ord) return;
+                Array.from(el.children).forEach(b => {
+                    const cid = (b.dataset.courseId || '').toUpperCase();
+                    if (cid === 'ENCS282') encs282Before = true;
+                });
+            });
+            if (!encs282Before)
+                flagBox(wtPos.WT1.el, [{ msg: 'ENCS 282 must be taken before WT1', sev: 'error' }]);
         }
 
         // Check 8: WT2 must be after WT1

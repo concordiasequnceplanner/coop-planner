@@ -487,6 +487,23 @@ def api_keepalive():
         return jsonify({"ok": False}), 401
     return jsonify({"ok": True}), 200
 
+@app.route("/api/acknowledge_rules", methods=["POST"])
+def api_acknowledge_rules():
+    """Save that the student has read and acknowledged the CO-OP rules."""
+    if not _require_login():
+        return jsonify({"ok": False, "error": "Unauthorized"}), 401
+    sid = _current_sid()
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text("INSERT INTO Rules_Acknowledgment (student_id, acknowledged_date) VALUES (:sid, NOW())"),
+                {"sid": sid}
+            )
+        return jsonify({"ok": True})
+    except Exception as e:
+        print(f"❌ Rules ack error: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
 # =========================================================
 # AUTH ROUTES
 # =========================================================
@@ -835,6 +852,29 @@ def planner_page():
             latest_discipline = ts_sorted['DISCIPLINE1_DESCR'].dropna().iloc[0] if not ts_sorted['DISCIPLINE1_DESCR'].dropna().empty else ""
             discipline_descr = str(latest_discipline).strip()
 
+        # Check if student needs to acknowledge rules this quarter
+        show_rules_popup = False
+        if not is_power_user and not is_guest:
+            try:
+                today = datetime.datetime.now()
+                quarter_month = ((today.month - 1) // 3) * 3 + 1
+                quarter_start = datetime.datetime(today.year, quarter_month, 1)
+                with engine.connect() as conn:
+                    ack_row = conn.execute(
+                        text("SELECT acknowledged_date FROM Rules_Acknowledgment WHERE student_id = :sid ORDER BY acknowledged_date DESC LIMIT 1"),
+                        {"sid": target_sid}
+                    ).fetchone()
+                    if not ack_row or ack_row[0] is None:
+                        show_rules_popup = True
+                    else:
+                        ack_date = ack_row[0]
+                        if isinstance(ack_date, str):
+                            ack_date = datetime.datetime.strptime(ack_date, "%Y-%m-%d %H:%M:%S")
+                        show_rules_popup = ack_date < quarter_start
+            except Exception as ack_err:
+                print(f"⚠ Rules ack check error (non-fatal): {ack_err}")
+                show_rules_popup = False
+
         return render_template(
             "planner.html",
             student_id=cur_sid,
@@ -864,6 +904,7 @@ def planner_page():
             initial_plan=initial_plan,
             initial_plan_id=initial_plan_id,
             is_debug=(debug_no_emails == "DEBUG"),
+            show_rules_popup=show_rules_popup,
         )
 
     except Exception as e:
@@ -1686,7 +1727,7 @@ def api_admin_send_student_email():
         header_msg = "⚠️ WT IMPACTED - Operations Institute are cc-ed\n\n" if include_institute else ""
         admin_email = session.get("user_email", "")
         
-        body = f"""{header_msg}Hello {student_name},
+        body = f"""{header_msg}Hello {student_name} ({student_id}),
 
 Please see the message below:
 
@@ -2585,7 +2626,7 @@ def api_admin_bulk_email():
                 else:
                     header_msg = "✅ No WT restrictions - standard email\n\n"
                 
-                body = f"""{header_msg}Hello {student_name},
+                body = f"""{header_msg}Hello {student_name} ({sid}),
 
 {message}
 

@@ -222,7 +222,7 @@
                     style="background:#f0f0f0;"></textarea>
             {% endif %}
 
-            <details {% if is_power_user %}open{% endif %} style="margin-top:10px;">
+            <details id="rulesDetails" {% if is_power_user %}open{% endif %} style="margin-top:10px;">
                 <summary style="cursor:pointer; font-weight:bold; font-size:13px; color:#1a365d; padding:6px 0;">📋 MIAE CO-OP Rules</summary>
                 <div style="font-size:12px; line-height:1.6; padding:8px 12px; background:#f8f9fa; border:1px solid #e2e8f0; border-radius:6px; margin-top:4px;">
                     <p style="font-weight:bold; color:#912338; margin:0 0 6px;">📌 GPA Requirement</p>
@@ -518,6 +518,19 @@
         // Save state when toggled
         details.addEventListener('toggle', function() {
             sessionStorage.setItem('instructionsOpen', details.open);
+        });
+    })();
+
+    // Persist rules collapse state
+    (function() {
+        const rules = document.getElementById('rulesDetails');
+        if (!rules) return;
+        const saved = sessionStorage.getItem('rulesOpen');
+        if (saved !== null) {
+            rules.open = saved === 'true';
+        }
+        rules.addEventListener('toggle', function() {
+            sessionStorage.setItem('rulesOpen', rules.open);
         });
     })();
 </script>

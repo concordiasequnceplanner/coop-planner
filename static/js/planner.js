@@ -2981,7 +2981,33 @@ window._autoPlaceImpl = function() {
         });
     });
 
-    // ─── 4) Courses to place (same filters as before) ───
+    // ─── 4) Courses to place: CORE/PRG/ECP always, TE up to program limit, exclude OTHER ───
+    // Get TE credit limit from program requirements
+    const _selectedProgAP = document.getElementById('programSelect')?.value || '';
+    const _progReqDbAP = window.APP_CONFIG?.programsRequirementsDb || [];
+    let _teMaxCrAP = 0;
+    _progReqDbAP.forEach(row => {
+        if (String(row['Program'] || '').trim() === _selectedProgAP && String(row['Level'] || '').trim() === 'UGRD') {
+            if (String(row['Type of credits'] || '').trim().toUpperCase() === 'TE') {
+                _teMaxCrAP = parseFloat(row['no of credits'] || 0);
+            }
+        }
+    });
+
+    // Count TE credits already placed on grid (not in unallocated)
+    let _teCrAlreadyPlaced = 0;
+    document.querySelectorAll('.drop-zone .course-box').forEach(box => {
+        if (box.parentElement && box.parentElement.id === 'zone_Unallocated') return;
+        if (box.classList.contains('wt')) return;
+        const db = lookupCourse((box.dataset.courseId || '').toUpperCase()) || {};
+        const t = String(db['CORE_TE'] || '').toUpperCase();
+        if (t === 'TE' || (t.includes('TE') && !t.includes('CORE') && !t.includes('PRG') && !t.includes('ECP'))) {
+            _teCrAlreadyPlaced += parseFloat(box.dataset.credit || 0);
+        }
+    });
+
+    let _teCrBudget = Math.max(0, _teMaxCrAP - _teCrAlreadyPlaced);
+
     const boxesToPlace = Array.from(unallocZone.querySelectorAll('.course-box'))
         .filter(b => !b.classList.contains('course-taken'))
         .filter(b => !b.classList.contains('wt'))
@@ -2991,7 +3017,21 @@ window._autoPlaceImpl = function() {
             const db = lookupCourse(cid);
             if (!db || db._unknown) return false;
             const t = String(db['CORE_TE'] || '').toUpperCase();
-            return !t.includes('TE') || t.includes('CORE');
+            // Exclude OTHER
+            if (t === 'OTHER') return false;
+            // CORE, PRG, ECP → always include
+            if (t.includes('CORE') || t.includes('PRG') || t.includes('ECP')) return true;
+            // TE → include only if within budget
+            if (t.includes('TE')) {
+                const cr = parseFloat(b.dataset.credit || 0);
+                if (_teCrBudget >= cr) {
+                    _teCrBudget -= cr;
+                    return true;
+                }
+                return false;
+            }
+            // Anything else (REP etc.) → include
+            return true;
         });
 
     if (!boxesToPlace.length) {

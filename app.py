@@ -473,14 +473,17 @@ def mask_email(email: str) -> str:
 
 
 @app.route("/favicon.ico")
+@limiter.exempt
 def favicon():
     return ("", 204)
 
 @app.route("/health")
+@limiter.exempt
 def health():
     return "ok", 200
 
 @app.route("/api/keepalive", methods=["POST"])
+@limiter.exempt
 def api_keepalive():
     """Lightweight ping to refresh session last_active (called by frontend on user activity)"""
     if "student_id" not in session:

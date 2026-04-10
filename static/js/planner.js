@@ -4752,6 +4752,57 @@ window.applyLoadedPlan = function(planObj) {
         boxMap.set(getBoxDisplayId(box), box);
     });
 
+    // Recreate REP courses that were saved but don't exist yet
+    (planObj.placements || []).forEach(p => {
+        const did = normDisplayId(p.displayId);
+        if (!did.endsWith('_REP')) return;
+        if (boxMap.has(did)) return; // already exists
+        const origCid = did.replace(/_REP$/, '');
+        const baseCid = origCid.replace(/[AB]$/, '');
+        const dbCourse = lookupCourse(baseCid) || {};
+        if (!dbCourse || dbCourse._unknown) return;
+        const credit = parseFloat(dbCourse.CREDIT || dbCourse.CREDVAL || 3);
+        const repDb = Object.assign({}, dbCourse, {
+            COURSE: did, CORE_TE: 'REP',
+            'PRE-REQUISITE': origCid, 'CO-REQUISITE': '', '_isRepeat': true
+        });
+        coursesData[did] = repDb;
+        const div = document.createElement('div');
+        div.id = `course_rep_${did}`;
+        div.className = 'course-box border-rep';
+        div.dataset.credit = credit;
+        div.dataset.courseId = baseCid;
+        div.dataset.displayId = did;
+        div.dataset.isRepeat = 'true';
+        div.draggable = true;
+        div.ondragstart = window.drag;
+        const title = dbCourse.TITLE || '';
+        const termBadges = getTermsBadges(dbCourse);
+        const isPreFor = (window._isPreReqFor?.[baseCid] || []).join(', ') || 'None';
+        div.innerHTML = `
+            <input type="checkbox" class="c-checkbox" onclick="window.toggleCoursePin(this)">
+            <div class="c-headline">
+                <span class="c-code">${did} (${credit}cr)</span>
+                <span class="rep-label">REP</span>
+                <span class="c-title">${title}</span>
+            </div>
+            <div class="c-meta">
+                <span class="c-type">[REP]</span>
+                <div class="c-badges">${termBadges}</div>
+            </div>
+            <div class="c-reqs">
+                <div><b>PRE-req:</b> ${origCid}&nbsp;&nbsp;||&nbsp;&nbsp;<b>CO-req:</b> None</div>
+                <div><b>is pre for:</b> ${isPreFor}&nbsp;&nbsp;||&nbsp;&nbsp;<b>is co for:</b> None</div>
+            </div>`;
+        div.onclick = () => window.showCourseInfo(baseCid);
+        const origPreForSet = window._isPreReqFor[baseCid] || [];
+        window._isPreReqFor[did] = [...origPreForSet];
+        (window._isPreReqFor[baseCid] = window._isPreReqFor[baseCid] || []).push(did);
+        const unalloc = document.getElementById('zone_Unallocated');
+        if (unalloc) unalloc.appendChild(div);
+        boxMap.set(did, div);
+    });
+
     // Apply placements
     (planObj.placements || []).forEach(p => {
         const box = boxMap.get(normDisplayId(p.displayId));

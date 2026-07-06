@@ -190,8 +190,20 @@ function getActualWtMap() {
 }
 
 
+function isCurrentSummerZone(zone) {
+    return !!zone &&
+        zone.dataset.isCurrent === 'true' &&
+        zone.dataset.isSummer === 'true';
+}
+
 function isAutoPlaceBlocked(zone) {
-    return zone.dataset.isPast === 'true' || zone.dataset.isCurrent === 'true';
+    // Past terms stay locked. The only exception is the current Summer term:
+    // during Summer, students/admins must be able to move the currently loaded
+    // Summer courses while still keeping current Fall/Winter locked.
+    return !!zone && (
+        zone.dataset.isPast === 'true' ||
+        (zone.dataset.isCurrent === 'true' && !isCurrentSummerZone(zone))
+    );
 }
 
 function showSpinner(msg) {
@@ -275,7 +287,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (yBase < oldestYear) oldestYear = yBase;
             }
         });
-        detectedStartYear = Math.max(oldestYear, minAllowedYear);
+        detectedStartYear = oldestYear; // Use actual oldest year, not clamped
     }
 
     // =========================================================
@@ -599,16 +611,29 @@ document.addEventListener("DOMContentLoaded", () => {
             // CVTE/WILE→WT alias: shown green (wt-alias overrides course-taken gray)
             // Actual WT courses from transcript also keep wt class
             const isWtDisplay = c.id.includes('WT') || isCvteWt;
-            div.className        = `course-box ${borderClass} ${isWtDisplay ? 'wt' : ''} ${isCvteWt ? 'wt-alias' : ''} course-taken`;
+            const isCurrentSummerCourse = (
+                currentSeason === 'Summer' &&
+                c.year === currentAcaYearStr &&
+                c.season === 'Summer'
+            );
+            const isLockedTaken = !isCurrentSummerCourse;
+            div.className        = `course-box ${borderClass} ${isWtDisplay ? 'wt' : ''} ${isCvteWt ? 'wt-alias' : ''} ${isLockedTaken ? 'course-taken' : 'current-summer-course movable-current-term'}`;
             div.dataset.credit   = isWt ? 0 : c.credit;
             div.dataset.courseId = baseCid;
             div.dataset.displayId = normDisplayId(displayId);
             div.dataset.grade    = c.grade || "";
+            if (isCurrentSummerCourse) div.dataset.currentSummerMovable = 'true';
             div.draggable      = true;
             div.ondragstart    = window.drag;
             div.innerHTML      = generateCourseHTML(
                 isCvteWt ? `${displayId} (${c.id})` : c.id,
-                isWt ? 0 : c.credit, dbCourse, true, c.grade);
+                isWt ? 0 : c.credit, dbCourse, isLockedTaken, c.grade);
+            if (isCurrentSummerCourse) {
+                div.dataset.pinned = 'true';
+                div.classList.add('pinned');
+                const cb = div.querySelector('.c-checkbox');
+                if (cb && !cb.disabled) cb.checked = true;
+            }
             div.onclick        = () => window.showCourseInfo(displayId);
 
             let cYearBase = parseInt(c.year.split('-')[0]);
@@ -1015,7 +1040,8 @@ document.addEventListener("DOMContentLoaded", () => {
             if (progsToLoad.includes(detectedProgram)) progSel.value = detectedProgram;
         }
 
-        for (let i = minAllowedYear; i <= currentAcaYearStart + 3; i++) {
+        const dropdownStart = Math.min(minAllowedYear, detectedStartYear);
+        for (let i = dropdownStart; i <= currentAcaYearStart + 3; i++) {
             let yStr = `${i}-${i + 1}`;
             sYearSel.add(new Option(yStr, yStr));
             cYearSel.add(new Option(yStr, yStr));
@@ -2167,7 +2193,7 @@ window.processApproval = async function(action) {
         // Iterate all future grid zones (after current term)
         document.querySelectorAll('.drop-zone').forEach(zone => {
             if (zone.id === 'zone_Y0' || zone.id === 'zone_Unallocated') return;
-            if (zone.dataset.isPast === 'true' || zone.dataset.isCurrent === 'true') return;
+            if (isAutoPlaceBlocked(zone)) return;
 
             const actualOrd = getTermOrdFromZoneId(zone.id);
             const actualLabel = zoneToTermLabel(zone.id);
@@ -4715,7 +4741,14 @@ window.applyLoadedPlan = function(planObj) {
     if (programEl) programEl.removeAttribute('onchange');
     
     // Now set values without triggering rebuilds
-    if (planObj.startYear && startYearEl) startYearEl.value = planObj.startYear;
+    if (planObj.startYear && startYearEl) {
+        // Ensure the option exists in the dropdown before setting it
+        const optExists = [...startYearEl.options].some(o => o.value === planObj.startYear);
+        if (!optExists) {
+            startYearEl.add(new Option(planObj.startYear, planObj.startYear), startYearEl.options[0]);
+        }
+        startYearEl.value = planObj.startYear;
+    }
     if (coopCb) {
         const hasTranscriptCoop = Array.isArray(window.APP_CONFIG?.coopTerms) && window.APP_CONFIG.coopTerms.length > 0;
         const hasSavedWT = Array.isArray(planObj.placements) && planObj.placements.some(p =>
@@ -4730,7 +4763,13 @@ window.applyLoadedPlan = function(planObj) {
             coopCb.checked = true;
         }
     }
-    if (planObj.coopStartYear && coopStartYearEl) coopStartYearEl.value = planObj.coopStartYear;
+    if (planObj.coopStartYear && coopStartYearEl) {
+        const optExists = [...coopStartYearEl.options].some(o => o.value === planObj.coopStartYear);
+        if (!optExists) {
+            coopStartYearEl.add(new Option(planObj.coopStartYear, planObj.coopStartYear), coopStartYearEl.options[0]);
+        }
+        coopStartYearEl.value = planObj.coopStartYear;
+    }
     if (planObj.coopStartTerm && coopStartTermEl) coopStartTermEl.value = planObj.coopStartTerm;
     if (planObj.program && programEl) programEl.value = planObj.program;
 

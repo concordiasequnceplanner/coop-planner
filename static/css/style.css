@@ -1047,3 +1047,10 @@ tr.term-names-row td { border: none !important; }
     font-weight: bold;
     text-align: center;
 }
+/* Current Summer transcript courses are editable/movable during the active Summer term. */
+.course-box.current-summer-course {
+    background-color: #fffdf0 !important;
+    border: 1px solid #f1c40f !important;
+    border-left: 4px solid #f1c40f !important;
+    opacity: 1 !important;
+}

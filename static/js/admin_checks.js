@@ -2,6 +2,16 @@
 // MIAE ACADEMIC PLANNER — admin_checks.js
 // =========================================================
 
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, ch => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+    }[ch]));
+}
+
 function toggleAll(source) {
     const checkboxes = document.getElementsByName('studentCheck');
     for (let i = 0; i < checkboxes.length; i++) {
@@ -96,7 +106,7 @@ async function loadCheckData() {
             // Build deviated courses cell if applicable
             let deviatedCoursesCell = '';
             if (showDeviatedCourses && s.deviated_courses) {
-                deviatedCoursesCell = `<td style="font-size:11px; text-align:left; background:#fff8e1; padding:8px; white-space:pre-wrap; word-wrap:break-word; max-width:400px; overflow-y:auto; max-height:200px; font-family:monospace;">${s.deviated_courses}</td>`;
+                deviatedCoursesCell = `<td style="font-size:11px; text-align:left; background:#fff8e1; padding:8px; white-space:pre-wrap; word-wrap:break-word; max-width:400px; overflow-y:auto; max-height:200px; font-family:monospace;">${escapeHtml(s.deviated_courses)}</td>`;
             } else if (showDeviatedCourses) {
                 deviatedCoursesCell = '<td></td>';
             }
@@ -104,7 +114,7 @@ async function loadCheckData() {
             // Build coop program cell if applicable (for Check 6)
             let coopProgramCell = '';
             if (showCoopProgram && s.coop_program) {
-                coopProgramCell = `<td style="font-size:12px; font-weight:bold; color:#16a085; text-align:center;">${s.coop_program}</td>`;
+                coopProgramCell = `<td style="font-size:12px; font-weight:bold; color:#16a085; text-align:center;">${escapeHtml(s.coop_program)}</td>`;
             } else if (showCoopProgram) {
                 coopProgramCell = '<td></td>';
             }
@@ -115,7 +125,7 @@ async function loadCheckData() {
                 // Process courses to highlight CWTE and WILE with blue background
                 const courses = s.current_courses.split('<br>');
                 const processedCourses = courses.map(course => {
-                    const trimmedCourse = course.trim();
+                    const trimmedCourse = escapeHtml(course.trim());
                     if (trimmedCourse.startsWith('CWTE') || trimmedCourse.startsWith('WILE')) {
                         return `<span style="background:#5dade2; color:white; padding:2px 6px; border-radius:3px; display:inline-block; margin:2px 0;">${trimmedCourse}</span>`;
                     }
@@ -128,21 +138,21 @@ async function loadCheckData() {
             }
             
             tr.innerHTML = `
-                <td style="text-align:center;"><input type="checkbox" name="studentCheck" value="${s.id}" checked></td>
-                <td style="font-weight:bold; color:#2980b9;">${s.name}</td>
-                <td style="font-size:11px;">${s.program}</td>
+                <td style="text-align:center;"><input type="checkbox" name="studentCheck" value="${escapeHtml(s.id)}" checked></td>
+                <td style="font-weight:bold; color:#2980b9;">${escapeHtml(s.name)}</td>
+                <td style="font-size:11px;">${escapeHtml(s.program)}</td>
                 ${coopProgramCell}
                 ${currentCoursesCell}
-                <td style="font-size:12px;">${s.email}</td>
-                <td>${s.id}</td>
-                <td style="font-weight:bold; color:#c0392b;">${s.cgpa}</td>
-                <td>${s.cgpa_cr}</td>
-                <td style="font-weight:bold; color:#e67e22;">${s.gpa24}</td>
-                <td>${s.gpa24_cr}</td>
-                <td style="font-size:11px; white-space:nowrap; text-align:left;">${s.wts}</td>
+                <td style="font-size:12px;">${escapeHtml(s.email)}</td>
+                <td>${escapeHtml(s.id)}</td>
+                <td style="font-weight:bold; color:#c0392b;">${escapeHtml(s.cgpa)}</td>
+                <td>${escapeHtml(s.cgpa_cr)}</td>
+                <td style="font-weight:bold; color:#e67e22;">${escapeHtml(s.gpa24)}</td>
+                <td>${escapeHtml(s.gpa24_cr)}</td>
+                <td style="font-size:11px; white-space:nowrap; text-align:left;">${String(s.wts || "").split("<br>").map(escapeHtml).join("<br>")}</td>
                 ${deviatedCoursesCell}
-                <td style="font-size:11px; text-align:left; background:#f9fff9; padding:8px; white-space:pre-wrap; word-wrap:break-word; max-width:300px; overflow-y:auto; max-height:150px;">${s.notes_vis}</td>
-                <td style="font-size:11px; text-align:left; background:#fdf2f2; padding:8px; white-space:pre-wrap; word-wrap:break-word; max-width:300px; overflow-y:auto; max-height:150px;">${s.notes_invis}</td>`;
+                <td style="font-size:11px; text-align:left; background:#f9fff9; padding:8px; white-space:pre-wrap; word-wrap:break-word; max-width:300px; overflow-y:auto; max-height:150px;">${escapeHtml(s.notes_vis)}</td>
+                <td style="font-size:11px; text-align:left; background:#fdf2f2; padding:8px; white-space:pre-wrap; word-wrap:break-word; max-width:300px; overflow-y:auto; max-height:150px;">${escapeHtml(s.notes_invis)}</td>`;
             tbody.appendChild(tr);
         });
 
@@ -164,6 +174,9 @@ async function sendBulkEmails() {
     const body    = document.getElementById('emailMessage').value;
     const short   = document.getElementById('shortMessage').value;
     const subject = document.getElementById('emailTitle').value;
+
+    if (!String(subject || '').trim()) return alert("Email title is required!");
+    if (!String(body || '').trim()) return alert("Email message is required!");
 
     const includeInst = document.getElementById('chkInstAdmin').checked;
     const includeCoopReseq = document.getElementById('chkCoopReseq').checked;
@@ -187,6 +200,7 @@ async function sendBulkEmails() {
     const batchSize = 15;
     let successCount = 0;
     let errorCount   = 0;
+    const failedIds = [];
 
     try {
         for (let i = 0; i < sids.length; i += batchSize) {
@@ -207,15 +221,30 @@ async function sendBulkEmails() {
                 })
             });
 
-            if (res.ok) {
-                successCount += batchSids.length;
+            let data = {};
+            try { data = await res.json(); } catch (_) {}
+
+            if (res.ok || res.status === 207) {
+                const sent = Array.isArray(data.sent) ? data.sent : (data.ok ? batchSids : []);
+                const failed = [
+                    ...(Array.isArray(data.failed) ? data.failed : []),
+                    ...(Array.isArray(data.missing_email) ? data.missing_email : []),
+                    ...(Array.isArray(data.note_failed) ? data.note_failed : [])
+                ];
+                successCount += sent.length;
+                // note_failed means the email WAS sent, but admin follow-up is still needed.
+                const uniqueProblemIds = [...new Set(failed.map(String))];
+                errorCount += uniqueProblemIds.length;
+                failedIds.push(...uniqueProblemIds);
             } else {
                 errorCount += batchSids.length;
-                console.error("Error in batch: ", batchSids);
+                failedIds.push(...batchSids);
+                console.error("Error in batch: ", batchSids, data);
             }
         }
 
-        alert(`✅ Process complete! Sent successfully: ${successCount}. Errors: ${errorCount}.`);
+        const uniqueFailed = [...new Set(failedIds)];
+        alert(`Process complete! Sent: ${successCount}. Issues: ${errorCount}.${uniqueFailed.length ? `\nStudent IDs needing review: ${uniqueFailed.join(', ')}` : ''}`);
     } catch (e) {
         alert("❌ Connection interrupted or server error.");
     } finally {
@@ -285,17 +314,17 @@ async function runCheck7() {
                 const seqColor = seqStatus === 'NONE' ? '#e74c3c' : seqStatus === 'DRAFT' ? '#e67e22' : seqStatus === 'PENDING' ? '#2980b9' : seqStatus === 'REWORK' ? '#8e44ad' : '#888';
                 const tdS = 'padding:4px 10px;border-bottom:1px solid #eee;';
                 html += `<tr style="background:${bg};">
-                    <td style="${tdS}"><input type="checkbox" name="studentCheck" value="${s.sid}" checked></td>
-                    <td style="${tdS}color:#2980b9;font-weight:bold;cursor:pointer;" onclick="window.open('/planner?switch_to=${s.sid}','_blank')">${s.sid}</td>
-                    <td style="${tdS}">${s.name}</td>
-                    <td style="${tdS}font-size:11px;">${s.email || ''}</td>
-                    <td style="${tdS}">${s.gpa24 || '-'}</td>
-                    <td style="${tdS}">${s.cgpa || '-'}</td>
-                    <td style="${tdS}">${s.credits || '-'}</td>
-                    <td style="${tdS}${wt1Future ? futureStyle : pastStyle}">${wt1}</td>
-                    <td style="${tdS}${wt2Future ? futureStyle : pastStyle}">${wt2}</td>
-                    <td style="${tdS}${wt3Future ? futureStyle : pastStyle}">${wt3}</td>
-                    <td style="${tdS}color:${seqColor};font-weight:bold;font-size:11px;">${seqStatus}</td>
+                    <td style="${tdS}"><input type="checkbox" name="studentCheck" value="${escapeHtml(s.sid)}" checked></td>
+                    <td style="${tdS}color:#2980b9;font-weight:bold;cursor:pointer;" onclick="window.open('/planner?switch_to=${encodeURIComponent(s.sid)}','_blank')">${escapeHtml(s.sid)}</td>
+                    <td style="${tdS}">${escapeHtml(s.name)}</td>
+                    <td style="${tdS}font-size:11px;">${escapeHtml(s.email || '')}</td>
+                    <td style="${tdS}">${escapeHtml(s.gpa24 || '-')}</td>
+                    <td style="${tdS}">${escapeHtml(s.cgpa || '-')}</td>
+                    <td style="${tdS}">${escapeHtml(s.credits || '-')}</td>
+                    <td style="${tdS}${wt1Future ? futureStyle : pastStyle}">${escapeHtml(wt1)}</td>
+                    <td style="${tdS}${wt2Future ? futureStyle : pastStyle}">${escapeHtml(wt2)}</td>
+                    <td style="${tdS}${wt3Future ? futureStyle : pastStyle}">${escapeHtml(wt3)}</td>
+                    <td style="${tdS}color:${seqColor};font-weight:bold;font-size:11px;">${escapeHtml(seqStatus)}</td>
                 </tr>`;
             });
             html += '</tbody></table>';
@@ -349,7 +378,7 @@ async function runCheck8() {
         else rangeLabel = 'all time';
 
         const summaryEl = document.getElementById('check8Summary');
-        summaryEl.innerHTML = `🔍 Found <span style="color:#912338;">${data.total_approved}</span> approved sequences (${rangeLabel})`;
+        summaryEl.innerHTML = `🔍 Found <span style="color:#912338;">${Number(data.total_approved) || 0}</span> approved sequences (${escapeHtml(rangeLabel)})`;
         summaryEl.style.display = 'block';
 
         const resultsEl = document.getElementById('check8Results');
@@ -372,7 +401,7 @@ async function runCheck8() {
             const header = document.createElement('div');
             header.style.cssText = 'background:#34495e; color:#fff; padding:10px 15px; font-weight:bold; font-size:15px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; gap:10px;';
             const sidsBtnId = `sidsToggle_${wtKey}`;
-            header.innerHTML = `<span>▼ ${wtKey}</span><span style="display:flex;align-items:center;gap:8px;"><span id="${sidsBtnId}" style="font-size:11px; background:rgba(255,255,255,0.15); padding:3px 10px; border-radius:12px; cursor:pointer;" onclick="event.stopPropagation(); var els=document.querySelectorAll('.sid-list-${wtKey}'); var show=els[0]&&els[0].style.display==='none'; els.forEach(function(e){e.style.display=show?'block':'none';}); this.textContent=show?'Hide IDs':'Show IDs';">Show IDs</span><span style="font-size:13px; background:rgba(255,255,255,0.2); padding:3px 10px; border-radius:12px;">${totalMoved} movement${totalMoved !== 1 ? 's' : ''}</span></span>`;
+            header.innerHTML = `<span>▼ ${escapeHtml(wtKey)}</span><span style="display:flex;align-items:center;gap:8px;"><span id="${sidsBtnId}" style="font-size:11px; background:rgba(255,255,255,0.15); padding:3px 10px; border-radius:12px; cursor:pointer;" onclick="event.stopPropagation(); var els=document.querySelectorAll('.sid-list-${wtKey}'); var show=els[0]&&els[0].style.display==='none'; els.forEach(function(e){e.style.display=show?'block':'none';}); this.textContent=show?'Hide IDs':'Show IDs';">Show IDs</span><span style="font-size:13px; background:rgba(255,255,255,0.2); padding:3px 10px; border-radius:12px;">${Number(totalMoved) || 0} movement${totalMoved !== 1 ? 's' : ''}</span></span>`;
 
             const body = document.createElement('div');
             body.style.cssText = 'padding:0; overflow:hidden;';
@@ -452,15 +481,15 @@ async function runCheck8() {
                     const destHtml = mergedKeys.map(toTerm => {
                         const isSame = fromTerm === toTerm;
                         const cnt = mergedDest[toTerm];
-                        if (isSame) return `<span style="color:#27ae60;">${toTerm} (no change): <b>${cnt}</b></span>`;
-                        return `<span style="color:#e67e22; font-weight:bold;">${toTerm}: <b>${cnt}</b></span>`;
+                        if (isSame) return `<span style="color:#27ae60;">${escapeHtml(toTerm)} (no change): <b>${Number(cnt) || 0}</b></span>`;
+                        return `<span style="color:#e67e22; font-weight:bold;">${escapeHtml(toTerm)}: <b>${Number(cnt) || 0}</b></span>`;
                     }).join('&nbsp;&nbsp;│&nbsp;&nbsp;');
 
                     // Main row
                     const tr = document.createElement('tr');
                     tr.style.cssText = `background:${bgColor}; height:auto;`;
                     tr.innerHTML = `
-                        <td style="padding:3px 10px; border-bottom:1px solid #eee; font-weight:bold; color:#2980b9; white-space:nowrap; line-height:1.2;">${fromTerm}</td>
+                        <td style="padding:3px 10px; border-bottom:1px solid #eee; font-weight:bold; color:#2980b9; white-space:nowrap; line-height:1.2;">${escapeHtml(fromTerm)}</td>
                         <td style="padding:3px 10px; border-bottom:1px solid #eee; text-align:center; font-weight:bold; line-height:1.2; white-space:nowrap;">${totalHtml}</td>
                         <td style="padding:3px 10px; border-bottom:1px solid #eee; line-height:1.2;">${destHtml}</td>`;
                     tbody.appendChild(tr);
@@ -505,11 +534,12 @@ async function runCheck8() {
                         const pDestHtml = pKeys.map((toTerm, ti) => {
                             const isSame = fromTerm === toTerm;
                             const cnt = pMerged[toTerm];
-                            const sidList = (pSids[toTerm] || []).join(' - ');
-                            const togId = `sids_${wtKey}_${idx}_${prog.replace(/\s/g,'')}_${ti}`;
+                            const sidList = (pSids[toTerm] || []).map(escapeHtml).join(' - ');
+                            const safeProgId = String(prog).replace(/[^A-Za-z0-9_-]/g, '_');
+                            const togId = `sids_${wtKey}_${idx}_${safeProgId}_${ti}`;
                             const sidToggle = sidList ? `<span style="cursor:pointer;font-size:10px;color:#aaa;margin-left:3px;" onclick="event.stopPropagation();var el=document.getElementById('${togId}');el.style.display=el.style.display==='none'?'block':'none';">▶</span><div id="${togId}" class="sid-list-${wtKey}" style="display:none;font-size:10px;color:#888;margin-top:1px;">${sidList}</div>` : '';
-                            if (isSame) return `<span style="color:#27ae60;">${toTerm}: ${cnt}</span>${sidToggle}`;
-                            return `<span style="color:#e67e22;">${toTerm}: ${cnt}</span>${sidToggle}`;
+                            if (isSame) return `<span style="color:#27ae60;">${escapeHtml(toTerm)}: ${Number(cnt) || 0}</span>${sidToggle}`;
+                            return `<span style="color:#e67e22;">${escapeHtml(toTerm)}: ${Number(cnt) || 0}</span>${sidToggle}`;
                         }).join('&nbsp;&nbsp;│&nbsp;&nbsp;');
 
                         const isGrad = prog.toLowerCase().includes('grad');
@@ -517,7 +547,7 @@ async function runCheck8() {
                         const subTr = document.createElement('tr');
                         subTr.style.cssText = `background:${bgColor}; height:auto;`;
                         subTr.innerHTML = `
-                            <td style="padding:2px 10px 2px 25px; border-bottom:1px solid #eee; font-size:12px; color:${progColor}; font-weight:600; line-height:1.3; text-align:right;">${prog}</td>
+                            <td style="padding:2px 10px 2px 25px; border-bottom:1px solid #eee; font-size:12px; color:${progColor}; font-weight:600; line-height:1.3; text-align:right;">${escapeHtml(prog)}</td>
                             <td style="padding:2px 10px; border-bottom:1px solid #eee; text-align:right; font-size:12px; line-height:1.3; white-space:nowrap;"><span style="color:#e67e22;">↗${pChanged}</span> + <span style="color:#27ae60;">✓${pNoChange}</span> = ${pTotal}</td>
                             <td style="padding:2px 10px; border-bottom:1px solid #eee; font-size:12px; line-height:1.3;">${pDestHtml}</td>`;
                         tbody.appendChild(subTr);

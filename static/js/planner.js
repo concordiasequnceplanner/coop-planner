@@ -2,8 +2,12 @@
 // MIAE ACADEMIC PLANNER — planner.js
 // =========================================================
 
-// coursesData GLOBAL — populat în DOMContentLoaded, accesibil din showCourseInfo
+// Course catalog indexes populated in DOMContentLoaded.
+// `coursesData` remains the global fallback/dynamic REP registry; program-specific
+// metadata is kept separately so shared IDs such as WT1/WT3 do not borrow rules
+// from another program.
 let coursesData = {};
+let coursesByProgram = {};
 
 // Per-term overrides: { zoneId: { cr: N, cnt: N } }
 window.termOverrides    = {};
@@ -51,7 +55,7 @@ function getTermsBadges(dbCourse) {
 // Suportă: "ENGR 213", "AERO 490A", "ENGR 1234", "MIAE383"
 // Normalizează: fără spații, uppercase, fără sufix A/B (consistent cu dataset.courseId)
 function parseCourseIds(str) {
-    const matches = String(str || '').match(/[A-Z]{2,5}\s*\d{3,4}[A-Z]?/gi) || [];
+    const matches = String(str || '').match(/\b[A-Z]{2,5}\s*\d{3,4}[A-Za-z]?\b/g) || [];
     return matches.map(m => {
         const n = m.replace(/\s/g, '').toUpperCase();
         // Preserve 490A/490B suffix
@@ -63,9 +67,14 @@ function parseCourseIds(str) {
 // Normalizează cheia din coursesData la același format ca dataset.courseId
 function normKey(key) { return key.replace(/[AB]$/, ''); }
 
-// Lookup robust: încearcă cheia exactă, apoi cu sufix A/B (pentru cursuri 490-style)
+// Program-aware lookup: try the currently selected program first, then fall back
+// to the global/dynamic registry (used also for generated _REP courses).
 function lookupCourse(id) {
-    return coursesData[id] || coursesData[id + 'A'] || coursesData[id + 'B'] || null;
+    const key = normDisplayId(id);
+    const selectedProgram = document.getElementById('programSelect')?.value || window.APP_CONFIG?.detectedProgram || '';
+    const pmap = coursesByProgram[selectedProgram] || {};
+    return pmap[key] || pmap[key + 'A'] || pmap[key + 'B'] ||
+           coursesData[key] || coursesData[key + 'A'] || coursesData[key + 'B'] || null;
 }
 
 // Normalize a displayed course id (remove spaces, uppercase)
@@ -86,7 +95,7 @@ function getBoxDisplayId(box) {
 
 // Parse requirement strings into ids preserving suffix (e.g. AERO 490a -> AERO490A)
 function parseReqIdsPreserve(str) {
-    const matches = String(str || '').match(/[A-Z]{2,5}\s*\d{3,4}[A-Z]?/gi) || [];
+    const matches = String(str || '').match(/\b[A-Z]{2,5}\s*\d{3,4}[A-Za-z]?\b/g) || [];
     return matches.map(m => normDisplayId(m));
 }
 
@@ -117,34 +126,95 @@ function getBackwardChain(startId) {
     return { light, dark };
 }
 
+// Return the catalog entries relevant to the currently selected program.
+// Generated _REP courses are layered on top because they exist only at runtime.
+function getActiveCourseRegistry() {
+    const selectedProgram = document.getElementById('programSelect')?.value || window.APP_CONFIG?.detectedProgram || '';
+    const programRegistry = coursesByProgram[selectedProgram];
+    const registry = programRegistry ? { ...programRegistry } : { ...coursesData };
+
+    Object.entries(coursesData).forEach(([key, entry]) => {
+        if (entry && entry._isRepeat) registry[key] = entry;
+    });
+    return registry;
+}
+
+// Rebuild reverse prerequisite/corequisite labels from the ACTIVE program only.
+// This avoids WT1/WT3 and other shared IDs borrowing dependency metadata from
+// another program in CORE_TE.xlsx.
+function rebuildReverseLookupMaps() {
+    const registry = getActiveCourseRegistry();
+    const preMap = {};
+    const coMap = {};
+
+    Object.values(registry).forEach(entry => {
+        if (!entry) return;
+        const thisCid = normEquivId(entry.COURSE || '');
+        if (!thisCid) return;
+
+        parseCourseIds(entry['PRE-REQUISITE']).forEach(req => {
+            const key = normEquivId(req);
+            (preMap[key] = preMap[key] || new Set()).add(thisCid);
+        });
+        parseCourseIds(entry['CO-REQUISITE']).forEach(req => {
+            const key = normEquivId(req);
+            (coMap[key] = coMap[key] || new Set()).add(thisCid);
+        });
+    });
+
+    window._isPreReqFor = {};
+    window._isCoReqFor = {};
+    Object.entries(preMap).forEach(([k, v]) => { window._isPreReqFor[k] = [...v].sort(); });
+    Object.entries(coMap).forEach(([k, v]) => { window._isCoReqFor[k] = [...v].sort(); });
+}
+
+function refreshReverseRequirementText() {
+    document.querySelectorAll('.course-box').forEach(box => {
+        const displayId = getBoxDisplayId(box).replace(/_REP$/i, '');
+        const baseCid = normEquivId(displayId || box.dataset.courseId || '');
+        const reqLines = box.querySelectorAll('.c-reqs > div');
+        if (!baseCid || reqLines.length < 2) return;
+        const isPreFor = (window._isPreReqFor?.[baseCid] || []).join(', ') || 'None';
+        const isCoFor = (window._isCoReqFor?.[baseCid] || []).join(', ') || 'None';
+        reqLines[1].innerHTML = `<b>is pre for:</b> ${escapeHtml(isPreFor)}&nbsp;&nbsp;||&nbsp;&nbsp;<b>is co for:</b> ${escapeHtml(isCoFor)}`;
+    });
+}
+
 // Lanț ÎNAINTE: cursurile care depind de startId
 // Returnează { light: Set (direct co-req-of), dark: Set (direct pre-req-of + tot tranzitiv) }
 function getForwardChain(startId) {
+    const registry = getActiveCourseRegistry();
+    const start = normEquivId(startId);
     const directPostPre = new Set();
     const directPostCo  = new Set();
 
-    Object.entries(coursesData).forEach(([key, entry]) => {
-        const nk    = normKey(key);
-        const pNorm = String(entry['PRE-REQUISITE'] || '').replace(/\s/g, '').toUpperCase();
-        const cNorm = String(entry['CO-REQUISITE']  || '').replace(/\s/g, '').toUpperCase();
-        if (pNorm.includes(startId)) directPostPre.add(nk);
-        if (cNorm.includes(startId)) directPostCo.add(nk);
+    Object.values(registry).forEach(entry => {
+        if (!entry) return;
+        const cid = normEquivId(entry.COURSE || '');
+        if (!cid) return;
+        const pre = new Set(parseCourseIds(entry['PRE-REQUISITE']).map(normEquivId));
+        const co  = new Set(parseCourseIds(entry['CO-REQUISITE']).map(normEquivId));
+        if (pre.has(start)) directPostPre.add(cid);
+        if (co.has(start)) directPostCo.add(cid);
     });
 
     const light   = new Set([...directPostCo].filter(id => !directPostPre.has(id)));
     const dark    = new Set([...directPostPre]);
-    const visited = new Set([startId, ...directPostPre, ...directPostCo]);
+    const visited = new Set([start, ...directPostPre, ...directPostCo]);
     const queue   = [...directPostPre, ...directPostCo];
 
     while (queue.length) {
         const cur = queue.shift();
-        Object.entries(coursesData).forEach(([key, entry]) => {
-            const nk = normKey(key);
-            if (visited.has(nk)) return;
-            const pNorm = String(entry['PRE-REQUISITE'] || '').replace(/\s/g, '').toUpperCase();
-            const cNorm = String(entry['CO-REQUISITE']  || '').replace(/\s/g, '').toUpperCase();
-            if (pNorm.includes(cur) || cNorm.includes(cur)) {
-                visited.add(nk); dark.add(nk); queue.push(nk);
+        Object.values(registry).forEach(entry => {
+            if (!entry) return;
+            const cid = normEquivId(entry.COURSE || '');
+            if (!cid || visited.has(cid)) return;
+            const pre = new Set(parseCourseIds(entry['PRE-REQUISITE']).map(normEquivId));
+            const co  = new Set(parseCourseIds(entry['CO-REQUISITE']).map(normEquivId));
+            if (pre.has(cur) || co.has(cur)) {
+                visited.add(cid);
+                dark.add(cid);
+                queue.push(cid);
             }
         });
     }
@@ -197,9 +267,9 @@ function isCurrentSummerZone(zone) {
 }
 
 function isAutoPlaceBlocked(zone) {
-    // Past terms stay locked. The only exception is the current Summer term:
-    // during Summer, students/admins must be able to move the currently loaded
-    // Summer courses while still keeping current Fall/Winter locked.
+    // This helper limits AUTOMATIC placement/clearing to planning terms only.
+    // It does not lock transcript courses: manual drag/drop follows the V03 rule
+    // (graded = locked, ungraded = movable) regardless of term.
     return !!zone && (
         zone.dataset.isPast === 'true' ||
         (zone.dataset.isCurrent === 'true' && !isCurrentSummerZone(zone))
@@ -237,33 +307,24 @@ document.addEventListener("DOMContentLoaded", () => {
     window.globalMaxCourses = 5;
     window.globalMaxCr      = 18;
 
-    // Populăm dicționarul global coursesData
+    // Build both global and program-specific course indexes.
     if (coursesDb) {
         coursesDb.forEach(c => {
-            const key = String(c.COURSE).replace(/\s/g, '').toUpperCase();
+            const key = String(c.COURSE || '').replace(/\s/g, '').toUpperCase();
+            const prog = String(c.PROGRAM || '').trim();
+            if (!key) return;
             coursesData[key] = c;
+            if (prog) {
+                coursesByProgram[prog] = coursesByProgram[prog] || {};
+                coursesByProgram[prog][key] = c;
+            }
         });
     }
 
-    // Build reverse lookup maps: for each course, who lists it as a prereq/coreq?
-    window._isPreReqFor = {}; // { courseId -> [listOfCoursesItIsPrereqFor] }
-    window._isCoReqFor  = {}; // { courseId -> [listOfCoursesItIsCoReqFor] }
-    Object.values(coursesData).forEach(entry => {
-        const thisCid   = String(entry.COURSE || '').replace(/\s+/g,'').replace(/[AB]$/,'').toUpperCase();
-        const prereqStr = String(entry['PRE-REQUISITE'] || '').replace(/\s/g,'').toUpperCase();
-        const coreqStr  = String(entry['CO-REQUISITE']  || '').replace(/\s/g,'').toUpperCase();
-        Object.keys(coursesData).forEach(cid => {
-            if (prereqStr.includes(cid)) {
-                (window._isPreReqFor[cid] = window._isPreReqFor[cid] || new Set()).add(thisCid);
-            }
-            if (coreqStr.includes(cid)) {
-                (window._isCoReqFor[cid] = window._isCoReqFor[cid] || new Set()).add(thisCid);
-            }
-        });
-    });
-    // Convert Sets to sorted arrays
-    Object.keys(window._isPreReqFor).forEach(k => { window._isPreReqFor[k] = [...window._isPreReqFor[k]].sort(); });
-    Object.keys(window._isCoReqFor).forEach(k  => { window._isCoReqFor[k]  = [...window._isCoReqFor[k]].sort();  });
+    // Reverse dependency maps are built after programSelect is initialized,
+    // so they are program-specific rather than global across all catalog rows.
+    window._isPreReqFor = {};
+    window._isCoReqFor  = {};
 
     // --- CALCULE TIMP ---
     const now              = new Date();
@@ -299,7 +360,14 @@ document.addEventListener("DOMContentLoaded", () => {
     };
 
     window.drag = function(ev) {
-        ev.dataTransfer.setData("text", ev.target.id);
+        const box = ev.currentTarget || ev.target;
+        // V03 safety guard: graded transcript courses are locked even if a browser
+        // or future code accidentally attempts to start a drag on them.
+        if (box && box.classList && box.classList.contains('course-taken')) {
+            ev.preventDefault();
+            return false;
+        }
+        ev.dataTransfer.setData("text", box.id);
     };
 
     window.drop = function(ev) {
@@ -308,6 +376,8 @@ document.addEventListener("DOMContentLoaded", () => {
         const id = ev.dataTransfer.getData("text");
         const el = document.getElementById(id);
         if (!el) return;
+        // V03 safety guard: a graded transcript course cannot be moved by drop logic.
+        if (el.classList.contains('course-taken')) return;
         const dropZone = ev.currentTarget;
         if (dropZone && dropZone.classList.contains('drop-zone')) {
             dropZone.appendChild(el);
@@ -364,7 +434,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const prereq = dbCourse['PRE-REQUISITE'] || 'None';
         const coreq  = dbCourse['CO-REQUISITE']  || 'None';
-        const baseCid = cId.replace(/[AB]$/, '').replace(/\s/g, '').toUpperCase();
+        const baseCid = normEquivId(cId);
         const isPreFor = (window._isPreReqFor?.[baseCid] || []).join(', ') || 'None';
         const isCoFor  = (window._isCoReqFor?.[baseCid]  || []).join(', ') || 'None';
 
@@ -375,10 +445,11 @@ document.addEventListener("DOMContentLoaded", () => {
         // Add grade badge for taken courses (only for power users)
         let gradeBadge = '';
         const isPowerUser = window.APP_CONFIG?.isPowerUser || false;
-        if (isTaken && grade && isPowerUser) {
+        const gradeText = grade == null ? '' : String(grade);
+        if (isTaken && gradeText && isPowerUser) {
             // Determine grade class based on letter grade
             let gradeClass = 'grade-other';
-            const gradeUpper = grade.toUpperCase();
+            const gradeUpper = gradeText.toUpperCase();
             if (gradeUpper.startsWith('A')) {
                 gradeClass = 'grade-a';
             } else if (gradeUpper.startsWith('B')) {
@@ -390,23 +461,23 @@ document.addEventListener("DOMContentLoaded", () => {
             } else if (gradeUpper === 'DISC') {
                 gradeClass = 'grade-disc';
             }
-            gradeBadge = `<span class="grade-badge ${gradeClass}">${grade}</span>`;
+            gradeBadge = `<span class="grade-badge ${gradeClass}">${escapeHtml(gradeText)}</span>`;
         }
 
         return `
             ${checkbox}
             <div class="c-headline">
-                <span class="c-code">${cId} (${credits}cr)</span>
+                <span class="c-code">${escapeHtml(String(cId))} (${escapeHtml(String(credits))}cr)</span>
                 ${gradeBadge}
-                <span class="c-title">${title}</span>
+                <span class="c-title">${escapeHtml(String(title))}</span>
             </div>
             <div class="c-meta">
-                <span class="c-type">[${type}]</span>
+                <span class="c-type">[${escapeHtml(String(type))}]</span>
                 <div class="c-badges">${termBadges}</div>
             </div>
             <div class="c-reqs">
-                <div><b>PRE-req:</b> ${prereq}&nbsp;&nbsp;||&nbsp;&nbsp;<b>CO-req:</b> ${coreq}</div>
-                <div><b>is pre for:</b> ${isPreFor}&nbsp;&nbsp;||&nbsp;&nbsp;<b>is co for:</b> ${isCoFor}</div>
+                <div><b>PRE-req:</b> ${escapeHtml(String(prereq))}&nbsp;&nbsp;||&nbsp;&nbsp;<b>CO-req:</b> ${escapeHtml(String(coreq))}</div>
+                <div><b>is pre for:</b> ${escapeHtml(String(isPreFor))}&nbsp;&nbsp;||&nbsp;&nbsp;<b>is co for:</b> ${escapeHtml(String(isCoFor))}</div>
             </div>
         `;
     }
@@ -545,6 +616,7 @@ document.addEventListener("DOMContentLoaded", () => {
                             <span id="limits_${zoneId}" style="cursor:pointer;text-decoration:underline dotted #aaa;" title="Click to override this term's limits" onclick="event.stopPropagation(); window.openTermPopover('${zoneId}', this)">≤<span id="maxCr_${zoneId}">${hardMaxCr}</span>cr | ≤<span id="maxCnt_${zoneId}">-</span>#</span>
                         </div>
                         <div id="restrictions_${zoneId}" class="term-restrictions-container"></div>
+                        <div id="term_validation_${zoneId}" class="term-validation-container" style="display:none;"></div>
                         ${cgpaHtml}
                         <div class="drop-zone" id="${zoneId}"
                              data-is-past="${isPast}"
@@ -559,6 +631,7 @@ document.addEventListener("DOMContentLoaded", () => {
             tbody.appendChild(tr);
         }
 
+        rebuildReverseLookupMaps();
         placeCourses();
         window.updateUnallocated();
         window.updateCredits(); // re-run after unallocated is populated (WT detection needs full DOM)
@@ -577,7 +650,33 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const sYearBase = parseInt(sYearStr.split('-')[0]);
         const isCoop    = document.getElementById('coopRegistered').checked;
-        const placedWtAliases = new Set();
+        // Several transcript codes can map to the same displayed WT (for example
+        // CWTE100/CWTE101 -> WT1). Represent the LATEST transcript occurrence, not
+        // whichever row happened to be encountered first. Otherwise an old graded
+        // WT alias could incorrectly hide a newer ungraded/floating occurrence.
+        const preferredWtAliasIndex = new Map();
+        const seasonOrd = { Summer: 1, Fall: 2, Winter: 3 };
+        studentCourses.forEach((course, idx) => {
+            const raw = String(course.id || '').replace(/\s/g, '').toUpperCase();
+            const alias = WT_ALIASES[raw];
+            if (!alias) return;
+            const y = parseInt(String(course.year || '').split('-')[0], 10);
+            const ord = (Number.isFinite(y) ? y : -9999) * 10 + (seasonOrd[course.season] || 0);
+            const graded = String(course.grade == null ? '' : course.grade).trim() !== '';
+            const prev = preferredWtAliasIndex.get(alias);
+            // If two transcript rows map to the same displayed WT in the same term,
+            // prefer the UNGRADED row.  V03's source-of-truth rule is grade-based:
+            // ungraded = floating/movable, graded = locked.  Using a graded alias here
+            // would incorrectly lock an active ungraded WT that shares the same WT label.
+            if (
+                !prev ||
+                ord > prev.ord ||
+                (ord === prev.ord && !graded && prev.graded) ||
+                (ord === prev.ord && graded === prev.graded && idx > prev.idx)
+            ) {
+                preferredWtAliasIndex.set(alias, { idx, ord, graded });
+            }
+        });
 
         studentCourses.forEach((c, i) => {
             const rawCid = c.id.replace(/\s/g, '').toUpperCase();
@@ -588,11 +687,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const isCvteWt = rawCid in WT_ALIASES;
             const displayId = isCvteWt ? WT_ALIASES[rawCid] : c.id;
 
-            // Only place each WT alias (WT1/WT2/WT3) once even if multiple CWTE/WILE codes exist
-            if (isCvteWt) {
-                if (placedWtAliases.has(displayId)) return;
-                placedWtAliases.add(displayId);
-            }
+            if (isCvteWt && preferredWtAliasIndex.get(displayId)?.idx !== i) return;
             const isWt = c.id.includes('WT') || isCvteWt;
 
             if (!isCoop && isWt) return;
@@ -611,24 +706,34 @@ document.addEventListener("DOMContentLoaded", () => {
             // CVTE/WILE→WT alias: shown green (wt-alias overrides course-taken gray)
             // Actual WT courses from transcript also keep wt class
             const isWtDisplay = c.id.includes('WT') || isCvteWt;
-            const isCurrentSummerCourse = (
-                currentSeason === 'Summer' &&
-                c.year === currentAcaYearStr &&
-                c.season === 'Summer'
-            );
-            const isLockedTaken = !isCurrentSummerCourse;
-            div.className        = `course-box ${borderClass} ${isWtDisplay ? 'wt' : ''} ${isCvteWt ? 'wt-alias' : ''} ${isLockedTaken ? 'course-taken' : 'current-summer-course movable-current-term'}`;
+
+            // V03 RULE — transcript locking is determined ONLY by grade presence:
+            //   grade present  -> locked / taken
+            //   no grade       -> floating / movable
+            // This deliberately replaces the previous "current Summer only" exception.
+            const gradeValue = c.grade == null ? '' : String(c.grade).trim();
+            const isLockedTaken = gradeValue !== '';
+            const isFloatingTranscriptCourse = !isLockedTaken;
+
+            div.className        = `course-box ${borderClass} ${isWtDisplay ? 'wt' : ''} ${isCvteWt ? 'wt-alias' : ''} ${isLockedTaken ? 'course-taken' : 'floating-transcript-course movable-current-term'}`;
             div.dataset.credit   = isWt ? 0 : c.credit;
             div.dataset.courseId = baseCid;
             div.dataset.displayId = normDisplayId(displayId);
-            div.dataset.grade    = c.grade || "";
-            if (isCurrentSummerCourse) div.dataset.currentSummerMovable = 'true';
-            div.draggable      = true;
-            div.ondragstart    = window.drag;
+            div.dataset.grade    = gradeValue;
+            div.dataset.transcriptState = isLockedTaken ? 'locked-graded' : 'floating-ungraded';
+
+            // A graded transcript course is genuinely locked: the browser must not
+            // start a drag operation for it. Ungraded transcript courses remain movable.
+            div.draggable      = isFloatingTranscriptCourse;
+            div.ondragstart    = isFloatingTranscriptCourse ? window.drag : null;
             div.innerHTML      = generateCourseHTML(
                 isCvteWt ? `${displayId} (${c.id})` : c.id,
-                isWt ? 0 : c.credit, dbCourse, isLockedTaken, c.grade);
-            if (isCurrentSummerCourse) {
+                isWt ? 0 : c.credit, dbCourse, isLockedTaken, gradeValue);
+
+            // Keep a floating transcript course in its transcript term by default,
+            // but allow the user to drag it anywhere. Pinning here only protects it
+            // from automatic placement; it does NOT lock manual movement.
+            if (isFloatingTranscriptCourse) {
                 div.dataset.pinned = 'true';
                 div.classList.add('pinned');
                 const cb = div.querySelector('.c-checkbox');
@@ -658,6 +763,8 @@ document.addEventListener("DOMContentLoaded", () => {
     // CURSURI NEALOCATE (SIDEBAR)
     // =========================================================
     window.updateUnallocated = function() {
+        rebuildReverseLookupMaps();
+        refreshReverseRequirementText();
         const unallocZone = document.getElementById('zone_Unallocated');
         if (!unallocZone) return;
         unallocZone.innerHTML = '';
@@ -1039,6 +1146,7 @@ document.addEventListener("DOMContentLoaded", () => {
             progsToLoad.forEach(p => progSel.add(new Option(p, p)));
             if (progsToLoad.includes(detectedProgram)) progSel.value = detectedProgram;
         }
+        rebuildReverseLookupMaps();
 
         const dropdownStart = Math.min(minAllowedYear, detectedStartYear);
         for (let i = dropdownStart; i <= currentAcaYearStart + 3; i++) {
@@ -1132,6 +1240,10 @@ document.addEventListener("DOMContentLoaded", () => {
             const ip = window.APP_CONFIG.initialPlan;
             const obj = (typeof ip === 'string') ? JSON.parse(ip) : ip;
             window.applyLoadedPlan(obj);
+            window.setLoadedSequenceContext?.(
+                window.APP_CONFIG.initialPlanId,
+                window.APP_CONFIG.initialPlanStatus
+            );
         }
         catch(e) { console.error('Initial plan parse failed', e); }
     }
@@ -1288,6 +1400,44 @@ document.addEventListener("DOMContentLoaded", () => {
     // =========================================================
     // REPEAT COURSE FUNCTIONALITY
     // =========================================================
+    // Delete a generated _REP course from the current plan.  The delete control
+    // is shown only while the repeat is in the Unallocated sidebar, so historical
+    // transcript attempts / locked courses can never be removed through this path.
+    window.deleteRepeatCourse = function(repCid, event) {
+        if (event) {
+            event.preventDefault();
+            event.stopPropagation();
+        }
+
+        const did = normDisplayId(repCid);
+        if (!did.endsWith('_REP')) return;
+
+        const box = Array.from(document.querySelectorAll('.course-box')).find(
+            el => getBoxDisplayId(el) === did
+        );
+        if (!box) return;
+
+        // UI exposes DELETE only in Unallocated. Keep the same guard here too.
+        if (box.parentElement?.id !== 'zone_Unallocated') {
+            alert('Move the repeated course to Unallocated before deleting it.');
+            return;
+        }
+
+        if (!confirm(`Delete ${did} from this plan?`)) return;
+
+        box.remove();
+        delete coursesData[did];
+
+        // Rebuild dependency metadata so the removed repeat is no longer shown
+        // as a prerequisite/post-requisite anywhere in the planner.
+        rebuildReverseLookupMaps();
+        refreshReverseRequirementText();
+        window.populateRepeatDropdown();
+        window.sortUnallocated();
+        window.updateCredits();
+        if (typeof window.validateGrid === 'function') window.validateGrid();
+    };
+
     window.populateRepeatDropdown = function() {
         const sel = document.getElementById('repeatCourseSelect');
         if (!sel) return;
@@ -1297,6 +1447,10 @@ document.addEventListener("DOMContentLoaded", () => {
         const takenIds = new Set();
         document.querySelectorAll('.course-box.course-taken').forEach(box => {
             const cid = (box.dataset.displayId || box.dataset.courseId || '').toUpperCase();
+            // Work terms are not academic courses and must never be offered through
+            // REPEAT A COURSE.  Legacy behaviour could create WT1_REP and assign the
+            // CORE_TE workload value (16) as if it were academic credits.
+            if (box.classList.contains('wt') || /^WT[123]$/.test(cid)) return;
             if (cid) takenIds.add(cid);
         });
 
@@ -1324,6 +1478,12 @@ document.addEventListener("DOMContentLoaded", () => {
         const sel = document.getElementById('repeatCourseSelect');
         if (!sel || !sel.value) { alert('Select a course to repeat.'); return; }
         const origCid = sel.value;
+        // Defensive guard: WT repeats are invalid even if a stale DOM/legacy save
+        // somehow provides WT1/WT2/WT3 as the selected value.
+        if (/^WT[123]$/i.test(origCid)) {
+            alert('Work Terms cannot be added through REPEAT A COURSE.');
+            return;
+        }
         const repCid = origCid + '_REP';
         const baseCid = origCid.replace(/[AB]$/, '');
 
@@ -1360,18 +1520,21 @@ document.addEventListener("DOMContentLoaded", () => {
 
         div.innerHTML = `
             <input type="checkbox" class="c-checkbox" onclick="window.toggleCoursePin(this)">
+            <button type="button" class="rep-delete-btn" draggable="false"
+                    title="Delete this repeated course"
+                    onclick="window.deleteRepeatCourse('${repCid}', event)">× Delete</button>
             <div class="c-headline">
-                <span class="c-code">${repCid} (${credit}cr)</span>
+                <span class="c-code">${escapeHtml(String(repCid))} (${escapeHtml(String(credit))}cr)</span>
                 <span class="rep-label">REP</span>
-                <span class="c-title">${title}</span>
+                <span class="c-title">${escapeHtml(String(title))}</span>
             </div>
             <div class="c-meta">
                 <span class="c-type">[REP]</span>
                 <div class="c-badges">${termBadges}</div>
             </div>
             <div class="c-reqs">
-                <div><b>PRE-req:</b> ${prereq}&nbsp;&nbsp;||&nbsp;&nbsp;<b>CO-req:</b> ${coreq}</div>
-                <div><b>is pre for:</b> ${isPreFor}&nbsp;&nbsp;||&nbsp;&nbsp;<b>is co for:</b> ${isCoFor}</div>
+                <div><b>PRE-req:</b> ${escapeHtml(String(prereq))}&nbsp;&nbsp;||&nbsp;&nbsp;<b>CO-req:</b> ${escapeHtml(String(coreq))}</div>
+                <div><b>is pre for:</b> ${escapeHtml(String(isPreFor))}&nbsp;&nbsp;||&nbsp;&nbsp;<b>is co for:</b> ${escapeHtml(String(isCoFor))}</div>
             </div>
         `;
         div.onclick = () => window.showCourseInfo(baseCid);
@@ -1404,6 +1567,33 @@ document.addEventListener("DOMContentLoaded", () => {
     // All non-empty conditions are ANDed together.
     // =========================================================
     window.restrictionsDb = config.restrictionsDb || [];
+
+    window.parseRestrictionEffectiveDate = function(rawValue) {
+        const raw = String(rawValue ?? '').trim();
+        if (!raw || ['nan', 'nat', 'none'].includes(raw.toLowerCase())) return null;
+
+        // ISO date-only strings must be constructed in LOCAL time. `new Date('YYYY-MM-DD')`
+        // is interpreted as UTC and can shift to the previous day in Montreal.
+        const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (iso) {
+            return new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+        }
+
+        // Backward compatibility for raw Excel serial dates. Convert the serial to
+        // UTC calendar components first, then rebuild that same calendar date locally.
+        if (/^\d+(?:\.\d+)?$/.test(raw)) {
+            const serial = Number(raw);
+            if (serial >= 20000 && serial <= 100000) {
+                const utc = new Date(Date.UTC(1899, 11, 30) + serial * 86400000);
+                return new Date(utc.getUTCFullYear(), utc.getUTCMonth(), utc.getUTCDate());
+            }
+        }
+
+        const d = new Date(raw);
+        if (isNaN(d.getTime())) return null;
+        d.setHours(0, 0, 0, 0);
+        return d;
+    };
 
     // Determine selected program family for matching
     function getProgFamily(progName) {
@@ -1455,10 +1645,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
             // 1) Date filter: if "Date after which takes effect" is set, only apply if today >= that date
             const dateStr = r['Date after which takes effect'];
-            if (dateStr && String(dateStr).trim() && String(dateStr).toLowerCase() !== 'nan' && String(dateStr).toLowerCase() !== 'nat') {
-                const effDate = new Date(dateStr);
-                if (!isNaN(effDate.getTime()) && today < effDate) match = false;
-            }
+            const effDate = window.parseRestrictionEffectiveDate(dateStr);
+            if (effDate && today < effDate) match = false;
 
             // 2) Program filter: if Program column is set, must match current program family
             const rProg = String(r['Program'] || '').trim().toUpperCase();
@@ -1594,9 +1782,10 @@ document.addEventListener("DOMContentLoaded", () => {
         // Get program requirements from Programs sheet
         const selectedProg = document.getElementById('programSelect')?.value || '';
         const programsReqDb = window.APP_CONFIG?.programsRequirementsDb || [];
-        const progReqs = {}; // { 'ENG CORE': 27, 'PRG CORE': 87, 'TE': 6 }
+        const selectedLevel = _isGradCredits ? 'GRAD' : 'UGRD';
+        const progReqs = {}; // category -> required credits
         programsReqDb.forEach(row => {
-            if (String(row['Program'] || '').trim() === selectedProg && String(row['Level'] || '').trim() === 'UGRD') {
+            if (String(row['Program'] || '').trim() === selectedProg && String(row['Level'] || '').trim().toUpperCase() === selectedLevel) {
                 const type = String(row['Type of credits'] || '').trim();
                 const required = parseFloat(row['no of credits'] || 0);
                 if (type && required >= 0) {  // Include even if 0
@@ -1778,8 +1967,9 @@ document.addEventListener("DOMContentLoaded", () => {
         autosizeTextarea(el);
     });
     
-    // Auto-load most recent APPROVED sequence on page load
-    // Skip if loading from pending or if user manually loaded a sequence
+    // Auto-load the server-selected baseline sequence on page load.
+    // Server returns the chronologically newest saved sequence, regardless of status.
+    // Skip if a specific sequence was already loaded or autoload was explicitly suppressed.
     setTimeout(async () => {
         console.log('[AUTOLOAD] Starting autoload check...');
         
@@ -1814,6 +2004,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     item.plan.reason_code = item.reason_code;
                     item.plan.justification = item.justification;
                     window.applyLoadedPlan(item.plan);
+                    window.setLoadedSequenceContext?.(seq.id, item.status || seq.status || '');
                 } else {
                     console.log('[AUTOLOAD] ERROR: No plan data in response');
                 }
@@ -1860,7 +2051,7 @@ document.addEventListener("DOMContentLoaded", () => {
 // =========================================================
 window.showCourseInfo = function(cid) {
     // Info is now shown inline on each course card — click only triggers visual highlighting
-    const baseCid = cid.replace(/[AB]$/, '').replace(/\s/g, '').toUpperCase();
+    const baseCid = normEquivId(cid);
 
     const { light: backLight, dark: backDark } = getBackwardChain(baseCid);
     const { light: fwdLight,  dark: fwdDark  } = getForwardChain(baseCid);
@@ -1888,30 +2079,42 @@ window.showCourseInfo = function(cid) {
 };
 
 // =========================================================
-// API — SAVE SEQUENCE / ADMIN NOTES
-// =========================================================
-window.saveSequence = async function(statusStr) {
-    let payload = {
-        target_sid:    window.APP_CONFIG.viewingSid || window.APP_CONFIG.student_id,
-        program:       document.getElementById('programSelect').value,
-        status:        statusStr,
-        justification: document.getElementById('justificationText') ? document.getElementById('justificationText').value : "",
-        sequence_data: {}
-    };
-    document.querySelectorAll('.drop-zone').forEach(z => {
-        payload.sequence_data[z.id] = Array.from(z.children).map(c => c.id);
-    });
-    const route = statusStr === 'DRAFT' ? '/api/save_draft' : '/api/submit_sequence';
-    try {
-        let res = await fetch(route, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-        if (res.ok) alert(`Sequence saved as ${statusStr}`);
-    } catch(e) { console.error(e); }
-};
-
-// =========================================================
 // ADMIN — SWITCH VIEWING STUDENT (Power Users)
 // Server-side authorization: app.py checks session student_id starts with '9'
 // =========================================================
+// =========================================================
+// LOADED SEQUENCE CONTEXT
+// Keeps the currently loaded Saved_Sequences row identity/status in one place.
+// This prevents APPROVE/REWORK from losing a pending id when the plan was loaded
+// through the generic Load dialog or via auto-load rather than the Pending menu.
+// =========================================================
+window.setLoadedSequenceContext = function(seqId, status) {
+    const id = String(seqId || '').trim();
+    const st = String(status || '').trim().toUpperCase();
+    const isPending = st === 'PENDING APPROVAL' || st === 'PENDING_APPROVAL';
+
+    window._loadedSequenceId = id;
+    window._loadedSequenceStatus = st;
+    window._pendingLoaded = !!isPending;
+
+    if (window.APP_CONFIG?.isPowerUser && isPending && id) {
+        sessionStorage.setItem('_pendingLoad', '1');
+        sessionStorage.setItem('_pendingSeqId', id);
+    } else {
+        // Critical: do not let an old pending id survive after loading a draft,
+        // approved, rework, or any other sequence.
+        sessionStorage.removeItem('_pendingLoad');
+        sessionStorage.removeItem('_pendingSeqId');
+    }
+
+    const btnSubmit = document.getElementById('btnSubmitApproval');
+    if (btnSubmit && window.APP_CONFIG?.isPowerUser) {
+        btnSubmit.disabled = !!isPending;
+        btnSubmit.style.opacity = isPending ? '0.45' : '1';
+        btnSubmit.style.cursor = isPending ? 'not-allowed' : 'pointer';
+    }
+};
+
 // =========================================================
 // PENDING APPROVALS DROPDOWN (header button for admins)
 // =========================================================
@@ -1928,27 +2131,54 @@ window.openPendingMenu = async function() {
             dropdown.innerHTML = '<div style="padding:8px;color:#888;font-size:11px;">No pending approvals.</div>';
             return;
         }
-        dropdown.innerHTML = pending.slice(0, 25).map(p => {
+        dropdown.innerHTML = '';
+        pending.slice(0, 25).forEach(p => {
             const dt = String(p.updated_at || '').substring(0, 16);
-            return `<div class="pending-menu-item" onclick="window.openPendingItem('${p.id}','${p.student_id}')">`
-                + `<b>${p.student_id}</b>${p.student_name ? ' — ' + p.student_name : ''}<br>`
-                + `<span style="color:#888;">${p.name || ''} | ${dt}</span></div>`;
-        }).join('');
+            const item = document.createElement('div');
+            item.className = 'pending-menu-item';
+
+            const head = document.createElement('b');
+            head.textContent = String(p.student_id || '');
+            item.appendChild(head);
+            if (p.student_name) item.appendChild(document.createTextNode(` — ${String(p.student_name)}`));
+            item.appendChild(document.createElement('br'));
+
+            const meta = document.createElement('span');
+            meta.style.color = '#888';
+            meta.textContent = `${String(p.name || '')} | ${dt}`;
+            item.appendChild(meta);
+
+            item.addEventListener('click', () => window.openPendingItem(String(p.id || ''), String(p.student_id || '')));
+            dropdown.appendChild(item);
+        });
     } catch(e) {
         dropdown.innerHTML = '<div style="padding:8px;color:#e74c3c;font-size:11px;">Error loading.</div>';
     }
 };
 
 window.openPendingItem = async function(seqId, studentId) {
+    // One physical click must produce one navigation, even if the user double-clicks
+    // or two click events arrive before the first async request finishes.
+    if (window._openingPendingItem) return;
+    window._openingPendingItem = true;
+
     try {
         const dropdown = document.getElementById('pendingMenuDropdown');
-        if (dropdown) dropdown.style.display = 'none';
+        if (dropdown) {
+            dropdown.style.display = 'none';
+            dropdown.style.pointerEvents = 'none';
+        }
         await apiJson('/api/admin/view_sid', 'POST', { student_id: studentId });
         sessionStorage.setItem('_pendingLoad', '1');
-        sessionStorage.setItem('_skipAutoLoad', '1'); // Disable auto-load when loading from pending
-        sessionStorage.setItem('_pendingSeqId', seqId);
-        window.location.href = `/planner?load_seq_id=${encodeURIComponent(seqId)}`;
+        sessionStorage.setItem('_skipAutoLoad', '1'); // specific load_seq_id wins
+        sessionStorage.setItem('_pendingSeqId', String(seqId || ''));
+        window._loadedSequenceId = String(seqId || '');
+        window._loadedSequenceStatus = 'PENDING APPROVAL';
+        window.location.assign(`/planner?load_seq_id=${encodeURIComponent(seqId)}`);
     } catch(e) {
+        window._openingPendingItem = false;
+        const dropdown = document.getElementById('pendingMenuDropdown');
+        if (dropdown) dropdown.style.pointerEvents = '';
         alert('Error: ' + e.message);
     }
 };
@@ -2092,10 +2322,23 @@ window.processApproval = async function(action) {
     window._approvalInProgress = true; // lock immediately before any confirm dialogs
 
     const viewingSid = window.APP_CONFIG.viewingSid;
-    const seqId2 = sessionStorage.getItem('_pendingSeqId') || (window.APP_CONFIG.initialPlanId ? String(window.APP_CONFIG.initialPlanId).replace(/"/g,'') : '');
-    if (!seqId2) {
-        const proceed = confirm('No sequence loaded to approve.\n\nPress OK to proceed anyway, or Cancel to abort.');
-        if (!proceed) { window._approvalInProgress = false; return; }
+    const seqId2 = String(
+        window._loadedSequenceId ||
+        sessionStorage.getItem('_pendingSeqId') ||
+        window.APP_CONFIG.initialPlanId ||
+        ''
+    ).replace(/"/g, '').trim();
+    const loadedStatus = String(
+        window._loadedSequenceStatus ||
+        window.APP_CONFIG.initialPlanStatus ||
+        (sessionStorage.getItem('_pendingLoad') === '1' ? 'PENDING APPROVAL' : '')
+    ).trim().toUpperCase();
+    const isPendingContext = loadedStatus === 'PENDING APPROVAL' || loadedStatus === 'PENDING_APPROVAL';
+
+    if (!seqId2 || !isPendingContext) {
+        window._approvalInProgress = false;
+        alert('No pending sequence is loaded. Open a pending submission before APPROVE/REWORK.');
+        return;
     }
 
     const conf = confirm(`Are you sure you want to ${action} this sequence for ${viewingSid}?`);
@@ -2115,7 +2358,8 @@ window.processApproval = async function(action) {
     if (btnApprove) btnApprove.disabled = true;
     if (btnRework) btnRework.disabled = true;
 
-    const termSummary = buildEmailTermSummary();
+    const approvalPlan = collectPlanSnapshot();
+    const termSummary = buildEmailTermSummary(approvalPlan);
 
     // Build WT summary
     const plannedWt = getPlannedWtMap();
@@ -2278,36 +2522,36 @@ window.processApproval = async function(action) {
             wt_summary: wtSummary,
             term_summary: termSummary,
             justification: document.getElementById('justificationText')?.value || '',
+            issues: currentIssues(),
             validation_errors: valErrors,
             course_deviations: courseDeviations,
             reason_code: reasonCode,
-            plan: collectPlanSnapshot()  // Include plan data for approve handler
+            plan: approvalPlan  // Exact same snapshot used to build term_summary
         };
         
-        // Auto-prepend approval/rework comment to public notes
-        try {
+        // Auto-prepend approval/rework comment to the payload only.
+        // The backend validates the snapshot first and then commits comments +
+        // sequence state in one transaction. Do not write comments in a separate
+        // request before approval succeeds.
+        {
             const now = new Date();
             const pad = n => String(n).padStart(2, '0');
             const dt = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
             const email = window.APP_CONFIG?.adminEmail || window.APP_CONFIG?.studentId || '';
             const actionLabel = action === 'APPROVED' ? 'Sequence APPROVED' : 'Sequence REWORK';
             const existing = String(document.getElementById('publicNotes')?.value || '').trim();
-            const newComment = `[${dt}, ${email}]: ${actionLabel}${existing ? '\n\n' + existing : ''}`;
-            await apiJson('/api/comments/append', 'POST', { text: newComment });
-            const pubEl = document.getElementById('publicNotes');
-            if (pubEl) pubEl.value = newComment;
-            // Update payload with the new public_comments
-            payload.public_comments = newComment;
-        } catch (ne) {
-            console.warn('Could not append approval comment to public notes:', ne.message);
+            payload.public_comments = `[${dt}, ${email}]: ${actionLabel}${existing ? '\n\n' + existing : ''}`;
         }
-        
+
         const res = await apiJson('/api/admin/approve', 'POST', payload);
         if (res.ok) {
             hideSpinner();
-            alert(`${action} successfully.`);
+            alert(res.warning ? `${action} saved.\n\n${res.warning}` : `${action} successfully.`);
             sessionStorage.removeItem('_pendingLoad');
             sessionStorage.removeItem('_pendingSeqId');
+            window._loadedSequenceId = '';
+            window._loadedSequenceStatus = '';
+            window._pendingLoaded = false;
             // Reset to admin's own view and reload
             try { await apiJson('/api/admin/reset_view', 'POST'); } catch(_) {}
             window.location.href = '/planner';
@@ -2631,6 +2875,9 @@ window.clearTermOverride = function() {
 // =========================================================
 function getProgramKey(progName) {
     const p = String(progName).toUpperCase();
+    // CORE_TE Sequences currently contains UGRD standard sequences only.
+    // Never map a GRAD program onto an undergraduate sequence by name similarity.
+    if (p.includes('GRAD')) return null;
     if (p.includes('INDUSTRIAL')) return 'INDUSTRIAL';
     if (p.includes('MECHANICAL') || p.includes('MECH')) return 'MECHANICAL';
     if (p.includes('AERO')) {
@@ -3011,9 +3258,10 @@ window._autoPlaceImpl = function() {
     // Get TE credit limit from program requirements
     const _selectedProgAP = document.getElementById('programSelect')?.value || '';
     const _progReqDbAP = window.APP_CONFIG?.programsRequirementsDb || [];
+    const _selectedLevelAP = _selectedProgAP.toUpperCase().includes('GRAD') ? 'GRAD' : 'UGRD';
     let _teMaxCrAP = 0;
     _progReqDbAP.forEach(row => {
-        if (String(row['Program'] || '').trim() === _selectedProgAP && String(row['Level'] || '').trim() === 'UGRD') {
+        if (String(row['Program'] || '').trim() === _selectedProgAP && String(row['Level'] || '').trim().toUpperCase() === _selectedLevelAP) {
             if (String(row['Type of credits'] || '').trim().toUpperCase() === 'TE') {
                 _teMaxCrAP = parseFloat(row['no of credits'] || 0);
             }
@@ -3711,7 +3959,7 @@ function addWarningBadge(box, issues) {
     box.classList.toggle('cv-warning', !hasError);
     const line = document.createElement('div');
     line.className = `cv-error-line ${hasError ? 'cv-error-line-err' : 'cv-error-line-warn'}`;
-    line.innerHTML = issues.map(i => '▶ ' + i.msg.replace(/</g, '&lt;')).join('<br>');
+    line.innerHTML = issues.map(i => '▶ ' + escapeHtml(String(i.msg || ''))).join('<br>');
     box.appendChild(line);
 }
 
@@ -3723,6 +3971,12 @@ window.validateGrid = function() {
         if (el) el.remove();
         const distEl = b.querySelector('.std-seq-dist');
         if (distEl) distEl.remove();
+    });
+    // Also clear the term-level validation summaries. They are rebuilt below
+    // from the same validation results used for the course cards/right panel.
+    document.querySelectorAll('.term-validation-container').forEach(el => {
+        el.innerHTML = '';
+        el.style.display = 'none';
     });
 
     // Collect all issues across all boxes; apply badges at end
@@ -3737,26 +3991,54 @@ window.validateGrid = function() {
         boxIssues.set(box, [...existing, ...issues]);
     }
 
-    // 2. Build placement snapshot: keyed by both normalized ID and raw ID (preserving A/B suffix)
+    // 2. Build placement snapshot. Keep ALL occurrences of a course rather than
+    // overwriting duplicates/repeats. This matters when a failed locked attempt and
+    // a planned _REP attempt coexist on the grid.
     const snap = {};
+    function addSnap(key, entry) {
+        const k = normDisplayId(key);
+        if (!k) return;
+        (snap[k] = snap[k] || []).push(entry);
+    }
+    function gradeDoesNotSatisfyPrereq(grade) {
+        const g = String(grade || '').trim().toUpperCase();
+        return !!g && (g.startsWith('F') || g.startsWith('R') || g === 'DISC' || g === 'NR');
+    }
+    function gradeIsCMinusOrHigher(grade) {
+        const g = String(grade || '').trim().toUpperCase();
+        return new Set(['A+', 'A', 'A-', 'B+', 'B', 'B-', 'C+', 'C', 'C-']).has(g);
+    }
+
     document.querySelectorAll('.drop-zone .course-box').forEach(box => {
-        const cid = (box.dataset.courseId || '').toUpperCase();
+        const cid = normDisplayId(box.dataset.courseId || '');
         if (!cid || !box.parentElement) return;
-        const entry = { zoneId: box.parentElement.id, termOrd: getTermOrdFromZoneId(box.parentElement.id), el: box };
-        snap[cid] = entry;
-        // Also store under raw ID (with A/B suffix) extracted from element ID
-        const rawParts = (box.id || '').toUpperCase().split('_');
-        const rawCid   = rawParts[rawParts.length - 1]; // e.g. "ENGR490A"
-        if (rawCid && rawCid !== cid) snap[rawCid] = entry;
+        const grade = String(box.dataset.grade || '').trim();
+        const entry = {
+            zoneId: box.parentElement.id,
+            termOrd: getTermOrdFromZoneId(box.parentElement.id),
+            el: box,
+            grade,
+            prereqEligible: !gradeDoesNotSatisfyPrereq(grade)
+        };
+        addSnap(cid, entry);
+
+        // displayId preserves 490A/490B. For _REP, courseId intentionally points
+        // to the original course so the planned repeat can satisfy that prerequisite.
+        const did = getBoxDisplayId(box);
+        if (did && !did.endsWith('_REP')) addSnap(did, entry);
     });
 
     // Pre-req/co-req parser that PRESERVES A/B suffix (e.g. ENGR490A stays ENGR490A)
     function parseReqIds(str) {
-        const matches = String(str || '').match(/[A-Z]{2,5}\s*\d{3,4}[A-Z]?/gi) || [];
-        return matches.map(m => m.replace(/\s/g, '').toUpperCase());
+        const matches = String(str || '').match(/\b[A-Z]{2,5}\s*\d{3,4}[A-Za-z]?\b/g) || [];
+        return matches.map(m => normDisplayId(m));
     }
-    function lookupSnap(id) {
-        return snap[id] || snap[id.replace(/[AB]$/, '')] || null;
+    function lookupSnapEntries(id) {
+        const exact = normDisplayId(id);
+        const equiv = normEquivId(exact);
+        const out = [...(snap[exact] || [])];
+        if (equiv !== exact) out.push(...(snap[equiv] || []));
+        return [...new Set(out)];
     }
 
     // 3. Check each zone (skip Y0 and Unallocated)
@@ -3800,22 +4082,66 @@ window.validateGrid = function() {
                 }
             }
 
-            // Check 2: Pre-reqs must be in an EARLIER term (uses A/B-aware lookup)
+            // Check 2: Pre-reqs must exist, be eligible (a failed/DISC attempt does
+            // not satisfy the prerequisite), and be in an EARLIER term.
             const prereqStr = String(db['PRE-REQUISITE'] || '');
             prereqStr.split(/[;,]/).forEach(seg => {
-                const opts = parseReqIds(seg).filter(id => lookupSnap(id));
-                if (!opts.length) return;
-                const ok = opts.some(id => lookupSnap(id).termOrd < zOrd);
-                if (!ok) issues.push({ msg: `Pre-req [${opts.join(' or ')}] not in earlier term`, sev: 'error' });
+                const reqIds = parseReqIds(seg);
+                if (!reqIds.length) return; // textual/non-course requirement
+                const candidates = reqIds.flatMap(id => lookupSnapEntries(id));
+
+                // CORE_TE has one mixed manual alternative:
+                // "Passing the Engineering Writing Test (EWT) OR ENCS 272 with C- or higher".
+                // EWT is not represented as a course box, so absence of ENCS272 cannot
+                // be a hard error. Validate ENCS272 when available, otherwise request
+                // a manual check instead of falsely blocking a student who passed EWT.
+                const hasEwtAlternative = /Engineering Writing Test|\bEWT\b/i.test(seg)
+                    && reqIds.some(id => normEquivId(id) === 'ENCS272');
+                if (hasEwtAlternative) {
+                    const earlier = candidates.filter(e => e.termOrd < zOrd);
+                    if (earlier.some(e => gradeIsCMinusOrHigher(e.grade))) return;
+                    if (earlier.some(e => !String(e.grade || '').trim())) {
+                        issues.push({
+                            msg: 'ENCS 282: ENCS 272 is planned earlier; a grade of C- or higher is required, OR the Engineering Writing Test (EWT) must be passed',
+                            sev: 'warning'
+                        });
+                    } else {
+                        issues.push({
+                            msg: 'ENCS 282 manual check: pass the Engineering Writing Test (EWT), OR complete ENCS 272 with a grade of C- or higher',
+                            sev: 'warning'
+                        });
+                    }
+                    return;
+                }
+
+                if (!candidates.length) {
+                    issues.push({ msg: `Pre-req [${reqIds.join(' or ')}] is missing from the plan/transcript`, sev: 'error' });
+                    return;
+                }
+                const ok = candidates.some(e => e.prereqEligible && e.termOrd < zOrd);
+                if (!ok) {
+                    const hasFailedAttempt = candidates.some(e => !e.prereqEligible);
+                    issues.push({
+                        msg: hasFailedAttempt
+                            ? `Pre-req [${reqIds.join(' or ')}] is failed/DISC/NR or not completed in an earlier term`
+                            : `Pre-req [${reqIds.join(' or ')}] not in earlier term`,
+                        sev: 'error'
+                    });
+                }
             });
 
-            // Check 3: Co-reqs must be in same or earlier term (uses A/B-aware lookup)
+            // Check 3: Co-reqs must exist and be in the same or an earlier term.
             const coreqStr = String(db['CO-REQUISITE'] || '');
             coreqStr.split(/[;,]/).forEach(seg => {
-                const opts = parseReqIds(seg).filter(id => lookupSnap(id));
-                if (!opts.length) return;
-                const ok = opts.some(id => lookupSnap(id).termOrd <= zOrd);
-                if (!ok) issues.push({ msg: `Co-req [${opts.join(' or ')}] must be in same or earlier term`, sev: 'warning' });
+                const reqIds = parseReqIds(seg);
+                if (!reqIds.length) return;
+                const candidates = reqIds.flatMap(id => lookupSnapEntries(id));
+                if (!candidates.length) {
+                    issues.push({ msg: `Co-req [${reqIds.join(' or ')}] is missing from the plan/transcript`, sev: 'warning' });
+                    return;
+                }
+                const ok = candidates.some(e => e.prereqEligible && e.termOrd <= zOrd);
+                if (!ok) issues.push({ msg: `Co-req [${reqIds.join(' or ')}] must be passed/planned in same or earlier term`, sev: 'warning' });
             });
 
             // Check 4: WT conflict — max 1 real course alongside WT
@@ -4167,10 +4493,10 @@ window.validateGrid = function() {
             
             // Check date filter
             const dateStr = r['Date after which takes effect'];
-            if (dateStr && String(dateStr).trim() && String(dateStr).toLowerCase() !== 'nan' && String(dateStr).toLowerCase() !== 'nat') {
-                const effDate = new Date(dateStr);
+            const effDate = window.parseRestrictionEffectiveDate(dateStr);
+            if (effDate) {
                 const today = new Date(); today.setHours(0,0,0,0);
-                if (!isNaN(effDate.getTime()) && today < effDate) return;
+                if (today < effDate) return;
             }
             
             const warningCol = String(r['WARNING'] || '').trim().toUpperCase();
@@ -4357,11 +4683,12 @@ window.validateGrid = function() {
     (function() {
         const selectedProg = document.getElementById('programSelect')?.value || '';
         const programsReqDb = window.APP_CONFIG?.programsRequirementsDb || [];
+        const selectedLevel = selectedProg.toUpperCase().includes('GRAD') ? 'GRAD' : 'UGRD';
         
         // Get program requirements
-        const progReqs = {}; // { 'ENG CORE': 27, 'PRG CORE': 87, 'TE': 6 }
+        const progReqs = {}; // category -> required credits
         programsReqDb.forEach(row => {
-            if (String(row['Program'] || '').trim() === selectedProg && String(row['Level'] || '').trim() === 'UGRD') {
+            if (String(row['Program'] || '').trim() === selectedProg && String(row['Level'] || '').trim().toUpperCase() === selectedLevel) {
                 const type = String(row['Type of credits'] || '').trim();
                 const required = parseFloat(row['no of credits'] || 0);
                 if (type && required > 0) {  // Only check categories with required > 0
@@ -4498,6 +4825,63 @@ window.validateGrid = function() {
     // Apply all badges
     boxIssues.forEach((issues, box) => addWarningBadge(box, issues));
 
+    // Mirror course-level validation into the affected TERM as well.
+    // The detailed right-side panel remains unchanged; this gives an immediate
+    // visual explanation at the top of the term where the problem occurs.
+    (function renderTermValidationSummaries() {
+        const byZone = new Map(); // zoneId -> Map(dedupKey, {msg, sev})
+
+        function addToZone(zoneId, msg, sev, courseId) {
+            if (!zoneId || zoneId === 'zone_Unallocated' || zoneId === 'zone_Y0') return;
+            const cleanMsg = String(msg || '').trim();
+            if (!cleanMsg) return;
+
+            // Work-term overload is intentionally shown once per term, not once
+            // for every course affected by the same term-level condition.
+            let displayMsg = cleanMsg;
+            let dedupMsg = cleanMsg;
+            if (cleanMsg === 'Too many courses in a Work Term' ||
+                cleanMsg === 'Max 1 course alongside a Work Term') {
+                displayMsg = 'Work Term conflict: maximum 1 academic course is allowed alongside a Work Term';
+                dedupMsg = displayMsg;
+            } else if (courseId) {
+                displayMsg = `${courseId}: ${cleanMsg}`;
+                dedupMsg = displayMsg;
+            }
+
+            if (!byZone.has(zoneId)) byZone.set(zoneId, new Map());
+            const zoneMap = byZone.get(zoneId);
+            const key = `${sev}|${dedupMsg}`;
+            if (!zoneMap.has(key)) zoneMap.set(key, { msg: displayMsg, sev });
+        }
+
+        boxIssues.forEach((issues, box) => {
+            const zone = box.parentElement;
+            if (!zone || !zone.classList.contains('drop-zone')) return;
+            const courseId = getBoxDisplayId(box) || (box.dataset.courseId || '').toUpperCase();
+            issues.forEach(issue => addToZone(zone.id, issue.msg, issue.sev, courseId));
+        });
+
+        byZone.forEach((issueMap, zoneId) => {
+            const container = document.getElementById(`term_validation_${zoneId}`);
+            if (!container) return;
+
+            const items = Array.from(issueMap.values()).sort((a, b) => {
+                const rank = { error: 0, warning: 1, fyi: 2 };
+                return (rank[a.sev] ?? 9) - (rank[b.sev] ?? 9);
+            });
+
+            items.forEach(({ msg, sev }) => {
+                const line = document.createElement('div');
+                line.className = `term-validation-line ${sev === 'error' ? 'term-validation-error' : sev === 'fyi' ? 'term-validation-fyi' : 'term-validation-warning'}`;
+                line.textContent = `${sev === 'error' ? '▶' : sev === 'warning' ? '⚠' : 'ℹ'} ${msg}`;
+                container.appendChild(line);
+            });
+
+            container.style.display = items.length ? '' : 'none';
+        });
+    })();
+
     // List OTHER (unknown) courses placed on the grid
     (function() {
         const otherCourses = [];
@@ -4579,7 +4963,7 @@ window.autoSaveAdminNotes = async function(pub, priv) {
 
 function collectPlanSnapshot() {
     const plan = {
-        version: 1,
+        version: 2,
         savedAt: new Date().toISOString(),
         startYear: document.getElementById('startYear')?.value || null,
         coopRegistered: !!document.getElementById('coopRegistered')?.checked,
@@ -4589,36 +4973,41 @@ function collectPlanSnapshot() {
         program: document.getElementById('programSelect')?.value || null,
         globalLimits: { maxCourses: window.globalMaxCourses, maxCredits: window.globalMaxCr },
         termOverrides: window.termOverrides || {},
-        placements: []
+        placements: [],
+        // Exact displayed state at save/submit time, including graded/locked courses.
+        // Email term summaries are derived from this same snapshot to prevent
+        // planner-vs-email divergence.
+        fullPlacements: []
     };
 
-    // Save all non-taken course placements (including WT), plus pinned state
+    // Every course appears exactly once because each box has exactly one drop-zone parent.
+    // `placements` contains only movable/generated courses needed to restore a plan;
+    // `fullPlacements` is the immutable submission/display snapshot.
     document.querySelectorAll('.drop-zone .course-box').forEach(box => {
-        if (box.classList.contains('course-taken')) return;
         const did = getBoxDisplayId(box);
         const zid = box.parentElement?.id;
         if (!did || !zid) return;
+
+        const credit = Number.parseFloat(box.dataset.credit || '0');
+        plan.fullPlacements.push({
+            boxKey: box.id || null,
+            displayId: did,
+            zoneId: zid,
+            credit: Number.isFinite(credit) ? credit : 0,
+            grade: box.dataset.grade || '',
+            isWt: box.classList.contains('wt'),
+            locked: box.classList.contains('course-taken'),
+            pinned: box.dataset.pinned === 'true'
+        });
+
+        if (box.classList.contains('course-taken')) return;
         plan.placements.push({
+            boxKey: box.id || null,
             displayId: did,
             zoneId: zid,
             pinned: box.dataset.pinned === 'true'
         });
     });
-
-    // Also save unallocated positions (still useful on load)
-    const unalloc = document.getElementById('zone_Unallocated');
-    if (unalloc) {
-        Array.from(unalloc.children).forEach(box => {
-            if (!box.classList.contains('course-box')) return;
-            if (box.classList.contains('course-taken')) return;
-            const did = getBoxDisplayId(box);
-            plan.placements.push({
-                displayId: did,
-                zoneId: 'zone_Unallocated',
-                pinned: box.dataset.pinned === 'true'
-            });
-        });
-    }
 
     return plan;
 }
@@ -4652,7 +5041,7 @@ window.applyLoadedPlan = function(planObj) {
     // =========================================================
     // COMPATIBILITY: detect old format (zone-based dict without 'version')
     // Old format: { "Y0_ANY": ["CHEM205",...], "Y1_FALL": [...], "startYear":"2024", ... }
-    // New format: { version: 1, placements: [...], startYear: "2024-2025", ... }
+    // New formats: version 1/2 with placements; v2 also carries fullPlacements for exact submit/email snapshots.
     // =========================================================
     const isOldFormat = !planObj.version && !planObj.placements;
     if (isOldFormat) {
@@ -4667,7 +5056,7 @@ window.applyLoadedPlan = function(planObj) {
             globalLimits: planObj.globalLimits || null,
             termOverrides: planObj.termOverrides || {},
             placements: [],
-            reason_code: planObj.reason_code !== undefined && planObj.reason_code !== null ? planObj.reason_code : (planObj.cos_reason !== undefined && planObj.cos_reason !== null ? planObj.cos_reason : 0),
+            reason_code: planObj.reason_code !== undefined && planObj.reason_code !== null ? planObj.reason_code : (planObj.cos_reason !== undefined && planObj.cos_reason !== null ? planObj.cos_reason : null),
             justification: planObj.justification || planObj.student_comments || ''
         };
 
@@ -4787,14 +5176,24 @@ window.applyLoadedPlan = function(planObj) {
 
     // Map displayId -> box element AFTER rebuildGrid (get fresh elements)
     const boxMap = new Map();
+    const boxIdMap = new Map();
     document.querySelectorAll('.course-box').forEach(box => {
+        // displayId remains the backward-compatible lookup. box.id disambiguates
+        // multiple transcript attempts of the same course (e.g. graded F + current ungraded repeat).
         boxMap.set(getBoxDisplayId(box), box);
+        if (box.id) boxIdMap.set(box.id, box);
     });
 
     // Recreate REP courses that were saved but don't exist yet
     (planObj.placements || []).forEach(p => {
         const did = normDisplayId(p.displayId);
         if (!did.endsWith('_REP')) return;
+        // Reject invalid legacy WT*_REP entries. A Work Term is represented by the
+        // transcript/CO-OP WT itself; it is never a repeatable academic course.
+        if (/^WT[123]_REP$/i.test(did)) {
+            console.warn(`[applyLoadedPlan] Ignoring invalid legacy repeat ${did}`);
+            return;
+        }
         if (boxMap.has(did)) return; // already exists
         const origCid = did.replace(/_REP$/, '');
         const baseCid = origCid.replace(/[AB]$/, '');
@@ -4820,18 +5219,21 @@ window.applyLoadedPlan = function(planObj) {
         const isPreFor = (window._isPreReqFor?.[baseCid] || []).join(', ') || 'None';
         div.innerHTML = `
             <input type="checkbox" class="c-checkbox" onclick="window.toggleCoursePin(this)">
+            <button type="button" class="rep-delete-btn" draggable="false"
+                    title="Delete this repeated course"
+                    onclick="window.deleteRepeatCourse('${did}', event)">× Delete</button>
             <div class="c-headline">
-                <span class="c-code">${did} (${credit}cr)</span>
+                <span class="c-code">${escapeHtml(String(did))} (${escapeHtml(String(credit))}cr)</span>
                 <span class="rep-label">REP</span>
-                <span class="c-title">${title}</span>
+                <span class="c-title">${escapeHtml(String(title))}</span>
             </div>
             <div class="c-meta">
                 <span class="c-type">[REP]</span>
                 <div class="c-badges">${termBadges}</div>
             </div>
             <div class="c-reqs">
-                <div><b>PRE-req:</b> ${origCid}&nbsp;&nbsp;||&nbsp;&nbsp;<b>CO-req:</b> None</div>
-                <div><b>is pre for:</b> ${isPreFor}&nbsp;&nbsp;||&nbsp;&nbsp;<b>is co for:</b> None</div>
+                <div><b>PRE-req:</b> ${escapeHtml(String(origCid))}&nbsp;&nbsp;||&nbsp;&nbsp;<b>CO-req:</b> None</div>
+                <div><b>is pre for:</b> ${escapeHtml(String(isPreFor))}&nbsp;&nbsp;||&nbsp;&nbsp;<b>is co for:</b> None</div>
             </div>`;
         div.onclick = () => window.showCourseInfo(baseCid);
         const origPreForSet = window._isPreReqFor[baseCid] || [];
@@ -4840,11 +5242,12 @@ window.applyLoadedPlan = function(planObj) {
         const unalloc = document.getElementById('zone_Unallocated');
         if (unalloc) unalloc.appendChild(div);
         boxMap.set(did, div);
+        if (div.id) boxIdMap.set(div.id, div);
     });
 
     // Apply placements
     (planObj.placements || []).forEach(p => {
-        const box = boxMap.get(normDisplayId(p.displayId));
+        const box = (p.boxKey && boxIdMap.get(String(p.boxKey))) || boxMap.get(normDisplayId(p.displayId));
         const zone = document.getElementById(p.zoneId);
         if (!box || !zone) return;
         // Don't move taken courses
@@ -4940,7 +5343,7 @@ window.saveDraft = async function() {
             issues: currentIssues(),
             reason_code: getSelectedReasonCode(),
             justification: getJustificationText(),
-            term_summary: buildEmailTermSummary()
+            term_summary: buildEmailTermSummary(plan)
         };
         const res = await apiJson('/api/sequence/save', 'POST', payload);
         hideSpinner();
@@ -4977,7 +5380,7 @@ window.handleLogout = async function(event) {
                     issues: currentIssues(),
                     reason_code: getSelectedReasonCode(),
                     justification: getJustificationText(),
-                    term_summary: buildEmailTermSummary()
+                    term_summary: buildEmailTermSummary(plan)
                 };
                 
                 await apiJson('/api/sequence/save', 'POST', payload);
@@ -5033,6 +5436,7 @@ window.loadPlan = async function() {
         
         sessionStorage.setItem('_skipAutoLoad', '1');
         window.applyLoadedPlan(item.plan);
+        window.setLoadedSequenceContext?.(selected.id, item.status || selected.status || '');
         hideSpinner();
     } catch (e) {
         hideSpinner();
@@ -5041,13 +5445,13 @@ window.loadPlan = async function() {
     }
 };
 
-function buildEmailTermSummary() {
+function buildEmailTermSummary(planSnapshot = null) {
     const termSummary = [];
-    const startYear = document.getElementById('startYear')?.value;
+    const startYear = planSnapshot?.startYear || document.getElementById('startYear')?.value;
     const coopTerms = Array.isArray(window.APP_CONFIG?.coopTerms) ? window.APP_CONFIG.coopTerms : [];
+    const fullPlacements = Array.isArray(planSnapshot?.fullPlacements) ? planSnapshot.fullPlacements : null;
 
     if (!startYear) return termSummary;
-
     const baseYear = parseInt(startYear.split('-')[0], 10);
 
     for (let y = 1; y <= 7; y++) {
@@ -5056,32 +5460,40 @@ function buildEmailTermSummary() {
 
         ['Summer', 'Fall', 'Winter'].forEach(season => {
             const zid = `zone_${rowYear}_${season}`;
-            const zone = document.getElementById(zid);
             const tKey = season === 'Summer' ? 'SUM' : season === 'Fall' ? 'FALL' : 'WIN';
-
             const ct = coopTerms.find(t => t.year === rowYear && t.season === season);
             const coopLabel = ct ? String(ct.type || '') : '';
             const coopKind = coopLabel.startsWith('W') ? 'work' : (coopLabel.startsWith('S') ? 'study' : '');
 
-            if (!zone) {
-                rowData[tKey] = { cr: 0, courses: [], coop_label: coopLabel, coop_kind: coopKind };
-                return;
+            let items = [];
+            if (fullPlacements) {
+                items = fullPlacements.filter(p => p.zoneId === zid);
+            } else {
+                // Backward-compatible fallback for callers/legacy code without a v2 snapshot.
+                const zone = document.getElementById(zid);
+                if (zone) {
+                    items = Array.from(zone.children)
+                        .filter(box => box.classList.contains('course-box'))
+                        .map(box => ({
+                            displayId: box.dataset.displayId || box.dataset.courseId || '',
+                            credit: parseFloat(box.dataset.credit || 0),
+                            isWt: box.classList.contains('wt'),
+                            grade: box.dataset.grade || ''
+                        }));
+                }
             }
 
             let cr = 0;
-            const courses = [];
-            Array.from(zone.children).forEach(box => {
-                if (!box.classList.contains('course-box')) return;
-                const c = parseFloat(box.dataset.credit || 0);
-                cr += c;
-                const did = box.dataset.displayId || box.dataset.courseId || '';
-                const grade = box.dataset.grade || '';
-                courses.push({
-                    name: did,
-                    credit: c,
-                    is_wt: box.classList.contains('wt'),
-                    grade: grade
-                });
+            const courses = items.map(item => {
+                const c = Number.parseFloat(item.credit || 0);
+                const safeCredit = Number.isFinite(c) ? c : 0;
+                cr += safeCredit;
+                return {
+                    name: item.displayId || '',
+                    credit: safeCredit,
+                    is_wt: !!item.isWt,
+                    grade: item.grade || ''
+                };
             });
 
             rowData[tKey] = {
@@ -5093,9 +5505,7 @@ function buildEmailTermSummary() {
         });
 
         const hasAnything = Object.values(rowData).some(d => d.courses.length > 0);
-        if (hasAnything) {
-            termSummary.push({ year: rowYear, data: rowData });
-        }
+        if (hasAnything) termSummary.push({ year: rowYear, data: rowData });
     }
 
     return termSummary;
@@ -5140,7 +5550,7 @@ window.submitForApproval = async function() {
             issues,
             reason_code: reason,
             justification: cleanedJust,
-            term_summary: buildEmailTermSummary()
+            term_summary: buildEmailTermSummary(plan)
         };
         const res = await apiJson('/api/sequence/save', 'POST', payload);
 
@@ -5174,7 +5584,11 @@ window.submitForApproval = async function() {
         }
 
         hideSpinner();
-        alert(`Submitted for approval. ID: ${res.sequence_id}`);
+        alert(
+            res.warning
+                ? `Submitted and saved. ID: ${res.sequence_id}\n\n${res.warning}`
+                : `Submitted for approval. ID: ${res.sequence_id}`
+        );
     } catch (e) {
         hideSpinner();
         console.error(e);
@@ -5296,7 +5710,10 @@ window.openPendingApprovals = async function() {
 
         // Switch server-side view, then open planner pre-loaded with this submission
         await apiJson('/api/admin/view_sid', 'POST', { student_id: item.student_id });
-        window.location.href = `/planner?load_seq_id=${encodeURIComponent(item.id)}`;
+        sessionStorage.setItem('_pendingLoad', '1');
+        sessionStorage.setItem('_skipAutoLoad', '1');
+        sessionStorage.setItem('_pendingSeqId', String(item.id || ''));
+        window.location.assign(`/planner?load_seq_id=${encodeURIComponent(item.id)}`);
     } catch (e) {
         console.error(e);
         alert(`Pending approvals failed: ${e.message}`);
@@ -5334,7 +5751,7 @@ window.showStudentDetails = async function() {
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Student Details - ${res.student_id}</title>
+    <title>Student Details - ${escapeHtml(res.student_id)}</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -5392,7 +5809,7 @@ window.showStudentDetails = async function() {
     </style>
 </head>
 <body>
-    <h1>📊 Student Details: ${res.student_id}</h1>
+    <h1>📊 Student Details: ${escapeHtml(res.student_id)}</h1>
     
     <h2>CO-OP Data <span class="count">(${res.coop.length} rows)</span></h2>
     ${buildTable(res.coop)}
@@ -5442,13 +5859,6 @@ function buildTable(data) {
     return html;
 }
 
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
-
 // =========================================================
 // STUDENT EMAIL HISTORY POPUP
 // =========================================================
@@ -5478,7 +5888,7 @@ window.showStudentEmails = async function() {
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Email History - ${res.student_id}</title>
+    <title>Email History - ${escapeHtml(res.student_id)}</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -5547,7 +5957,7 @@ window.showStudentEmails = async function() {
     </style>
 </head>
 <body>
-    <h1>📧 Email History: ${res.student_id} <span class="count">(${res.emails.length} emails)</span></h1>
+    <h1>📧 Email History: ${escapeHtml(res.student_id)} <span class="count">(${res.emails.length} emails)</span></h1>
     
     <div class="email-list">
         ${buildEmailList(res.emails)}
@@ -5596,7 +6006,7 @@ function buildEmailList(emails) {
                     From: ${escapeHtml(email.from)} → To: ${escapeHtml(email.to.join(', '))}
                 </div>
                 <div id="detail-${index}" class="email-detail">
-                    ${email.content || '<em>No content available</em>'}
+                    ${email.content ? `<div style="white-space:pre-wrap;overflow-wrap:anywhere;">${escapeHtml(email.content)}</div>` : '<em>No content available</em>'}
                 </div>
             </div>
         `;

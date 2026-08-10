@@ -975,6 +975,30 @@ tr.term-names-row td { border: none !important; }
     vertical-align: middle;
 }
 
+
+/* Delete control for generated repeated courses.
+   It is intentionally visible only in the Unallocated sidebar. */
+.rep-delete-btn {
+    display: none;
+    border: 1px solid #c0392b;
+    background: #fff5f3;
+    color: #b03a2e;
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 16px;
+    cursor: pointer;
+    margin: 0 24px 4px auto;
+}
+#zone_Unallocated .course-box[data-is-repeat="true"] .rep-delete-btn {
+    display: block;
+}
+#zone_Unallocated .course-box[data-is-repeat="true"] .rep-delete-btn:hover {
+    background: #c0392b;
+    color: #fff;
+}
+
 /* Restriction warnings in term header */
 .term-restriction-warning {
     font-size: 10px;
@@ -1047,10 +1071,64 @@ tr.term-names-row td { border: none !important; }
     font-weight: bold;
     text-align: center;
 }
-/* Current Summer transcript courses are editable/movable during the active Summer term. */
+/* V03: any transcript course WITHOUT a grade is floating/movable. */
+.course-box.floating-transcript-course,
 .course-box.current-summer-course {
     background-color: #fffdf0 !important;
     border: 1px solid #f1c40f !important;
     border-left: 4px solid #f1c40f !important;
     opacity: 1 !important;
+    cursor: grab;
+}
+
+/* V03_011: WT courses must stay green even when the transcript row is floating/ungraded.
+   The generic floating-transcript style below is intentionally overridden for WT/WT aliases. */
+.course-box.wt.floating-transcript-course,
+.course-box.wt.current-summer-course,
+.course-box.wt-alias.floating-transcript-course,
+.course-box.wt-alias.current-summer-course {
+    background-color: #d5f5e3 !important;
+    border: 1px solid #a9dfbf !important;
+    border-left: 4px solid #27ae60 !important;
+    color: #1e8449 !important;
+    opacity: 1 !important;
+}
+
+/* V03: any transcript course WITH a grade is locked. */
+.course-box.course-taken {
+    cursor: default !important;
+}
+
+
+/* =========================================================
+   TERM-LEVEL VALIDATION SUMMARY
+   Mirrors course validation at the top of the affected term.
+   ========================================================= */
+.term-validation-container {
+    margin: 3px 8px 5px 8px;
+}
+.term-validation-line {
+    margin-top: 2px;
+    padding: 2px 5px;
+    font-size: 10px;
+    line-height: 1.3;
+    font-weight: 700;
+    border-left: 3px solid transparent;
+    border-radius: 2px;
+    word-break: break-word;
+}
+.term-validation-error {
+    color: #c0392b;
+    background: #fff3f2;
+    border-left-color: #e74c3c;
+}
+.term-validation-warning {
+    color: #d35400;
+    background: #fff7ed;
+    border-left-color: #f39c12;
+}
+.term-validation-fyi {
+    color: #566573;
+    background: #f4f6f7;
+    border-left-color: #95a5a6;
 }

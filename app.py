@@ -2,7 +2,7 @@ import os
 import re
 import json
 import datetime
-import random
+import secrets
 
 
 import pandas as pd
@@ -12,6 +12,7 @@ from flask import Flask, render_template, request, redirect, url_for, session, j
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import URL
 from html import escape
 
 
@@ -48,7 +49,7 @@ def _get_priority1_email_db(target_sid: str) -> str:
                 SELECT `Primary Email`
                 FROM `Sid_Email_Admission`
                 WHERE `Student ID` = :sid
-                ORDER BY `email_priority` ASC
+                ORDER BY COALESCE(`email_priority`, 999999) ASC, `Primary Email` ASC
                 LIMIT 1
             """)
             r = conn.execute(q, {"sid": target_sid}).fetchone()
@@ -59,11 +60,15 @@ def _get_priority1_email_db(target_sid: str) -> str:
     return None
 
 app = Flask(__name__)
-app.secret_key = "SVsecretKEY_MIAE_2024"
+app.secret_key = os.environ.get("FLASK_SECRET_KEY")
+if not app.secret_key:
+    raise RuntimeError("FLASK_SECRET_KEY is required. Set it as an environment variable before starting the site.")
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+if str(os.environ.get("SESSION_COOKIE_SECURE", "")).strip().lower() in {"1", "true", "yes", "on"}:
+    app.config["SESSION_COOKIE_SECURE"] = True
 
 
-from sre_rams_search import sre_bp
-app.register_blueprint(sre_bp)
 
 @app.route("/SRE_MONTREAL")
 def sre_montreal_page():
@@ -131,8 +136,22 @@ DB_HOST = os.environ.get("planner_db_HOST")
 DB_NAME = os.environ.get("planner_db_NAME")
 
 engine = None
-if DB_PASS:
-    DATABASE_URI = f"mysql+pymysql://{DB_USER}:{DB_PASS}@{DB_HOST}:3306/{DB_NAME}"
+_db_values = {"planner_db_USER": DB_USER, "planner_db_password": DB_PASS, "planner_db_HOST": DB_HOST, "planner_db_NAME": DB_NAME}
+_db_present = [k for k, v in _db_values.items() if v]
+if _db_present and len(_db_present) != len(_db_values):
+    missing = [k for k, v in _db_values.items() if not v]
+    raise RuntimeError(f"Incomplete database configuration. Missing environment variable(s): {', '.join(missing)}")
+
+if all(_db_values.values()):
+    # URL.create safely handles special characters in usernames/passwords.
+    DATABASE_URI = URL.create(
+        "mysql+pymysql",
+        username=DB_USER,
+        password=DB_PASS,
+        host=DB_HOST,
+        port=3306,
+        database=DB_NAME,
+    )
     engine = create_engine(
         DATABASE_URI,
         pool_pre_ping=True,
@@ -229,6 +248,96 @@ def _safe_json_load(val):
         return None
 
 
+def _safe_int(value, default=0):
+    try:
+        if value is None or value == "":
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+def _nullable_int(value):
+    """Return an int when present; preserve missing legacy values as None."""
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _validate_plan_term_summary_consistency(plan, term_summary):
+    """Validate V03 v2 snapshots so saved/email terms describe the same grid state.
+
+    Legacy plans (without fullPlacements) remain accepted for backward compatibility.
+    Returns (ok, message).
+    """
+    if not isinstance(plan, dict):
+        return False, "Invalid planner snapshot"
+
+    full = plan.get("fullPlacements")
+    if not isinstance(full, list):
+        return True, "legacy snapshot"
+    if not isinstance(term_summary, list):
+        return False, "Invalid term summary"
+
+    expected = {}
+    zone_re = re.compile(r"^zone_(\d{4}-\d{4})_(Summer|Fall|Winter)$")
+    term_key = {"Summer": "SUM", "Fall": "FALL", "Winter": "WIN"}
+
+    for item in full:
+        if not isinstance(item, dict):
+            continue
+        m = zone_re.match(str(item.get("zoneId") or ""))
+        if not m:
+            continue  # Y0 and Unallocated are intentionally absent from emails
+        year, season = m.groups()
+        try:
+            credit = round(float(item.get("credit") or 0), 6)
+        except (TypeError, ValueError):
+            credit = 0.0
+        sig = (
+            str(item.get("displayId") or "").strip().upper(),
+            credit,
+            bool(item.get("isWt")),
+            str(item.get("grade") or "").strip(),
+        )
+        expected.setdefault((year, term_key[season]), []).append(sig)
+
+    actual = {}
+    for year_item in term_summary:
+        if not isinstance(year_item, dict):
+            return False, "Invalid term summary row"
+        year = str(year_item.get("year") or "").strip()
+        data = year_item.get("data") or {}
+        if not isinstance(data, dict):
+            return False, "Invalid term summary data"
+        for key in ("SUM", "FALL", "WIN"):
+            term = data.get(key) or {}
+            courses = (term.get("courses") or []) if isinstance(term, dict) else []
+            if not isinstance(courses, list):
+                return False, "Invalid term course list"
+            for c in courses:
+                if not isinstance(c, dict):
+                    return False, "Invalid term course"
+                try:
+                    credit = round(float(c.get("credit") or 0), 6)
+                except (TypeError, ValueError):
+                    credit = 0.0
+                sig = (
+                    str(c.get("name") or "").strip().upper(),
+                    credit,
+                    bool(c.get("is_wt")),
+                    str(c.get("grade") or "").strip(),
+                )
+                actual.setdefault((year, key), []).append(sig)
+
+    normalize = lambda d: {k: sorted(v) for k, v in d.items() if v}
+    if normalize(expected) != normalize(actual):
+        return False, "Planner snapshot and term summary do not match"
+    return True, "ok"
+
+
 def _get_student_email_db(target_sid: str) -> str:
     """Best-effort email for a student."""
     if engine is None:
@@ -237,7 +346,7 @@ def _get_student_email_db(target_sid: str) -> str:
         with engine.connect() as conn:
             q = text(
                 "SELECT `Primary Email` FROM `Sid_Email_Admission` "
-                "WHERE `Student ID` = :sid ORDER BY `email_priority` ASC LIMIT 1"
+                "WHERE `Student ID` = :sid ORDER BY COALESCE(`email_priority`, 999999) ASC, `Primary Email` ASC LIMIT 1"
             )
             r = conn.execute(q, {"sid": target_sid}).fetchone()
             if r and r[0]:
@@ -269,7 +378,7 @@ def _get_student_name_db(target_sid: str) -> str:
             r = conn.execute(
                 text(
                     "SELECT NAME FROM Transcripts WHERE `Student ID` = :sid "
-                    "AND NAME IS NOT NULL AND NAME <> '' LIMIT 1"
+                    "AND NAME IS NOT NULL AND NAME <> '' ORDER BY `Academic Term` DESC LIMIT 1"
                 ),
                 {"sid": target_sid},
             ).fetchone()
@@ -505,7 +614,7 @@ def api_acknowledge_rules():
         return jsonify({"ok": True})
     except Exception as e:
         print(f"❌ Rules ack error: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": False, "error": "An internal error occurred"}), 500
 
 # =========================================================
 # AUTH ROUTES
@@ -523,7 +632,7 @@ def login():
                 with engine.connect() as conn:
                     query = text(
                         "SELECT `Primary Email` FROM `Sid_Email_Admission` "
-                        "WHERE `Student ID` = :sid LIMIT 1"
+                        "WHERE `Student ID` = :sid ORDER BY COALESCE(`email_priority`, 999999) ASC, `Primary Email` ASC LIMIT 1"
                     )
                     res = conn.execute(query, {"sid": student_id}).fetchone()
                     if res and res[0]:
@@ -604,7 +713,7 @@ def login():
                         session["attempts"] = 0
                         return render_template("verify.html", email=email, message="Access code was just sent. Please check your email.")
 
-                otp = str(random.randint(100000, 999999))
+                otp = str(secrets.randbelow(900000) + 100000)
                 timestamp_str = now.strftime("%Y-%m-%d %H:%M:%S")
 
                 conn.execute(text("UPDATE logins SET used = 1 WHERE email = :email"), {"email": email})
@@ -619,6 +728,11 @@ def login():
                     session["attempts"] = 0
                     return render_template("verify.html", email=email)
 
+                # Do not leave an unsent code reusable for the next 30 minutes.
+                conn.execute(
+                    text("UPDATE logins SET used = 2 WHERE email = :email AND login_code = :c AND used < 2"),
+                    {"email": email, "c": otp},
+                )
                 return render_template("login.html", error="Email service failed. Try again.")
 
         except Exception as e:
@@ -640,11 +754,36 @@ def verify():
             with engine.begin() as conn:
                 res = conn.execute(
                     text(
-                        "SELECT login_code FROM logins WHERE email = :email AND used < 2 "
+                        "SELECT login_code, time FROM logins WHERE email = :email AND used < 2 "
                         "ORDER BY time DESC LIMIT 1"
                     ),
                     {"email": email},
                 ).fetchone()
+
+                # Enforce the same 30-minute validity window stated in the OTP email.
+                # Previously, a user who kept the /verify session open could reuse an
+                # old code after 30 minutes because only /login checked the timestamp.
+                if res:
+                    code_time = res[1]
+                    if isinstance(code_time, str):
+                        try:
+                            code_time = datetime.datetime.strptime(code_time, "%Y-%m-%d %H:%M:%S")
+                        except ValueError:
+                            code_time = None
+                    expired = (
+                        not isinstance(code_time, datetime.datetime)
+                        or (datetime.datetime.now() - code_time).total_seconds() >= 1800
+                    )
+                    if expired:
+                        conn.execute(
+                            text("UPDATE logins SET used = 2 WHERE email = :email AND login_code = :c AND used < 2"),
+                            {"email": email, "c": res[0]},
+                        )
+                        session.clear()
+                        return render_template(
+                            "login.html",
+                            error="Access code expired. Please request a new code.",
+                        )
 
                 # correct code
                 if res and str(res[0]).strip() == code:
@@ -660,6 +799,9 @@ def verify():
                     ).fetchone()
 
                     session.clear()
+                    # Preserve the verified login email after clearing the pre-auth session.
+                    # This keeps Saved_Sequences.Student_Email and error logs populated.
+                    session["user_email"] = email
                     session["student_id"] = sid
                     session["student_name"] = str(name_res[0]) if name_res and name_res[0] else "Student"
                     session["is_guest"] = False
@@ -775,6 +917,7 @@ def planner_page():
     load_seq_id = request.args.get("load_seq_id", "").strip()
     initial_plan = None
     initial_plan_id = None
+    initial_plan_status = None
     if load_seq_id:
         try:
             with engine.connect() as conn:
@@ -797,22 +940,23 @@ def planner_page():
                         seq_data = _safe_json_load(r[5]) or {}
                         plan_obj = seq_data.get("planner_plan") or {}
                     
-                    plan_obj["reason_code"] = int(r[3] or 0)
+                    plan_obj["reason_code"] = _nullable_int(r[3])
                     plan_obj["justification"] = str(r[4] or "")
-                    initial_plan = json.dumps(plan_obj)
-                    initial_plan_id = json.dumps(load_seq_id)
+                    initial_plan = plan_obj
+                    initial_plan_id = load_seq_id
+                    initial_plan_status = str(r[2] or "").strip()
         except Exception as e:
             print(f"❌ Load seq_id error: {e}")
 
     try:
         with engine.connect() as conn:
             ts_df = pd.read_sql(
-                text("SELECT COURSE, `Academic Term`, CREDVAL, GRADE, PROG_LINK, DISCIPLINE1_DESCR, REPEAT_FLAG FROM Transcripts WHERE `Student ID` = :sid"),
+                text("SELECT COURSE, `Academic Term`, CREDVAL, GRADE, PROG_LINK, DISCIPLINE1_DESCR, REPEAT_FLAG FROM Transcripts WHERE `Student ID` = :sid ORDER BY `Academic Term` ASC, COURSE ASC"),
                 conn,
                 params={"sid": target_sid},
             )
             coop_df = pd.read_sql(
-                text("SELECT Term, `Term number Sx or Wx`, `Term Details`, WS, `Jobs View No`, `Jobs Applied No`, `Transferred Withdrawn OK` FROM coop WHERE `Student ID` = :sid"),
+                text("SELECT Term, `Term number Sx or Wx`, `Term Details`, WS, `Jobs View no` AS `Jobs View No`, `Jobs Applied no` AS `Jobs Applied No`, `Transferred Withdrawn OK` FROM coop WHERE `Student ID` = :sid ORDER BY Term ASC"),
                 conn,
                 params={"sid": target_sid},
             )
@@ -827,7 +971,7 @@ def planner_page():
             withdrawal_details = "No entry in CO-OP database"
         elif 'Transferred Withdrawn OK' in coop_df.columns:
             # Check if any term has "Withdr" in the status column
-            is_withdrawn = coop_df['Transferred Withdrawn OK'].astype(str).str.contains('Withdr', case=False, na=False).any()
+            is_withdrawn = bool(coop_df['Transferred Withdrawn OK'].astype(str).str.contains('Withdr', case=False, na=False).any())
             
             # If withdrawn, collect Term Details comments
             if is_withdrawn and 'Term Details' in coop_df.columns and 'Term' in coop_df.columns:
@@ -884,35 +1028,36 @@ def planner_page():
             student_name=session.get("student_name", "Student"),
             viewing_sid=viewing_sid,
             viewing_name=viewing_name,
-            is_power_user=is_power_user,
-            is_guest=is_guest,
-            is_grad=is_grad,
-            is_withdrawn=is_withdrawn,
+            is_power_user=bool(is_power_user),
+            is_guest=bool(is_guest),
+            is_grad=bool(is_grad),
+            is_withdrawn=bool(is_withdrawn),
             withdrawal_details=withdrawal_details,
             detected_program=detected_program,
             discipline_descr=discipline_descr,
-            ugrd_programs=json.dumps(ugrd_programs),
-            grad_programs=json.dumps(grad_programs),
-            all_programs=json.dumps(all_programs),
-            courses_db=json.dumps(courses_db),
-            student_courses=json.dumps(student_courses),
-            coop_terms=json.dumps(coop_terms),
-            cgpa_history=json.dumps(cgpa_history),
-            sequences_db=json.dumps(sequences_db),
-            restrictions_db=json.dumps(restrictions_db),
-            programs_requirements_db=json.dumps(programs_requirements_db),
-            program_names_db=json.dumps(program_names_db),
+            ugrd_programs=ugrd_programs,
+            grad_programs=grad_programs,
+            all_programs=all_programs,
+            courses_db=courses_db,
+            student_courses=student_courses,
+            coop_terms=coop_terms,
+            cgpa_history=cgpa_history,
+            sequences_db=sequences_db,
+            restrictions_db=restrictions_db,
+            programs_requirements_db=programs_requirements_db,
+            program_names_db=program_names_db,
             student_email=student_email,
             admin_email=admin_email,
             initial_plan=initial_plan,
             initial_plan_id=initial_plan_id,
+            initial_plan_status=initial_plan_status,
             is_debug=(debug_no_emails == "DEBUG"),
             show_rules_popup=show_rules_popup,
         )
 
     except Exception as e:
         print(f"❌ DB Error Planner: {e}")
-        return f"Database error: {e}", 500
+        return "Database error. Please try again later.", 500
 
 
 # =========================================================
@@ -1100,16 +1245,18 @@ def api_comments_append():
                 {"sid": target_sid},
             ).fetchone()
             priv = str(r[1]).strip() if (r and r[1] and str(r[1]).lower() != "none") else "" if r else ""
+            old_public = str(r[0]).strip() if (r and r[0] and str(r[0]).lower() != "none") else ""
+            updated_public = new_text + ("\n\n" + old_public if old_public else "")
 
             if r:
                 conn.execute(
                     text("UPDATE S_id_comments SET Public_comments=:pub WHERE S_id=:sid"),
-                    {"sid": target_sid, "pub": new_text},
+                    {"sid": target_sid, "pub": updated_public},
                 )
             else:
                 conn.execute(
                     text("INSERT INTO S_id_comments (S_id, Public_comments, PRIVATE_comments) VALUES (:sid, :pub, :priv)"),
-                    {"sid": target_sid, "pub": new_text, "priv": priv},
+                    {"sid": target_sid, "pub": updated_public, "priv": priv},
                 )
         return jsonify({"ok": True})
     except Exception as e:
@@ -1187,7 +1334,7 @@ def api_sequence_save():
                             INSERT INTO Saved_Sequences 
                             (student_id, student_id_name, Student_Email, Sequence_Name, Program, 
                              Date_Saved, status, student_comments, cos_reason, JSON_Data)
-                            VALUES (:sid, :name, :email, :seq_name, :prog, NOW(), :status, :comments, :reason, :json_data)
+                            VALUES (:sid, :name, :email, :seq_name, :prog, :date_saved, :status, :comments, :reason, :json_data)
                         """),
                         {
                             "sid": student_id,
@@ -1195,9 +1342,10 @@ def api_sequence_save():
                             "email": session.get("user_email", ""),
                             "seq_name": f"ERROR_RECOVERY_{datetime.datetime.now().strftime('%Y-%m-%d_%H:%M')}",
                             "prog": program,
+                            "date_saved": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f"),
                             "status": "ERROR_RECOVERY",
                             "comments": str(data.get("justification") or ""),
-                            "reason": int(data.get("reason_code") if data.get("reason_code") is not None else -1),
+                            "reason": _safe_int(data.get("reason_code"), -1),
                             "json_data": json.dumps(data)
                         }
                     )
@@ -1244,12 +1392,27 @@ def api_sequence_save():
     plan = data.get("plan") or {}
     issues = data.get("issues") or []
     term_summary = data.get("term_summary") or []
-    reason_code = int(data.get("reason_code") if data.get("reason_code") is not None else (data.get("cos_reason") if data.get("cos_reason") is not None else -1))
+    snapshot_ok, snapshot_msg = _validate_plan_term_summary_consistency(plan, term_summary)
+    if not snapshot_ok:
+        log_error("SEQUENCE_SNAPSHOT_MISMATCH", snapshot_msg, "/api/sequence/save")
+        return jsonify({"ok": False, "error": "Planner/email snapshot mismatch. Please refresh the page and submit again."}), 400
+    reason_code = _safe_int(data.get("reason_code") if data.get("reason_code") is not None else data.get("cos_reason"), -1)
     justification = str(data.get("justification") or "")
     
-    # Get status early so we can use it for validation
+    # Get status early so we can use it for validation. This endpoint is only
+    # for drafts/submissions; APPROVED/REWORK are admin-only via /api/admin/approve.
     status_in = str(data.get("status") or "DRAFT").strip().upper()
-    
+    allowed_save_statuses = {"DRAFT", "PENDING_APPROVAL", STATUS_PENDING_APPROVAL}
+    if status_in not in allowed_save_statuses:
+        return jsonify({"ok": False, "error": "Invalid sequence status for this endpoint"}), 400
+
+    if status_in in ("PENDING_APPROVAL", STATUS_PENDING_APPROVAL):
+        if reason_code < 0 or reason_code > 10:
+            return jsonify({"ok": False, "error": "Submission reason is required (0-10)"}), 400
+        has_errors = any(isinstance(issue, dict) and str(issue.get("sev", "")).lower() == "error" for issue in issues)
+        if (reason_code == 9 or has_errors) and not justification.strip():
+            return jsonify({"ok": False, "error": "Justification is required for reason #9 or when validation errors are present"}), 400
+
     # Validate that all original issues are present in student's justification
     # If any are missing, prepend them with a warning marker
     if status_in in ("PENDING_APPROVAL", STATUS_PENDING_APPROVAL) and issues and justification:
@@ -1297,7 +1460,7 @@ def api_sequence_save():
         name = f"Submitted on {datetime.datetime.now().strftime('%Y-%m-%d')}" if status_db == STATUS_PENDING_APPROVAL else "Draft"
 
     # Email + name to store
-    email_to_save = session.get("pre_auth_email") or session.get("user_email") or ""
+    email_to_save = session.get("user_email") or session.get("pre_auth_email") or _get_student_email_db(target_sid) or ""
     sid_name = session.get("student_name", "") or ""
 
     if is_admin and target_sid != cur_sid:
@@ -1308,38 +1471,102 @@ def api_sequence_save():
         if nm:
             sid_name = nm
 
-    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
 
     try:
+        duplicate_sequence_id = None
         with engine.begin() as conn:
-            conn.execute(
-                text(
-                    """
-                    INSERT INTO Saved_Sequences
-                        (Student_Email, Sequence_Name, Program, JSON_Data, Date_Saved, Term_Json_data, sequence_Json_data,
-                         status, student_comments, student_id, student_id_name, cos_reason, validation_issues)
-                    VALUES
-                        (:em, :name, :prog, :jdata, :ds, :tdata, :sdata, :stat, :comm, :sid, :sidname, :cosr, :vissues)
-                    """
-                ),
-                {
-                    "em": email_to_save,
-                    "name": name,
-                    "prog": program,
-                    "jdata": json.dumps(plan),
-                    "ds": ts,
-                    "tdata": json.dumps(issues),
-                    "sdata": json.dumps({"planner_plan": plan}),
-                    "stat": status_db,
-                    "comm": justification,
-                    "sid": target_sid,
-                    "sidname": sid_name,
-                    "cosr": reason_code,
-                    "vissues": json.dumps(issues) if issues else None,
-                },
-            )
+            # V03_012: server-side duplicate-click protection for submissions.
+            # The JS button is already guarded, but this MySQL advisory lock also
+            # protects against two near-simultaneous HTTP requests (double-click,
+            # browser retry, multiple workers). No schema change is required.
+            lock_name = f"planner_submit_{target_sid}"
+            lock_acquired = False
+            try:
+                if status_db == STATUS_PENDING_APPROVAL:
+                    try:
+                        lock_result = conn.execute(
+                            text("SELECT GET_LOCK(:lock_name, 5)"),
+                            {"lock_name": lock_name},
+                        ).scalar()
+                        lock_acquired = int(lock_result or 0) == 1
+                    except Exception as lock_exc:
+                        print(f"⚠ Duplicate-submit lock unavailable: {lock_exc}")
 
-        
+                    recent = conn.execute(
+                        text(
+                            """
+                            SELECT Date_Saved, JSON_Data, cos_reason, student_comments
+                            FROM Saved_Sequences
+                            WHERE student_id = :sid AND status = :status
+                            ORDER BY Date_Saved DESC
+                            LIMIT 1
+                            """
+                        ),
+                        {"sid": target_sid, "status": STATUS_PENDING_APPROVAL},
+                    ).fetchone()
+
+                    if recent:
+                        try:
+                            recent_dt = datetime.datetime.fromisoformat(str(recent[0]))
+                            age_seconds = (datetime.datetime.now() - recent_dt).total_seconds()
+                        except Exception:
+                            age_seconds = 999999
+
+                        same_plan = (_safe_json_load(recent[1]) or {}) == plan
+                        same_reason = _nullable_int(recent[2]) == (reason_code if 0 <= reason_code <= 10 else None)
+                        same_comment = str(recent[3] or "") == justification
+
+                        if 0 <= age_seconds <= 10 and same_plan and same_reason and same_comment:
+                            duplicate_sequence_id = str(recent[0])
+
+                if not duplicate_sequence_id:
+                    conn.execute(
+                        text(
+                            """
+                            INSERT INTO Saved_Sequences
+                                (Student_Email, Sequence_Name, Program, JSON_Data, Date_Saved, Term_Json_data, sequence_Json_data,
+                                 status, student_comments, student_id, student_id_name, cos_reason, validation_issues)
+                            VALUES
+                                (:em, :name, :prog, :jdata, :ds, :tdata, :sdata, :stat, :comm, :sid, :sidname, :cosr, :vissues)
+                            """
+                        ),
+                        {
+                            "em": email_to_save,
+                            "name": name,
+                            "prog": program,
+                            "jdata": json.dumps(plan),
+                            "ds": ts,
+                            "tdata": json.dumps(term_summary),
+                            "sdata": json.dumps({
+                                "planner_plan": plan,
+                                "term_summary": term_summary,
+                                "validation_issues": issues,
+                            }),
+                            "stat": status_db,
+                            "comm": justification,
+                            "sid": target_sid,
+                            "sidname": sid_name,
+                            "cosr": reason_code if 0 <= reason_code <= 10 else None,
+                            "vissues": json.dumps(issues) if issues else None,
+                        },
+                    )
+            finally:
+                if lock_acquired:
+                    try:
+                        conn.execute(text("SELECT RELEASE_LOCK(:lock_name)"), {"lock_name": lock_name})
+                    except Exception:
+                        pass
+
+        if duplicate_sequence_id:
+            return jsonify({
+                "ok": True,
+                "sequence_id": duplicate_sequence_id,
+                "duplicate_ignored": True,
+                "warning": "Duplicate submission click ignored; the existing pending submission was kept.",
+                "email_sent": None,
+            })
+
         # Add justification to public comments BEFORE sending email (if PENDING)
         if status_db == STATUS_PENDING_APPROVAL and justification:
             try:
@@ -1380,6 +1607,7 @@ def api_sequence_save():
                 print(f"⚠ Could not add justification to public comments: {ne}")
         
         # Send notification email when submitting for approval
+        email_sent = None
         if status_db == STATUS_PENDING_APPROVAL:
             try:
                 student_email_addr = email_to_save or _get_student_email_db(target_sid)
@@ -1390,7 +1618,7 @@ def api_sequence_save():
                 try:
                     with engine.connect() as conn:
                         program_row = conn.execute(
-                            text("SELECT PROG_LINK FROM Transcripts WHERE `Student ID` = :sid LIMIT 1"),
+                            text("SELECT PROG_LINK FROM Transcripts WHERE `Student ID` = :sid AND PROG_LINK IS NOT NULL AND PROG_LINK <> '' ORDER BY `Academic Term` DESC LIMIT 1"),
                             {"sid": target_sid}
                         ).fetchone()
                         if program_row and program_row[0]:
@@ -1446,7 +1674,7 @@ def api_sequence_save():
                     wts_changed=True,
                 )
 
-                send_email(
+                email_sent = send_email(
                     to=recipients["to"],
                     cc=recipients["cc"],
                     bcc=recipients["bcc"],
@@ -1455,10 +1683,22 @@ def api_sequence_save():
                     reply_to="coop_miae@concordia.ca",
                     is_html=True,
                 )
+                if not email_sent:
+                    log_error("SUBMIT_EMAIL_FAILED", "Pending sequence saved but notification email failed", "/api/sequence/save")
             except Exception as em_err:
+                email_sent = False
                 print(f"❌ Submit email error: {em_err}")
+                log_error("SUBMIT_EMAIL_FAILED", str(em_err), "/api/sequence/save")
 
-        return jsonify({"ok": True, "sequence_id": ts})
+        return jsonify({
+            "ok": True,
+            "sequence_id": ts,
+            "email_sent": (email_sent if status_db == STATUS_PENDING_APPROVAL else None),
+            "warning": (
+                "Sequence was saved, but the notification email could not be sent. Please contact the CO-OP office."
+                if status_db == STATUS_PENDING_APPROVAL and not email_sent else None
+            ),
+        })
 
     except Exception as e:
         log_error("SAVE_SEQUENCE_ERROR", str(e), "/api/sequence/save", extra_data={"plan": data.get("plan")})
@@ -1502,60 +1742,37 @@ def api_sequence_list():
                         "status": status,
                         "name": name,
                         "program": str(r[3] or ""),
-                        "reason_code": int(r[4] or 0),
+                        "reason_code": _nullable_int(r[4]),
                         "justification": str(r[5] or ""),
                     }
                 )
             
-            # Auto-load logic: 
-            # 1. Find most recent APPROVED, REWORK, or PENDING APPROVAL → load it
-            # 2. If none exists, load most recent saved sequence (fallback)
-            
-            priority_query = text(
-                """
-                SELECT Date_Saved, Sequence_Name, status
-                FROM Saved_Sequences
-                WHERE student_id = :sid 
-                AND (status LIKE '%APPROVED%' OR status = 'REWORK' OR status = 'PENDING APPROVAL')
-                ORDER BY Date_Saved DESC
-                LIMIT 1
-                """
-            )
-            priority_result = conn.execute(
-                priority_query, {"sid": target_sid}
-            ).fetchone()
-            
-            if priority_result:
-                seq_status = str(priority_result[2] or "").lower()
-                seq_type = "approved" if "approved" in seq_status else "rework" if "rework" in seq_status else "pending"
+            # Auto-load logic (V03_012): load the newest saved sequence,
+            # regardless of status. The user explicitly wants chronological
+            # recency to win over APPROVED/PENDING/REWORK/DRAFT labels.
+            if rows:
+                latest = rows[0]
+                latest_status = str(latest.get("status") or "").strip()
+                status_upper = latest_status.upper()
+                if status_upper in ("PENDING APPROVAL", "PENDING_APPROVAL"):
+                    seq_type = "pending"
+                elif status_upper == "APPROVED":
+                    seq_type = "approved"
+                elif status_upper == "REWORK":
+                    seq_type = "rework"
+                elif "DRAFT" in status_upper:
+                    seq_type = "draft"
+                else:
+                    seq_type = status_upper.lower().replace(" ", "_") or "saved"
+
                 auto_load_sequence = {
-                    "id": str(priority_result[0]),
-                    "name": str(priority_result[1]),
-                    "timestamp": str(priority_result[0]),
-                    "type": seq_type
+                    "id": str(latest.get("id") or ""),
+                    "name": str(latest.get("name") or ""),
+                    "timestamp": str(latest.get("updated_at") or latest.get("id") or ""),
+                    "status": latest_status,
+                    "type": seq_type,
                 }
-            
-            if not auto_load_sequence:
-                # Fallback: get most recent saved sequence
-                latest_query = text(
-                    """
-                    SELECT Date_Saved, Sequence_Name, status
-                    FROM Saved_Sequences
-                    WHERE student_id = :sid
-                    ORDER BY Date_Saved DESC
-                    LIMIT 1
-                    """
-                )
-                latest_result = conn.execute(latest_query, {"sid": target_sid}).fetchone()
-                
-                if latest_result:
-                    auto_load_sequence = {
-                        "id": str(latest_result[0]),
-                        "name": str(latest_result[1]),
-                        "timestamp": str(latest_result[0]),
-                        "type": "draft"
-                    }
-        
+
         return jsonify({
             "ok": True, 
             "sequences": rows,
@@ -1582,7 +1799,7 @@ def api_sequence_get(seq_id):
             r = conn.execute(
                 text(
                     """
-                    SELECT JSON_Data, Term_Json_data, status, cos_reason, student_comments, sequence_Json_data
+                    SELECT JSON_Data, Term_Json_data, status, cos_reason, student_comments, sequence_Json_data, validation_issues
                     FROM Saved_Sequences
                     WHERE student_id = :sid AND Date_Saved = :ts
                     LIMIT 1
@@ -1601,15 +1818,28 @@ def api_sequence_get(seq_id):
             seq_data = _safe_json_load(r[5]) or {}
             plan = seq_data.get("planner_plan") or {}
         
-        issues = _safe_json_load(r[1]) or []
+        seq_meta = _safe_json_load(r[5]) or {}
+        term_summary = _safe_json_load(r[1]) or []
+        issues = _safe_json_load(r[6]) or []
+
+        # Backward compatibility: older rows stored issues in Term_Json_data.
+        if not issues and isinstance(term_summary, list):
+            looks_like_issues = any(
+                isinstance(x, dict) and ("msg" in x or "sev" in x or "courseId" in x)
+                for x in term_summary
+            )
+            if looks_like_issues:
+                issues = term_summary
+                term_summary = seq_meta.get("term_summary") or []
 
         return jsonify(
             {
                 "ok": True,
                 "plan": plan,
                 "issues": issues,
+                "term_summary": term_summary,
                 "status": str(r[2] or ""),
-                "reason_code": int(r[3] or 0),
+                "reason_code": _nullable_int(r[3]),
                 "justification": str(r[4] or ""),
             }
         )
@@ -1657,7 +1887,7 @@ def api_admin_pending():
                         "updated_at": ts,
                         "status": str(r[6] or "").strip(),
                         "justification": str(r[7] or ""),
-                        "reason_code": int(r[8] or 0),
+                        "reason_code": _nullable_int(r[8]),
                         "plan": _safe_json_load(r[9]) or {},
                     }
                 )
@@ -1677,23 +1907,28 @@ def api_admin_send_student_email():
     
     try:
         data = request.get_json(silent=True) or {}
-        student_id = data.get("student_id")
-        student_name = data.get("student_name")
-        student_email = data.get("student_email")
+        student_id = str(data.get("student_id") or "").strip()
         program = data.get("program")
-        message = data.get("message")
-        include_institute = data.get("include_institute", False)
-        cc_list = data.get("cc_list", [])
-        
-        if not student_email or not message:
+        message = str(data.get("message") or "").strip()
+        include_institute = bool(data.get("include_institute", False))
+
+        if not student_id or not message:
             return jsonify({"ok": False, "error": "Missing required fields"}), 400
+
+        # Resolve identity/contact server-side. Do not trust stale or manually altered
+        # email/name/CC values from the browser.
+        student_name = _get_student_name_db(student_id) or "Student"
+        student_email = _get_priority1_email_db(student_id)
+        if not student_email:
+            return jsonify({"ok": False, "error": "No registered student email found"}), 400
+        cc_list = []
         
         # Get program from database (more reliable than frontend data)
         program_from_db = program  # Default to what was provided
         try:
             with engine.connect() as conn:
                 program_row = conn.execute(
-                    text("SELECT PROG_LINK FROM Transcripts WHERE `Student ID` = :sid LIMIT 1"),
+                    text("SELECT PROG_LINK FROM Transcripts WHERE `Student ID` = :sid AND PROG_LINK IS NOT NULL AND PROG_LINK <> '' ORDER BY `Academic Term` DESC LIMIT 1"),
                     {"sid": student_id}
                 ).fetchone()
                 if program_row and program_row[0]:
@@ -1742,19 +1977,22 @@ Regards,
 {admin_email}"""
         
         # Send email
-        send_email(
+        sent = send_email(
             to=[student_email],
             cc=cc_list,
             subject=subject,
             content=body,
             is_html=False
         )
+        if not sent:
+            log_error("ADMIN_STUDENT_EMAIL_FAILED", f"Email failed for SID {student_id}", "/api/admin/send_student_email")
+            return jsonify({"ok": False, "error": "Email could not be sent"}), 502
         
         return jsonify({"ok": True, "message": "Email sent successfully"})
         
     except Exception as e:
         print(f"❌ Error sending student email: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": False, "error": "An internal error occurred"}), 500
 
 
 @app.route("/api/admin/search_students", methods=["GET"])
@@ -1777,25 +2015,32 @@ def api_admin_search_students():
         with engine.connect() as conn:
             # Search by Student ID or Name (first/last)
             sql = text("""
-                SELECT `Student ID`, `Name`, `Email`
+                SELECT DISTINCT `Student ID`, `Name`
                 FROM `login vs id`
                 WHERE `Student ID` LIKE :query
                    OR `Name` LIKE :query
                 ORDER BY `Student ID`
-                LIMIT 10
+                LIMIT 20
             """)
-            
+
             search_pattern = f"%{query}%"
             rows = conn.execute(sql, {"query": search_pattern}).fetchall()
-            
+
             results = []
+            seen_sids = set()
             for row in rows:
+                sid = str(row[0]).strip() if row[0] else ""
+                if not sid or sid in seen_sids:
+                    continue
+                seen_sids.add(sid)
                 results.append({
-                    "id": str(row[0]).strip() if row[0] else "",
+                    "id": sid,
                     "name": str(row[1]).strip() if row[1] else "",
-                    "email": str(row[2]).strip() if row[2] else ""
+                    "email": _get_student_email_db(sid) or "",
                 })
-            
+                if len(results) >= 10:
+                    break
+
             return jsonify({"ok": True, "results": results})
             
     except Exception as e:
@@ -1854,6 +2099,10 @@ def api_admin_run_check():
                 if student_id:
                     student_ids.append(str(student_id).strip())
             
+            # De-duplicate view output early. Some legacy views can return one row per
+            # historical email/program; the admin UI should remain one student = one row.
+            student_ids = list(dict.fromkeys(student_ids))
+
             # Batch query 1: Get all names at once
             names_map = {}
             if student_ids:
@@ -1865,6 +2114,49 @@ def api_admin_run_check():
                 ).fetchall()
                 for name_row in names_result:
                     names_map[str(name_row[0]).strip()] = str(name_row[1]).strip() if name_row[1] else ""
+
+            # Normalize preferred email and latest program independently of the view.
+            preferred_email_map = {}
+            latest_program_map = {}
+            if student_ids:
+                email_rows = conn.execute(
+                    text(f"""
+                        SELECT `Student ID`, `Primary Email`
+                        FROM (
+                            SELECT `Student ID`, `Primary Email`,
+                                   ROW_NUMBER() OVER (
+                                       PARTITION BY `Student ID`
+                                       ORDER BY COALESCE(email_priority, 999999), `Primary Email`
+                                   ) AS rn
+                            FROM Sid_Email_Admission
+                            WHERE `Student ID` IN ({placeholders})
+                        ) ranked_email
+                        WHERE rn = 1
+                    """),
+                    params
+                ).fetchall()
+                for email_row in email_rows:
+                    preferred_email_map[str(email_row[0]).strip()] = str(email_row[1]).strip() if email_row[1] else ""
+
+                program_rows = conn.execute(
+                    text(f"""
+                        SELECT `Student ID`, PROG_LINK
+                        FROM (
+                            SELECT `Student ID`, PROG_LINK,
+                                   ROW_NUMBER() OVER (
+                                       PARTITION BY `Student ID`
+                                       ORDER BY `Academic Term` DESC
+                                   ) AS rn
+                            FROM Transcripts
+                            WHERE `Student ID` IN ({placeholders})
+                              AND PROG_LINK IS NOT NULL AND PROG_LINK <> ''
+                        ) ranked_program
+                        WHERE rn = 1
+                    """),
+                    params
+                ).fetchall()
+                for program_row in program_rows:
+                    latest_program_map[str(program_row[0]).strip()] = str(program_row[1]).strip() if program_row[1] else ""
             
             # Batch query 2: Get all notes at once
             notes_map = {}
@@ -1892,8 +2184,8 @@ def api_admin_run_check():
                 if current_month >= 9:  # Sep-Dec: Fall of current academic year
                     current_academic_year = current_year
                     current_season = 'Fall'
-                elif current_month >= 5:  # May-Aug: Summer of previous academic year
-                    current_academic_year = current_year - 1
+                elif current_month >= 5:  # May-Aug: Summer starts the YYYY-YYYY+1 academic year
+                    current_academic_year = current_year
                     current_season = 'Summer'
                 else:  # Jan-Apr: Winter of previous academic year
                     current_academic_year = current_year - 1
@@ -1961,6 +2253,7 @@ def api_admin_run_check():
             
             # Format results for frontend - map by column name
             students = []
+            students_by_id = {}
             for row in rows:
                 row_dict = dict(zip(column_names, row))
                 
@@ -1971,8 +2264,8 @@ def api_admin_run_check():
                 # Get name from the batch query results
                 name = names_map.get(student_id, "")
                 
-                email = row_dict.get('Primary Email') or row_dict.get('Email') or row_dict.get('email') or ""
-                program = row_dict.get('PROG_LINK') or row_dict.get('Program') or row_dict.get('program') or ""
+                email = preferred_email_map.get(student_id) or row_dict.get('Primary Email') or row_dict.get('Email') or row_dict.get('email') or ""
+                program = latest_program_map.get(student_id) or row_dict.get('PROG_LINK') or row_dict.get('Program') or row_dict.get('program') or ""
                 coop_program = row_dict.get('Co-op Program') or ""
                 current_courses = row_dict.get('Current_Term_Courses') or ""
                 
@@ -1988,7 +2281,7 @@ def api_admin_run_check():
                 deviated_courses = row_dict.get('Deviated_Courses') or row_dict.get('Deviated Courses') or ""
                 deviated_courses = str(deviated_courses).strip() if deviated_courses else ""
                 
-                students.append({
+                student_obj = {
                     "id": student_id,
                     "name": name,
                     "program": str(program).strip(),
@@ -2003,7 +2296,19 @@ def api_admin_run_check():
                     "deviated_courses": deviated_courses,
                     "notes_vis": notes_vis,
                     "notes_invis": notes_invis
-                })
+                }
+
+                if student_id in students_by_id:
+                    # Preserve one row per SID while retaining any additional deviation text.
+                    existing = students_by_id[student_id]
+                    if deviated_courses and deviated_courses not in existing.get("deviated_courses", ""):
+                        existing["deviated_courses"] = "\n".join(
+                            x for x in [existing.get("deviated_courses", ""), deviated_courses] if x
+                        )
+                    continue
+
+                students_by_id[student_id] = student_obj
+                students.append(student_obj)
             
             return jsonify(students)
             
@@ -2021,14 +2326,12 @@ def api_admin_run_check():
             }), 507  # HTTP 507 Insufficient Storage
         
         return jsonify({"error": "An error occurred while running the check"}), 500
-        traceback.print_exc()
-        return jsonify([]), 500  # Return empty array on error
 
 
 @app.route("/api/admin_check_wt_attention", methods=["POST"])
 @limiter.limit("100 per 15 minutes")
 def api_admin_check_wt_attention():
-    """Check #7: Students with 3 WTs planned, at least 1 future, no approved sequence, not grad."""
+    """Check #7: Students with at least 2 planned WTs, at least 1 future, no approved sequence, not grad."""
     if not _require_login():
         return jsonify({"ok": False, "error": "Unauthorized"}), 401
     if not _is_power_user():
@@ -2103,7 +2406,19 @@ def api_admin_check_wt_attention():
             sid_params = {f'sid{i}': sid for i, sid in enumerate(sids_list)}
 
             prog_rows = conn.execute(
-                text(f"SELECT DISTINCT `Student ID`, PROG_LINK FROM Transcripts WHERE `Student ID` IN ({placeholders}) AND PROG_LINK IS NOT NULL"),
+                text(f"""
+                    SELECT DISTINCT t.`Student ID`, t.PROG_LINK
+                    FROM Transcripts t
+                    INNER JOIN (
+                        SELECT `Student ID`, MAX(`Academic Term`) AS max_term
+                        FROM Transcripts
+                        WHERE `Student ID` IN ({placeholders})
+                        GROUP BY `Student ID`
+                    ) latest
+                      ON t.`Student ID` = latest.`Student ID`
+                     AND t.`Academic Term` = latest.max_term
+                    WHERE t.PROG_LINK IS NOT NULL AND t.PROG_LINK <> ''
+                """),
                 sid_params
             ).fetchall()
             grad_sids = set()
@@ -2168,7 +2483,7 @@ def api_admin_check_wt_attention():
 
             # Get emails
             email_rows = conn.execute(
-                text(f"SELECT `Student ID`, `Primary Email` FROM `Sid_Email_Admission` WHERE `Student ID` IN ({placeholders}) ORDER BY `email_priority` ASC"),
+                text(f"SELECT `Student ID`, `Primary Email` FROM `Sid_Email_Admission` WHERE `Student ID` IN ({placeholders}) ORDER BY `Student ID`, COALESCE(`email_priority`, 999999), `Primary Email`"),
                 sid_params
             ).fetchall()
             email_map = {}
@@ -2251,7 +2566,7 @@ def api_admin_check_wt_attention():
         print(f"❌ Error in check_wt_attention: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": False, "error": "An internal error occurred"}), 500
 
 
 @app.route("/api/admin_check_wt_movements", methods=["POST"])
@@ -2272,12 +2587,20 @@ def api_admin_check_wt_movements():
             # Build date filter
             where_clauses = ["status = 'APPROVED'", "student_id NOT LIKE '8%'", "student_id NOT LIKE '9%'"]
             params = {}
-            if date_from:
-                where_clauses.append("Date_Saved >= :dfrom")
-                params["dfrom"] = date_from
-            if date_to:
-                where_clauses.append("Date_Saved <= :dto")
-                params["dto"] = date_to + " 23:59:59"
+            try:
+                if date_from:
+                    datetime.date.fromisoformat(str(date_from))
+                    where_clauses.append("Date_Saved >= :dfrom")
+                    params["dfrom"] = str(date_from)
+                if date_to:
+                    end_date = datetime.date.fromisoformat(str(date_to)) + datetime.timedelta(days=1)
+                    # Date_Saved is TEXT in the legacy schema. ISO-like timestamps sort
+                    # lexicographically, so an exclusive next-day bound also includes
+                    # new microsecond timestamps in the final second of date_to.
+                    where_clauses.append("Date_Saved < :dto_exclusive")
+                    params["dto_exclusive"] = end_date.isoformat()
+            except ValueError:
+                return jsonify({"ok": False, "error": "Invalid date range"}), 400
 
             where_sql = " AND ".join(where_clauses)
 
@@ -2480,7 +2803,7 @@ def api_admin_check_wt_movements():
         print(f"❌ Error in check_wt_movements: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": False, "error": "An internal error occurred"}), 500
 
 
 @app.route("/api/admin_backfill_original_wt", methods=["POST"])
@@ -2547,89 +2870,91 @@ def api_admin_backfill_original_wt():
 
     except Exception as e:
         print(f"❌ Error in backfill_original_wt: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": False, "error": "An internal error occurred"}), 500
 
 
 @app.route("/api/admin_bulk_email", methods=["POST"])
 @limiter.limit("100 per 15 minutes")
 def api_admin_bulk_email():
-    """Send bulk emails to selected students"""
+    """Send bulk emails to selected students without holding a DB transaction across network calls."""
     if not _require_login():
         return jsonify({"ok": False, "error": "Unauthorized"}), 401
     if not _is_power_user():
         return jsonify({"ok": False, "error": "Unauthorized"}), 403
-    
+
     try:
         data = request.get_json(silent=True) or {}
-        student_ids = data.get("student_ids", [])
-        message = data.get("message", "")
-        short_msg = data.get("short_msg", "")
-        subject = data.get("subject", "")
-        include_institute = data.get("include_institute", False)
-        include_coop_reseq = data.get("include_coop_reseq", False)
-        
-        if not student_ids or not message:
-            return jsonify({"ok": False, "error": "Missing required fields"}), 400
-        
+        student_ids = list(dict.fromkeys(
+            str(sid).strip() for sid in (data.get("student_ids", []) or []) if str(sid).strip()
+        ))
+        message = str(data.get("message") or "").strip()
+        short_msg = str(data.get("short_msg") or "").strip()
+        subject = str(data.get("subject") or "").strip()
+        include_institute = bool(data.get("include_institute", False))
+        include_coop_reseq = bool(data.get("include_coop_reseq", False))
+
+        if not student_ids or not message or not subject:
+            return jsonify({"ok": False, "error": "Student IDs, subject and message are required"}), 400
+
         admin_email = session.get("user_email", "") or _get_student_email_db(_current_sid()) or "coop_miae@concordia.ca"
-        
-        # Process each student
-        with engine.begin() as conn:
-            for sid in student_ids:
-                # Get student info
-                student_name = _get_student_name_db(sid) or "Student"
-                student_email = _get_priority1_email_db(sid)
-                
-                if not student_email:
-                    print(f"⚠️ No email found for student {sid}, skipping...")
-                    continue
-                
-                # Get program from transcripts
-                program_row = conn.execute(
-                    text("SELECT PROG_LINK FROM Transcripts WHERE `Student ID` = :sid LIMIT 1"),
-                    {"sid": sid}
-                ).fetchone()
-                program = str(program_row[0]).strip() if program_row and program_row[0] else ""
-                
-                # Check if student is GRAD
-                is_grad = 'GRAD' in program.upper() if program else False
-                
-                # Determine coordinators based on GRAD status
-                if is_grad:
-                    # GRAD students: Nadia + Charlene
-                    cc_list = ['coop_miae@concordia.ca', 'nadia.mazzaferro@concordia.ca', 'charlene.wald@concordia.ca']
-                else:
-                    # UGRD students: Sabrina + coordinator (Fred/Nathalie based on INDU and SID)
-                    coord_email = 'frederick.francis@concordia.ca'
-                    if program and 'INDU' in program.upper():
-                        try:
-                            last_digit = int(str(sid)[-1])
-                            if last_digit >= 5:
-                                coord_email = 'nathalie.steverman@concordia.ca'
-                        except:
-                            pass
-                    cc_list = ['coop_miae@concordia.ca', 'sabrina.poirier@concordia.ca', coord_email]
-                
-                # Add optional CC addresses
-                if include_institute:
-                    cc_list.append('instituteoperations@concordia.ca')
-                if include_coop_reseq:
-                    cc_list.append('coopresequence@concordia.ca')
-                cc_list = list(set(cc_list))  # Remove duplicates
-                
-                # Build email body
-                header_parts = []
-                if include_institute:
-                    header_parts.append("Operations Institute")
-                if include_coop_reseq:
-                    header_parts.append("Coop Resequence")
-                
-                if header_parts:
-                    header_msg = f"⚠️ WT IMPACTED - {' AND '.join(header_parts)} are cc-ed\n\n"
-                else:
-                    header_msg = "✅ No WT restrictions - standard email\n\n"
-                
-                body = f"""{header_msg}Hello {student_name} ({sid}),
+        sent_sids = []
+        failed_sids = []
+        missing_email_sids = []
+        note_failed_sids = []
+
+        for sid in student_ids:
+            student_name = _get_student_name_db(sid) or "Student"
+            student_email = _get_priority1_email_db(sid)
+            if not student_email:
+                print(f"⚠️ No email found for student {sid}, skipping...")
+                missing_email_sids.append(sid)
+                continue
+
+            # Get latest program in a short read-only connection; do not keep a DB
+            # transaction open while waiting on the external email provider.
+            program = ""
+            try:
+                with engine.connect() as conn:
+                    program_row = conn.execute(
+                        text("SELECT PROG_LINK FROM Transcripts WHERE `Student ID` = :sid AND PROG_LINK IS NOT NULL AND PROG_LINK <> '' ORDER BY `Academic Term` DESC LIMIT 1"),
+                        {"sid": sid},
+                    ).fetchone()
+                    program = str(program_row[0]).strip() if program_row and program_row[0] else ""
+            except Exception as prog_err:
+                print(f"⚠ Could not fetch program for {sid}: {prog_err}")
+
+            is_grad = 'GRAD' in program.upper() if program else False
+            if is_grad:
+                cc_list = ['coop_miae@concordia.ca', 'nadia.mazzaferro@concordia.ca', 'charlene.wald@concordia.ca']
+            else:
+                coord_email = 'frederick.francis@concordia.ca'
+                if program and 'INDU' in program.upper():
+                    try:
+                        if int(str(sid)[-1]) >= 5:
+                            coord_email = 'nathalie.steverman@concordia.ca'
+                    except (ValueError, IndexError):
+                        pass
+                cc_list = ['coop_miae@concordia.ca', 'sabrina.poirier@concordia.ca', coord_email]
+
+            if include_institute:
+                cc_list.append('instituteoperations@concordia.ca')
+            if include_coop_reseq:
+                cc_list.append('coopresequence@concordia.ca')
+            # Preserve deterministic order while removing duplicates.
+            cc_list = list(dict.fromkeys(x for x in cc_list if x))
+
+            header_parts = []
+            if include_institute:
+                header_parts.append("Operations Institute")
+            if include_coop_reseq:
+                header_parts.append("Coop Resequence")
+            header_msg = (
+                f"⚠️ WT IMPACTED - {' AND '.join(header_parts)} are cc-ed\n\n"
+                if header_parts else
+                "✅ No WT restrictions - standard email\n\n"
+            )
+
+            body = f"""{header_msg}Hello {student_name} ({sid}),
 
 {message}
 
@@ -2637,51 +2962,67 @@ PS: Please use REPLY TO ALL
 
 Regards,
 {admin_email}"""
-                
-                # Append student ID to subject for searchability
-                email_subject = f"{subject} ({sid})"
-                
-                # Send email
-                send_email(
-                    to=[student_email],
-                    cc=cc_list,
-                    subject=email_subject,
-                    content=body,
-                    is_html=False
-                )
-                
-                # Save short message to database if provided
-                if short_msg:
-                    # Update S_id_comments table
+            email_subject = f"{subject} ({sid})"
+
+            sent = send_email(
+                to=[student_email],
+                cc=cc_list,
+                subject=email_subject,
+                content=body,
+                is_html=False,
+            )
+            if not sent:
+                failed_sids.append(sid)
+                continue
+
+            sent_sids.append(sid)
+
+            # A communication note represents a message that was actually sent.
+            # Save it in its own short transaction so a later student's failure
+            # cannot roll back notes for already-sent emails or trigger duplicates.
+            if short_msg:
+                try:
                     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     comment_text = f"[{now}, {admin_email}]: {short_msg}"
-                    
-                    # Check if record exists
-                    existing = conn.execute(
-                        text("SELECT Public_comments FROM S_id_comments WHERE S_id = :sid"),
-                        {"sid": sid}
-                    ).fetchone()
-                    
-                    if existing:
-                        # Append to existing notes
-                        old_notes = str(existing[0]) if existing[0] else ""
-                        new_notes = comment_text + "\n\n" + old_notes if old_notes else comment_text
-                        conn.execute(
-                            text("UPDATE S_id_comments SET Public_comments = :notes WHERE S_id = :sid"),
-                            {"notes": new_notes, "sid": sid}
-                        )
-                    else:
-                        # Insert new record
-                        conn.execute(
-                            text("INSERT INTO S_id_comments (S_id, Public_comments) VALUES (:sid, :notes)"),
-                            {"sid": sid, "notes": comment_text}
-                        )
-        
-        return jsonify({"ok": True, "message": "Emails sent successfully"})
-        
+                    with engine.begin() as conn:
+                        existing = conn.execute(
+                            text("SELECT Public_comments FROM S_id_comments WHERE S_id = :sid"),
+                            {"sid": sid},
+                        ).fetchone()
+                        if existing:
+                            old_notes = str(existing[0]) if existing[0] else ""
+                            new_notes = comment_text + ("\n\n" + old_notes if old_notes else "")
+                            conn.execute(
+                                text("UPDATE S_id_comments SET Public_comments = :notes WHERE S_id = :sid"),
+                                {"notes": new_notes, "sid": sid},
+                            )
+                        else:
+                            conn.execute(
+                                text("INSERT INTO S_id_comments (S_id, Public_comments) VALUES (:sid, :notes)"),
+                                {"sid": sid, "notes": comment_text},
+                            )
+                except Exception as note_err:
+                    note_failed_sids.append(sid)
+                    print(f"⚠ Email sent but short note failed for {sid}: {note_err}")
+
+        all_ok = not failed_sids and not missing_email_sids and not note_failed_sids
+        if failed_sids:
+            log_error("ADMIN_BULK_EMAIL_FAILED", f"Failed SIDs: {', '.join(failed_sids)}", "/api/admin_bulk_email")
+        if note_failed_sids:
+            log_error("ADMIN_BULK_NOTE_FAILED", f"Email sent but note failed for SIDs: {', '.join(note_failed_sids)}", "/api/admin_bulk_email")
+
+        return jsonify({
+            "ok": all_ok,
+            "message": f"Sent {len(sent_sids)} of {len(student_ids)} email(s)",
+            "sent": sent_sids,
+            "failed": failed_sids,
+            "missing_email": missing_email_sids,
+            "note_failed": note_failed_sids,
+        }), (200 if all_ok else 207)
+
     except Exception as e:
         print(f"❌ Error sending bulk emails: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": False, "error": "An internal error occurred"}), 500
 
 
 @app.route("/api/admin/approve", methods=["POST"])
@@ -2703,14 +3044,14 @@ def api_admin_approve():
     wt_summary = data.get("wt_summary") or {}
     term_summary = data.get("term_summary") or []
     justification = str(data.get("justification", "") or "")
-    reason_code = int(data.get("reason_code") if data.get("reason_code") is not None else -1)
+    reason_code = _safe_int(data.get("reason_code"), -1)
     
     # Get program from database (more reliable than frontend data)
     program_from_db = program  # Default to what was provided
     try:
         with engine.connect() as conn:
             program_row = conn.execute(
-                text("SELECT PROG_LINK FROM Transcripts WHERE `Student ID` = :sid LIMIT 1"),
+                text("SELECT PROG_LINK FROM Transcripts WHERE `Student ID` = :sid AND PROG_LINK IS NOT NULL AND PROG_LINK <> '' ORDER BY `Academic Term` DESC LIMIT 1"),
                 {"sid": target_sid}
             ).fetchone()
             if program_row and program_row[0]:
@@ -2718,6 +3059,12 @@ def api_admin_approve():
     except Exception as prog_err:
         print(f"⚠ Could not fetch program from DB for approve, using provided: {prog_err}")
     
+    # Resolve student metadata server-side for the new APPROVED/REWORK row.
+    # Legacy approval rows often had NULL Student_Email/Program/student_id_name even
+    # though the source PENDING row contained them. Keep the sequence record complete.
+    student_email_for_row = _get_student_email_db(target_sid) or ""
+    student_name_for_row = _get_student_name_db(target_sid) or student_name or target_sid
+
     # Get power user email with multiple fallbacks
     power_user_email = session.get("pre_auth_email") or session.get("user_email") or ""
     if not power_user_email:
@@ -2728,17 +3075,35 @@ def api_admin_approve():
 
     if status not in (STATUS_APPROVED, STATUS_REWORK):
         return jsonify({"ok": False, "error": "Invalid status"}), 400
+    if not timestamp:
+        return jsonify({"ok": False, "error": "No pending sequence selected"}), 400
     
     # Check if reason_code is selected (mandatory for both APPROVE and REWORK)
     if reason_code < 0:
         return jsonify({"ok": False, "error": "Submission reason not selected. Please select a reason before proceeding."}), 400
 
+    # V03_002 sends one canonical v2 planner snapshot and derives term_summary from it.
+    # Validate before any approval/rework side effects (notes/status/email).
+    plan_data = data.get("plan") or {}
+    snapshot_ok, snapshot_msg = _validate_plan_term_summary_consistency(plan_data, term_summary)
+    if not snapshot_ok:
+        log_error("APPROVAL_SNAPSHOT_MISMATCH", snapshot_msg, "/api/admin/approve")
+        return jsonify({"ok": False, "error": "Planner/email snapshot mismatch. Reload the pending sequence and try again."}), 400
+
     try:
         # Frontend already adds the auto-comment, so we just use the received comments
         now = datetime.datetime.now()
         
-        # 1. Update comments (use comments as received from frontend)
+        # 1/2. Comments and sequence state are committed together below.
+        # This prevents an "APPROVED/REWORK" comment from being saved if the
+        # sequence transaction itself fails.
+        # Get current plan data for creating new sequence
+        term_summary_json = json.dumps(term_summary) if term_summary else None
+        approval_issues = data.get("issues") or data.get("validation_errors") or []
+        validation_errors_json = json.dumps(approval_issues)
+        
         with engine.begin() as conn:
+            # Keep comments atomic with the approval/rework sequence changes.
             chk = conn.execute(text("SELECT 1 FROM S_id_comments WHERE S_id = :sid"), {"sid": target_sid}).fetchone()
             if chk:
                 conn.execute(
@@ -2751,18 +3116,36 @@ def api_admin_approve():
                     {"sid": target_sid, "pub": pub_comment, "priv": priv_comment},
                 )
 
-        # 2. Update sequence status and who_sent_it
-        # Get current plan data for creating new sequence
-        plan_data = data.get("plan") or {}
-        term_summary_json = json.dumps(term_summary) if term_summary else None
-        validation_errors_json = json.dumps(data.get("validation_errors") or [])
-        
-        with engine.begin() as conn:
-            # Check if source sequence exists in pending (using Date_Saved as identifier)
-            source_pending = conn.execute(
-                text("SELECT Date_Saved, Sequence_Name, JSON_Data, sequence_Json_data FROM Saved_Sequences WHERE student_id = :sid AND Date_Saved = :ts AND status = :pending"),
+            # Atomically claim the selected pending row inside this transaction.
+            # A plain SELECT is not enough: two admins can both read PENDING before
+            # either transaction commits. The conditional UPDATE serializes that race;
+            # only one request can change exactly one row from PENDING -> PROCESSING.
+            claim = conn.execute(
+                text("UPDATE Saved_Sequences SET status = 'PROCESSING' "
+                     "WHERE student_id = :sid AND Date_Saved = :ts AND status = :pending"),
                 {"sid": target_sid, "ts": timestamp, "pending": STATUS_PENDING_APPROVAL}
+            )
+            if claim.rowcount != 1:
+                raise ValueError("Pending sequence no longer exists or was already addressed")
+
+            source_pending = conn.execute(
+                text("SELECT Date_Saved, Sequence_Name, JSON_Data, sequence_Json_data, "
+                     "Program, Student_Email, student_id_name "
+                     "FROM Saved_Sequences WHERE student_id = :sid AND Date_Saved = :ts "
+                     "AND status = 'PROCESSING' LIMIT 1"),
+                {"sid": target_sid, "ts": timestamp}
             ).fetchone()
+            if not source_pending:
+                raise ValueError("Pending sequence could not be reloaded after claim")
+
+            # Preserve the metadata from the exact submitted row. Server-side DB
+            # lookups remain fallbacks for legacy pending rows with missing fields.
+            source_program = str(source_pending[4] or '').strip()
+            source_email = str(source_pending[5] or '').strip()
+            source_name = str(source_pending[6] or '').strip()
+            program_for_row = source_program or program or program_from_db
+            student_email_for_row = source_email or student_email_for_row
+            student_name_for_row = source_name or student_name_for_row
             
             # If plan_data is empty, try to get it from source pending sequence
             if not plan_data and source_pending:
@@ -2773,13 +3156,13 @@ def api_admin_approve():
                     source_json = source_seq_json.get("planner_plan") if source_seq_json else {}
                 if source_json:
                     plan_data = source_json
-            
+
             # If still no plan_data, log warning (frontend should always send it)
             if not plan_data:
                 print(f"⚠️ WARNING: Approving sequence for {target_sid} without plan data! timestamp={timestamp}")
             
             # Create new APPROVED or REWORK sequence
-            new_timestamp = now.strftime('%Y-%m-%d %H:%M:%S')
+            new_timestamp = now.strftime('%Y-%m-%d %H:%M:%S.%f')
             
             if status == STATUS_APPROVED:
                 new_sequence_name = f"APPROVED on {now.strftime('%Y-%m-%d %H:%M')}"
@@ -2832,15 +3215,29 @@ def api_admin_approve():
             conn.execute(
                 text("""
                     INSERT INTO Saved_Sequences 
-                    (student_id, Date_Saved, Sequence_Name, status, JSON_Data, Term_Json_data, who_sent_it, cos_reason, student_comments, Original_WT_JSON)
-                    VALUES (:sid, NOW(), :seq_name, :stat, :json_data, :term_json, :who, :reason, :comments, :owt)
+                    (Student_Email, Program, student_id_name, student_id, Date_Saved, Sequence_Name, status,
+                     JSON_Data, Term_Json_data, sequence_Json_data, validation_issues, who_sent_it,
+                     cos_reason, student_comments, Original_WT_JSON)
+                    VALUES (:student_email, :program, :student_name, :sid, :date_saved, :seq_name, :stat,
+                            :json_data, :term_json, :seq_json, :validation_issues, :who,
+                            :reason, :comments, :owt)
                 """),
                 {
+                    "student_email": student_email_for_row,
+                    "program": program_for_row,
+                    "student_name": student_name_for_row,
                     "sid": target_sid,
+                    "date_saved": new_timestamp,
                     "seq_name": new_sequence_name,
                     "stat": status_to_save,
                     "json_data": json.dumps(plan_data) if plan_data else None,
                     "term_json": term_summary_json,
+                    "seq_json": json.dumps({
+                        "planner_plan": plan_data,
+                        "term_summary": term_summary,
+                        "validation_issues": approval_issues,
+                    }),
+                    "validation_issues": validation_errors_json if approval_issues else None,
                     "who": power_user_email,
                     "reason": reason_code if reason_code is not None else None,
                     "comments": justification,
@@ -2916,21 +3313,6 @@ def api_admin_approve():
         student_email = _get_student_email_db(target_sid)
         power_user_name = power_user_email.split("@")[0] if power_user_email else "Coordinator"
 
-        val_errors = data.get("validation_errors") or []
-        val_errors_html = "<ul style='margin:0;padding-left:20px;font-size:14px;'>"
-        if not val_errors:
-            val_errors_html += "<li style='color:#27ae60;font-weight:bold;'>✅ No validation errors.</li>"
-        else:
-            for err in val_errors:
-                val_errors_html += f"<li style='margin-bottom:4px;'>{err}</li>"
-        val_errors_html += "</ul>"
-
-        def nl2html(txt, fallback=""):
-            s = str(txt or "").strip()
-            if not s:
-                s = fallback
-            return escape(s).replace("\n", "<br>")
-
         wt_html = ""
         wts_changed = False
         wt_status_msg = ""
@@ -2956,13 +3338,13 @@ def api_admin_approve():
 
                 wt_html += f"<p style='margin:6px 0;font-size:14px;line-height:1.5;'>{wt_label}: {term_txt}{change_span}</p>"
 
-            terms_html = build_terms_html(term_summary, include_grades=False)
-            comments_html = nl2html(pub_comment, "No comments.")
-            wt_status_msg = (
-                "<p style='color:#e67e22;font-weight:bold;'>⚠️ Work term placements were modified during approval.</p>"
-                if wts_changed else
-                "<p style='color:#27ae60;font-weight:bold;'>✅ Work term placements are unchanged.</p>"
-            )
+        terms_html = build_terms_html(term_summary, include_grades=False)
+        comments_html = nl2html(pub_comment, "No comments.")
+        wt_status_msg = (
+            "<p style='color:#e67e22;font-weight:bold;'>⚠️ Work term placements were modified during approval.</p>"
+            if wts_changed else
+            "<p style='color:#27ae60;font-weight:bold;'>✅ Work term placements are unchanged.</p>"
+        )
 
         if status == STATUS_APPROVED:
             # Fetch Public_comments from DB to include in email
@@ -2996,7 +3378,7 @@ def api_admin_approve():
             if reason_snippet:
                 reason_snippet = reason_snippet[:27] + "..."
 
-            subject = f"Approved sequence for {student_name} {target_sid} {program}"
+            subject = f"Approved sequence for {student_name} {target_sid} {program_from_db}"
             if reason_snippet:
                 subject += f" — {reason_snippet}"
             html_body = render_sequence_email(
@@ -3004,7 +3386,7 @@ def api_admin_approve():
                 student_email=student_email,
                 student_name=student_name,
                 target_sid=target_sid,
-                program=program,
+                program=program_from_db,
                 terms_html=terms_html,
                 comments_html=comments_html,
                 wt_html=wt_html,
@@ -3019,7 +3401,7 @@ def api_admin_approve():
             <div style="font-family:Arial,sans-serif;color:#333;max-width:750px;margin:0 auto;border:1px solid #e0e0e0;padding:20px;border-radius:8px;">
                 <h2 style="color:#c0392b;border-bottom:2px solid #e74c3c;padding-bottom:10px;">Action Required: Sequence Rework</h2>
                 <p><b>Student:</b> {escape(student_name)} ({escape(target_sid)})</p>
-                <p><b>Program:</b> {escape(program)}</p>
+                <p><b>Program:</b> {escape(program_from_db)}</p>
                 
                 <div style="background:#fff3cd;border:1px solid #ffc107;border-left:4px solid #ff9800;padding:15px;margin:20px 0;border-radius:5px;">
                     <p style="margin:0;font-weight:bold;color:#856404;">📋 Use LOAD: {escape(rework_sequence_name)}</p>
@@ -3054,7 +3436,7 @@ def api_admin_approve():
             wts_changed=wts_changed,
         )
 
-        send_email(
+        email_sent = send_email(
             to=recipients["to"],
             cc=recipients["cc"],
             bcc=recipients["bcc"],
@@ -3063,8 +3445,26 @@ def api_admin_approve():
             reply_to="coop_miae@concordia.ca",
             is_html=True,
         )
+        if not email_sent:
+            log_error(
+                "APPROVAL_EMAIL_FAILED",
+                f"{status} sequence state saved but notification email failed",
+                "/api/admin/approve",
+            )
 
-        return jsonify({"ok": True})
+        return jsonify({
+            "ok": True,
+            "email_sent": bool(email_sent),
+            "warning": (
+                f"{status} was saved, but the notification email could not be sent. Please contact the student/CO-OP office manually."
+                if not email_sent else None
+            ),
+        })
+    except ValueError as e:
+        if "Pending sequence no longer exists" in str(e):
+            return jsonify({"ok": False, "error": str(e)}), 409
+        log_error("APPROVE_ERROR", str(e), "/api/admin/approve")
+        return jsonify({"ok": False, "error": "Invalid approval data"}), 400
     except Exception as e:
         log_error("APPROVE_ERROR", str(e), "/api/admin/approve")
         print(f"❌ Approve route error: {e}")
@@ -3132,7 +3532,7 @@ def api_admin_student_details():
             })
     except Exception as e:
         print(f"❌ Student details error: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": False, "error": "An internal error occurred"}), 500
 
 
 @app.route("/api/admin/student_emails", methods=["GET"])
@@ -3163,7 +3563,8 @@ def api_admin_student_emails():
                 response = requests.get(
                     "https://api.resend.com/emails",
                     headers=headers,
-                    params={"limit": 100}
+                    params={"limit": 100},
+                    timeout=10
                 )
                 
                 if response.status_code == 200:
@@ -3183,7 +3584,8 @@ def api_admin_student_emails():
                             # Fetch full email content
                             email_detail_response = requests.get(
                                 f"https://api.resend.com/emails/{email_id}",
-                                headers=headers
+                                headers=headers,
+                                timeout=10
                             )
                             
                             full_content = ""
@@ -3202,7 +3604,7 @@ def api_admin_student_emails():
                 
             except Exception as e:
                 print(f"❌ Resend API error: {e}")
-                return jsonify({"ok": False, "error": f"Resend API error: {str(e)}"}), 500
+                return jsonify({"ok": False, "error": "Email history service error"}), 500
         else:
             return jsonify({"ok": False, "error": "Resend API key not configured"}), 500
         
@@ -3213,11 +3615,11 @@ def api_admin_student_emails():
         })
     except Exception as e:
         print(f"❌ Student emails error: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": False, "error": "An internal error occurred"}), 500
 
 
 if __name__ == "__main__":
-    import os
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    debug_mode = str(os.environ.get("FLASK_DEBUG", "")).strip().lower() in {"1", "true", "yes", "on"}
+    app.run(host="0.0.0.0", port=port, debug=debug_mode)
 

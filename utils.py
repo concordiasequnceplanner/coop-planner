@@ -6,8 +6,10 @@ from sqlalchemy import text
 
 
 
-debug_no_emails =  "SITE_ACTIVE" # then it works
-#debug_no_emails = "DEBUG" # debug
+debug_no_emails = os.environ.get("PLANNER_EMAIL_MODE", "SITE_ACTIVE").strip().upper()
+if debug_no_emails not in {"SITE_ACTIVE", "DEBUG"}:
+    print(f"⚠️ Unknown PLANNER_EMAIL_MODE={debug_no_emails!r}; defaulting to SITE_ACTIVE")
+    debug_no_emails = "SITE_ACTIVE"
 debug_email="coop_miae@concordia.ca"
 
 
@@ -18,13 +20,33 @@ resend.api_key = os.environ.get("RESEND_API_KEY", "")
 # 1. FUNCȚIA DE ÎNCĂRCARE DINAMICĂ (Din Excel)
 # =========================================================
 def load_data():
+    """Load the CORE_TE course catalog without relying on workbook tab order."""
     try:
         excel_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "CORE_TE.xlsx")
-        df = pd.read_excel(excel_path)
-        df.columns = [str(c).strip() for c in df.columns]
-        return df.fillna("")
+        xl = pd.ExcelFile(excel_path)
+        required = {"PROGRAM", "COURSE", "TITLE", "CREDIT", "CORE_TE"}
+        preferred = ["Coursses", "Courses", "COURSES", "Course", "COURSE"]
+        candidates = preferred + [x for x in xl.sheet_names if x not in preferred]
+
+        for sheet_name in candidates:
+            if sheet_name not in xl.sheet_names:
+                continue
+            probe = pd.read_excel(excel_path, sheet_name=sheet_name, nrows=2)
+            probe.columns = [str(c).strip() for c in probe.columns]
+            if required.issubset(set(probe.columns)):
+                df = pd.read_excel(excel_path, sheet_name=sheet_name)
+                df.columns = [str(c).strip() for c in df.columns]
+                # Exact duplicate catalog rows create duplicate draggable course boxes.
+                # Keep the first copy; rows that differ in metadata are preserved.
+                df = df.drop_duplicates().reset_index(drop=True)
+                return df.fillna("")
+
+        raise ValueError(
+            "No course-catalog sheet found with required columns: "
+            + ", ".join(sorted(required))
+        )
     except Exception as e:
-        print(f"❌ Error loading Excel: {e}")
+        print(f"❌ Error loading course catalog: {e}")
         return pd.DataFrame()
 
 def load_sequences():
@@ -70,14 +92,47 @@ def load_programs_requirements():
     except Exception as e:
         return []
 
+def _restriction_date_to_iso(value):
+    """Normalize Excel/date values to YYYY-MM-DD for JavaScript."""
+    if pd.isna(value):
+        return ""
+
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            return (
+                pd.Timestamp("1899-12-30")
+                + pd.to_timedelta(float(value), unit="D")
+            ).date().isoformat()
+        except Exception:
+            return str(value).strip()
+
+    raw = str(value).strip()
+    if not raw or raw.lower() in {"nan", "nat", "none"}:
+        return ""
+
+    try:
+        numeric = float(raw)
+        if 20000 <= numeric <= 100000:
+            return (
+                pd.Timestamp("1899-12-30")
+                + pd.to_timedelta(numeric, unit="D")
+            ).date().isoformat()
+    except Exception:
+        pass
+
+    parsed = pd.to_datetime(raw, errors="coerce")
+    if not pd.isna(parsed):
+        return parsed.date().isoformat()
+    return raw
+
+
 def load_restrictions():
     try:
         excel_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "CORE_TE.xlsx")
         df = pd.read_excel(excel_path, sheet_name='restrictions')
         df.columns = [str(c).strip() for c in df.columns]
-        # Convert date column to string for JSON serialization
         if 'Date after which takes effect' in df.columns:
-            df['Date after which takes effect'] = df['Date after which takes effect'].astype(str)
+            df['Date after which takes effect'] = df['Date after which takes effect'].apply(_restriction_date_to_iso)
         return df.fillna("").to_dict(orient="records")
     except Exception as e:
         print(f"❌ Error loading Restrictions: {e}")
@@ -140,6 +195,11 @@ def _merge_email_lists(*groups):
     return out
 
 def get_email_recipients(program, target_sid, submitter_email, priority1_email, action_type, wts_changed=True):
+    # Normalize optional addresses once so comparison logic never calls .strip()
+    # on None when a legacy/student record has no usable email.
+    submitter_email = str(submitter_email or "").strip()
+    priority1_email = str(priority1_email or "").strip()
+
     coop_ad_email = "coop_miae@concordia.ca"
     submit_notification = "sorin.voiculescu@concordia.ca"
 
@@ -149,8 +209,8 @@ def get_email_recipients(program, target_sid, submitter_email, priority1_email, 
     else:
         miae_program_assistant = debug_email
         email_coop_approval = debug_email
-        priority1_email = "vosorin@gmail.com"
-        submitter_email = "vosorin@gmail.com"
+        priority1_email = debug_email
+        submitter_email = debug_email
 
     # Check if student is GRAD
     is_grad = 'GRAD' in str(program).upper() if program else False
@@ -232,17 +292,23 @@ def get_email_recipients(program, target_sid, submitter_email, priority1_email, 
         if priority1_email and priority1_email.strip().lower() != submitter_email.strip().lower():
             recipients["bcc"].append(priority1_email)
 
-    recipients["to"] = list(set(filter(None, recipients["to"])))
-    recipients["cc"] = list(set(filter(None, recipients["cc"])))
-    recipients["bcc"] = list(set(filter(None, recipients["bcc"])))
+    recipients["to"] = _merge_email_lists(recipients["to"])
+    recipients["cc"] = _merge_email_lists(recipients["cc"])
+    recipients["bcc"] = _merge_email_lists(recipients["bcc"])
 
     return recipients
 
 
 def send_email(to, subject, content, cc=None, bcc=None, reply_to=None, is_html=True, sender="MIAE Planner <auth@concordiasequenceplanner.ca>"):
     if isinstance(to, str): to = [to]
-    if isinstance(cc, str): cc = _merge_email_lists(cc, DEFAULT_COORD_EMAIL)
+    if isinstance(cc, str): cc = [cc]
     if isinstance(bcc, str): bcc = [bcc]
+    to = _merge_email_lists(to)
+    cc = _merge_email_lists(cc) if cc else []
+    bcc = _merge_email_lists(bcc) if bcc else []
+    if not to:
+        print("❌ Email Sending Error: no TO recipient")
+        return False
     
     # Set default reply_to to coop_miae@concordia.ca if not provided
     if reply_to is None:
@@ -333,11 +399,11 @@ def send_otp_email(recipient, otp):
     """
     
     # Apelăm funcția universală cu toți parametrii doriți
+    # OTPs are authentication secrets: do not copy the code to an audit/BCC mailbox.
     return send_email(
         to=recipient,
         subject=f"{otp} is your access code",
         content=html_body,
-        bcc="concordia.sequence.planner@gmail.com",
         is_html=True
     )
 
@@ -417,7 +483,11 @@ def calculate_cgpa(ts_df, student_id=None, db_engine=None):
             total_pts = 0
             for _, row in subset.iterrows():
                 gr = str(row.get('GRADE', '')).strip().upper()
-                cr = float(row.get('CREDVAL', 0)) if pd.notna(row.get('CREDVAL')) else 0
+                try:
+                    raw_cr = row.get('CREDVAL', 0)
+                    cr = float(raw_cr) if pd.notna(raw_cr) and str(raw_cr).strip() != '' else 0.0
+                except (TypeError, ValueError):
+                    cr = 0.0
                 if gr in grade_pts and cr > 0:
                     total_cr += cr
                     total_pts += cr * grade_pts[gr]
@@ -428,7 +498,11 @@ def calculate_cgpa(ts_df, student_id=None, db_engine=None):
             recent_pts = 0
             for _, row in subset.iloc[::-1].iterrows():
                 gr = str(row.get('GRADE', '')).strip().upper()
-                cr = float(row.get('CREDVAL', 0)) if pd.notna(row.get('CREDVAL')) else 0
+                try:
+                    raw_cr = row.get('CREDVAL', 0)
+                    cr = float(raw_cr) if pd.notna(raw_cr) and str(raw_cr).strip() != '' else 0.0
+                except (TypeError, ValueError):
+                    cr = 0.0
                 if gr in grade_pts and cr > 0:
                     if recent_cr + cr <= 24.5:
                         recent_cr += cr
@@ -457,19 +531,36 @@ def calculate_cgpa(ts_df, student_id=None, db_engine=None):
 # 5. PROCESARE DATE STUDENT & DETECTARE PROGRAM
 # =========================================================
 def process_student_data(ts_df, coop_df):
+    # Row order from SQL is not guaranteed. Keep latest program/discipline
+    # detection deterministic even if the caller forgets ORDER BY.
+    ts_work = ts_df.copy()
+    if not ts_work.empty and 'Academic Term' in ts_work.columns:
+        sort_cols = ['Academic Term']
+        if 'COURSE' in ts_work.columns:
+            sort_cols.append('COURSE')
+        ts_work = ts_work.sort_values(sort_cols, kind='stable')
+
+    latest_prog_link = ""
     is_grad = False
-    if not ts_df.empty and 'PROG_LINK' in ts_df.columns:
-        latest_prog_link = str(ts_df['PROG_LINK'].dropna().iloc[-1]).upper()
-        if 'GRAD' in latest_prog_link: is_grad = True
+    if not ts_work.empty and 'PROG_LINK' in ts_work.columns:
+        prog_values = ts_work['PROG_LINK'].dropna().astype(str).str.strip()
+        prog_values = prog_values[prog_values != '']
+        latest_prog_link = str(prog_values.iloc[-1]).upper() if not prog_values.empty else ""
+        if 'GRAD' in latest_prog_link:
+            is_grad = True
 
     student_courses = []
     taken_course_ids = set()
     
     # Procesare Cursuri
-    for _, row in ts_df.iterrows():
+    for _, row in ts_work.iterrows():
         term_val = str(row.get('Academic Term', '')).strip()
         course_val = str(row.get('COURSE', '')).strip().replace(" ", "").upper()
-        cred_val = float(row.get('CREDVAL', 0)) if pd.notna(row.get('CREDVAL')) else 0.0
+        raw_credit = row.get('CREDVAL', 0)
+        try:
+            cred_val = float(raw_credit) if pd.notna(raw_credit) and str(raw_credit).strip() != "" else 0.0
+        except (TypeError, ValueError):
+            cred_val = 0.0
         grade_val = str(row.get('GRADE', '')).strip() if pd.notna(row.get('GRADE')) else ""
         
         taken_course_ids.add(course_val)
@@ -494,33 +585,78 @@ def process_student_data(ts_df, coop_df):
             else:
                 student_courses.append({"id": course_val, "year": y, "season": s, "credit": cred_val, "grade": grade_val})
 
-    # Detectare automată a programului din DISCIPLINE1_DESCR
-    detected_program = "Mechanical Engineering"
-    if not ts_df.empty and 'DISCIPLINE1_DESCR' in ts_df.columns:
-        disc = str(ts_df['DISCIPLINE1_DESCR'].dropna().iloc[-1]).lower() if not ts_df['DISCIPLINE1_DESCR'].dropna().empty else ""
-        if "industrial" in disc:
+    # Detect program deterministically. DISCIPLINE1_DESCR is preferred when it
+    # actually contains a recognizable value. The DB column can exist but be
+    # blank, so merely having the column must not force the Mechanical default.
+    detected_program = None
+    disc = ""
+    if not ts_work.empty and 'DISCIPLINE1_DESCR' in ts_work.columns:
+        disc_values = ts_work['DISCIPLINE1_DESCR'].dropna().astype(str).str.strip()
+        disc_values = disc_values[disc_values != '']
+        disc = str(disc_values.iloc[-1]).lower() if not disc_values.empty else ""
+
+    if "industrial" in disc:
+        detected_program = "Industrial Engineering"
+    elif "mechanical" in disc:
+        detected_program = "Mechanical Engineering"
+    elif "aero" in disc or "aerospace" in disc:
+        if "aerodyn" in disc or "propul" in disc:
+            detected_program = "Aero A: Aerodynamics and Propulsion"
+        elif "struct" in disc or "material" in disc:
+            detected_program = "Aero B: Aerospace Structures and Materials"
+        elif "avioni" in disc or "avionics" in disc:
+            detected_program = "Aero C: Avionics and Aerospace Systems"
+        else:
+            detected_program = "Aero C: Avionics and Aerospace Systems"
+
+    # Secondary signal: latest program link. This is especially useful for
+    # records where DISCIPLINE1_DESCR is blank.
+    if detected_program is None and latest_prog_link:
+        link = latest_prog_link.upper()
+        if "INDU" in link or "INDUSTRIAL" in link:
             detected_program = "Industrial Engineering"
-        elif "mechanical" in disc:
+        elif "MECH" in link or "MECHANICAL" in link:
             detected_program = "Mechanical Engineering"
-        elif "aero" in disc or "aerospace" in disc:
-            if "aerodyn" in disc or "propul" in disc:
+        elif "AERO" in link or "AEROSPACE" in link:
+            if ("AERODYN" in link or "PROPUL" in link or
+                    re.search(r'\bAERO[ _-]*A\b', link) or "OPTION A" in link):
                 detected_program = "Aero A: Aerodynamics and Propulsion"
-            elif "struct" in disc or "material" in disc:
+            elif ("STRUCT" in link or "MATERIAL" in link or
+                    re.search(r'\bAERO[ _-]*B\b', link) or "OPTION B" in link):
                 detected_program = "Aero B: Aerospace Structures and Materials"
-            elif "avioni" in disc or "avionics" in disc:
+            elif ("AVION" in link or re.search(r'\bAERO[ _-]*C\b', link) or
+                    "OPTION C" in link):
+                detected_program = "Aero C: Avionics and Aerospace Systems"
+
+    # Final fallback: infer from strong course signatures. These signatures are
+    # intentionally conservative and come from the current CORE_TE catalogue.
+    if detected_program is None:
+        if any(c.startswith("INDU") for c in taken_course_ids):
+            detected_program = "Industrial Engineering"
+        else:
+            aero_a = {"AERO455", "AERO462", "AERO464", "AERO465"}
+            aero_b = {"AERO431", "AERO486", "AERO487"}
+            aero_c = {"AERO482", "AERO483"}
+            scores = {
+                "A": len(taken_course_ids & aero_a),
+                "B": len(taken_course_ids & aero_b),
+                "C": len(taken_course_ids & aero_c),
+            }
+            max_score = max(scores.values()) if scores else 0
+            winners = [k for k, v in scores.items() if v == max_score and v > 0]
+
+            if len(winners) == 1:
+                detected_program = {
+                    "A": "Aero A: Aerodynamics and Propulsion",
+                    "B": "Aero B: Aerospace Structures and Materials",
+                    "C": "Aero C: Avionics and Aerospace Systems",
+                }[winners[0]]
+            elif any(c.startswith("AERO") for c in taken_course_ids):
+                # Preserve the historical generic-AERO fallback when the option
+                # cannot yet be identified from the student's completed courses.
                 detected_program = "Aero C: Avionics and Aerospace Systems"
             else:
-                detected_program = "Aero C: Avionics and Aerospace Systems"
-    else:
-        # Fallback: detectare din cursuri
-        if any("INDU" in c for c in taken_course_ids):
-            detected_program = "Industrial Engineering"
-        elif "AERO201" in taken_course_ids:
-            detected_program = "Aero C: Avionics and Aerospace Systems"
-            if "AERO480" in taken_course_ids or "AERO482" in taken_course_ids:
-                detected_program = "Aero A: Aerodynamics and Propulsion"
-            elif "AERO431" in taken_course_ids:
-                detected_program = "Aero B: Aerospace Structures and Materials"
+                detected_program = "Mechanical Engineering"
 
     if is_grad:
         if "MECH" in detected_program.upper():
@@ -538,8 +674,12 @@ def process_student_data(ts_df, coop_df):
             if y != "UNKNOWN" and s != "UNKNOWN":
                 term_details = str(row.get('Term Details', '')).strip() if pd.notna(row.get('Term Details')) else ""
                 ws = str(row.get('WS', '')).strip() if pd.notna(row.get('WS')) else ""
-                jobs_view = str(row.get('Jobs View No', '')).strip() if pd.notna(row.get('Jobs View No')) else ""
-                jobs_applied = str(row.get('Jobs Applied No', '')).strip() if pd.notna(row.get('Jobs Applied No')) else ""
+                # Production DB columns use lowercase "no"; accept the older
+                # capitalized spelling too for backward-compatible imports.
+                jobs_view_raw = row.get('Jobs View no', row.get('Jobs View No', ''))
+                jobs_applied_raw = row.get('Jobs Applied no', row.get('Jobs Applied No', ''))
+                jobs_view = str(jobs_view_raw).strip() if pd.notna(jobs_view_raw) else ""
+                jobs_applied = str(jobs_applied_raw).strip() if pd.notna(jobs_applied_raw) else ""
                 
                 coop_terms.append({
                     "year": y, 

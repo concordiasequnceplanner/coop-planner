@@ -40,24 +40,149 @@ STATUS_REWORK = "REWORK"
 STATUS_SAVED_DRAFT = "SAVED DRAFT"
 STATUS_IGNORED = "IGNORED"
 
-def _get_priority1_email_db(target_sid: str) -> str:
+_EMAIL_SCHEMA_CACHE = None
+
+def _email_schema_capabilities():
+    """Return available Sid_Email_Admission columns; supports safe rollout before/after DB patch."""
+    global _EMAIL_SCHEMA_CACHE
+    if _EMAIL_SCHEMA_CACHE is not None:
+        return _EMAIL_SCHEMA_CACHE
+    caps = set()
     if engine is None:
-        return None
+        _EMAIL_SCHEMA_CACHE = caps
+        return caps
     try:
         with engine.connect() as conn:
-            q = text("""
-                SELECT `Primary Email`
+            rows = conn.execute(text("SHOW COLUMNS FROM `Sid_Email_Admission`")).fetchall()
+            caps = {str(r[0]).strip() for r in rows}
+    except Exception as e:
+        print(f"⚠ Could not inspect Sid_Email_Admission schema: {e}")
+    _EMAIL_SCHEMA_CACHE = caps
+    return caps
+
+def _email_flags_enabled() -> bool:
+    caps = _email_schema_capabilities()
+    return {"do_not_use", "source_priority", "primary_selected_by_user"}.issubset(caps)
+
+def _is_concordia_email(email: str) -> bool:
+    raw = str(email or "").strip().lower()
+    if "@" not in raw:
+        return False
+    domain = raw.rsplit("@", 1)[1].rstrip(".")
+    return domain == "concordia.ca" or domain.endswith(".concordia.ca")
+
+def _get_student_email_accounts_db(target_sid: str, include_inactive: bool = True):
+    """Return all known validated email aliases for a SID, primary first."""
+    if engine is None:
+        return []
+    try:
+        with engine.connect() as conn:
+            if _email_flags_enabled():
+                where_inactive = "" if include_inactive else "AND COALESCE(`do_not_use`,0)=0"
+                rows = conn.execute(text(f"""
+                    SELECT `Primary Email`, `email_priority`, COALESCE(`do_not_use`,0),
+                           `do_not_use_at`, `do_not_use_by`, `source`, `source_priority`,
+                           `last_seen_in_source`, COALESCE(`primary_selected_by_user`,0)
+                    FROM `Sid_Email_Admission`
+                    WHERE `Student ID` = :sid {where_inactive}
+                    ORDER BY COALESCE(`do_not_use`,0) ASC,
+                             CASE WHEN `email_priority` = 1 THEN 0 ELSE 1 END ASC,
+                             COALESCE(`email_priority`, 999999) ASC,
+                             COALESCE(`source_priority`, 999999) ASC, `Primary Email` ASC
+                """), {"sid": target_sid}).fetchall()
+                return [{
+                    "email": str(r[0] or "").strip(),
+                    "email_priority": (int(r[1]) if r[1] is not None else None),
+                    "do_not_use": bool(r[2]),
+                    "do_not_use_at": (str(r[3]) if r[3] else ""),
+                    "do_not_use_by": str(r[4] or "").strip(),
+                    "source": str(r[5] or "").strip(),
+                    "source_priority": (int(r[6]) if r[6] is not None else None),
+                    "last_seen_in_source": (str(r[7]) if r[7] else ""),
+                    "primary_selected_by_user": bool(r[8]),
+                    "is_concordia": _is_concordia_email(r[0]),
+                    "is_primary": (not bool(r[2]) and r[1] == 1),
+                } for r in rows]
+            rows = conn.execute(text("""
+                SELECT `Primary Email`, `email_priority`
                 FROM `Sid_Email_Admission`
                 WHERE `Student ID` = :sid
-                ORDER BY COALESCE(`email_priority`, 999999) ASC, `Primary Email` ASC
-                LIMIT 1
-            """)
-            r = conn.execute(q, {"sid": target_sid}).fetchone()
-            if r and r[0]:
-                return str(r[0]).strip()
+                ORDER BY COALESCE(`email_priority`, 999999), `Primary Email`
+            """), {"sid": target_sid}).fetchall()
+            return [{
+                "email": str(r[0] or "").strip(),
+                "email_priority": (int(r[1]) if r[1] is not None else None),
+                "do_not_use": False,
+                "do_not_use_at": "",
+                "do_not_use_by": "",
+                "source": "LEGACY",
+                "source_priority": None,
+                "last_seen_in_source": "",
+                "primary_selected_by_user": False,
+                "is_concordia": _is_concordia_email(r[0]),
+                "is_primary": r[1] == 1,
+            } for r in rows]
     except Exception as e:
-        print(f"❌ get_priority1_email_db error: {e}")
-    return None
+        print(f"❌ get_student_email_accounts_db error: {e}")
+        return []
+
+def _get_priority1_email_db(target_sid: str) -> str:
+    """Communication email: one ACTIVE primary, with a safe active fallback for legacy data."""
+    accounts = _get_student_email_accounts_db(target_sid, include_inactive=False)
+    if not accounts:
+        return None
+    for acc in accounts:
+        if acc.get("is_primary"):
+            return acc.get("email") or None
+    return accounts[0].get("email") or None
+
+
+def _renumber_active_email_priorities(conn, target_sid: str, preferred_email: str | None = None, manual_primary: bool = False):
+    """Maintain exactly one ACTIVE priority=1 and compact priorities for the rest."""
+    if not _email_flags_enabled():
+        raise RuntimeError("Sid_Email_Admission email-status migration has not been applied")
+    rows = conn.execute(text("""
+        SELECT `Primary Email`, `email_priority`, COALESCE(`do_not_use`,0),
+               COALESCE(`source_priority`,999999), COALESCE(`primary_selected_by_user`,0)
+        FROM `Sid_Email_Admission`
+        WHERE `Student ID`=:sid
+        FOR UPDATE
+    """), {"sid": target_sid}).fetchall()
+    active = [r for r in rows if not bool(r[2])]
+    if not active:
+        return None
+
+    preferred_low = str(preferred_email or "").strip().lower()
+    chosen = None
+    if preferred_low:
+        chosen = next((r for r in active if str(r[0] or "").strip().lower() == preferred_low), None)
+    if chosen is None:
+        chosen = next((r for r in active if bool(r[4]) and r[1] == 1), None)
+    if chosen is None:
+        chosen = next((r for r in active if r[1] == 1), None)
+    if chosen is None:
+        chosen = sorted(active, key=lambda r: (int(r[3] or 999999), int(r[1] or 999999), str(r[0]).lower()))[0]
+
+    chosen_email = str(chosen[0]).strip()
+    others = [r for r in active if str(r[0]).strip().lower() != chosen_email.lower()]
+    others.sort(key=lambda r: (int(r[3] or 999999), int(r[1] or 999999), str(r[0]).lower()))
+
+    conn.execute(text("""
+        UPDATE `Sid_Email_Admission`
+        SET `email_priority`=NULL, `primary_selected_by_user`=0
+        WHERE `Student ID`=:sid AND COALESCE(`do_not_use`,0)=0
+    """), {"sid": target_sid})
+    conn.execute(text("""
+        UPDATE `Sid_Email_Admission`
+        SET `email_priority`=1, `primary_selected_by_user`=:manual
+        WHERE `Student ID`=:sid AND `Primary Email`=:email AND COALESCE(`do_not_use`,0)=0
+    """), {"sid": target_sid, "email": chosen_email, "manual": 1 if manual_primary else int(bool(chosen[4]))})
+    for idx, r in enumerate(others, start=2):
+        conn.execute(text("""
+            UPDATE `Sid_Email_Admission` SET `email_priority`=:priority
+            WHERE `Student ID`=:sid AND `Primary Email`=:email AND COALESCE(`do_not_use`,0)=0
+        """), {"sid": target_sid, "email": str(r[0]).strip(), "priority": idx})
+    return chosen_email
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY")
@@ -339,21 +464,8 @@ def _validate_plan_term_summary_consistency(plan, term_summary):
 
 
 def _get_student_email_db(target_sid: str) -> str:
-    """Best-effort email for a student."""
-    if engine is None:
-        return None
-    try:
-        with engine.connect() as conn:
-            q = text(
-                "SELECT `Primary Email` FROM `Sid_Email_Admission` "
-                "WHERE `Student ID` = :sid ORDER BY COALESCE(`email_priority`, 999999) ASC, `Primary Email` ASC LIMIT 1"
-            )
-            r = conn.execute(q, {"sid": target_sid}).fetchone()
-            if r and r[0]:
-                return str(r[0]).strip()
-    except Exception as e:
-        print(f"❌ get_student_email_db error: {e}")
-    return None
+    """Backward-compatible alias for the ACTIVE primary communication email."""
+    return _get_priority1_email_db(target_sid)
 
 
 def _get_student_name_db(target_sid: str) -> str:
@@ -616,6 +728,149 @@ def api_acknowledge_rules():
         print(f"❌ Rules ack error: {e}")
         return jsonify({"ok": False, "error": "An internal error occurred"}), 500
 
+
+# =========================================================
+# STUDENT EMAIL ACCOUNT MANAGEMENT
+# Email addresses themselves are source-controlled by CO-OP Institute downloads.
+# Students can only choose Primary / DO NOT USE / Restore among known addresses.
+# =========================================================
+
+@app.route("/api/email_accounts", methods=["GET"])
+def api_email_accounts():
+    if not _require_login():
+        return jsonify({"ok": False, "error": "Unauthorized"}), 401
+    sid = _current_sid()
+    accounts = _get_student_email_accounts_db(sid, include_inactive=True)
+    primary = _get_priority1_email_db(sid) or ""
+    return jsonify({
+        "ok": True,
+        "student_id": sid,
+        "schema_ready": _email_flags_enabled(),
+        "primary_email": primary,
+        "primary_is_concordia": _is_concordia_email(primary),
+        "accounts": accounts,
+    })
+
+
+def _require_email_management_schema():
+    if not _email_flags_enabled():
+        return jsonify({
+            "ok": False,
+            "error": "Email account management is not available until the Sid_Email_Admission migration is applied."
+        }), 503
+    return None
+
+@app.route("/api/email_accounts/set_primary", methods=["POST"])
+def api_email_set_primary():
+    if not _require_login():
+        return jsonify({"ok": False, "error": "Unauthorized"}), 401
+    schema_error = _require_email_management_schema()
+    if schema_error:
+        return schema_error
+    sid = _current_sid()
+    email = str((request.get_json(silent=True) or {}).get("email") or "").strip()
+    if not email:
+        return jsonify({"ok": False, "error": "Missing email"}), 400
+    try:
+        with engine.begin() as conn:
+            row = conn.execute(text("""
+                SELECT COALESCE(`do_not_use`,0)
+                FROM `Sid_Email_Admission`
+                WHERE `Student ID`=:sid AND LOWER(`Primary Email`)=LOWER(:email)
+                FOR UPDATE
+            """), {"sid": sid, "email": email}).fetchone()
+            if not row:
+                return jsonify({"ok": False, "error": "Email is not associated with your Student ID"}), 404
+            if bool(row[0]):
+                return jsonify({"ok": False, "error": "Restore this email before making it Primary"}), 409
+            chosen = _renumber_active_email_priorities(conn, sid, preferred_email=email, manual_primary=True)
+        return jsonify({
+            "ok": True,
+            "primary_email": chosen,
+            "primary_is_concordia": _is_concordia_email(chosen),
+        })
+    except Exception as e:
+        print(f"❌ Email set-primary error: {e}")
+        return jsonify({"ok": False, "error": "Could not update Primary email"}), 500
+
+@app.route("/api/email_accounts/do_not_use", methods=["POST"])
+def api_email_do_not_use():
+    if not _require_login():
+        return jsonify({"ok": False, "error": "Unauthorized"}), 401
+    schema_error = _require_email_management_schema()
+    if schema_error:
+        return schema_error
+    sid = _current_sid()
+    email = str((request.get_json(silent=True) or {}).get("email") or "").strip()
+    if not email:
+        return jsonify({"ok": False, "error": "Missing email"}), 400
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(text("""
+                SELECT `Primary Email`, `email_priority`, COALESCE(`do_not_use`,0)
+                FROM `Sid_Email_Admission`
+                WHERE `Student ID`=:sid
+                FOR UPDATE
+            """), {"sid": sid}).fetchall()
+            target = next((r for r in rows if str(r[0] or "").strip().lower() == email.lower()), None)
+            if not target:
+                return jsonify({"ok": False, "error": "Email is not associated with your Student ID"}), 404
+            if bool(target[2]):
+                return jsonify({"ok": True})
+            active = [r for r in rows if not bool(r[2])]
+            if len(active) <= 1:
+                return jsonify({"ok": False, "error": "You cannot disable your last active email."}), 409
+            if target[1] == 1:
+                return jsonify({
+                    "ok": False,
+                    "error": "This is your Primary communication email. Select another Primary email before marking it DO NOT USE."
+                }), 409
+            actor = session.get("user_email") or sid
+            conn.execute(text("""
+                UPDATE `Sid_Email_Admission`
+                SET `do_not_use`=1, `do_not_use_at`=NOW(), `do_not_use_by`=:actor,
+                    `email_priority`=NULL, `primary_selected_by_user`=0
+                WHERE `Student ID`=:sid AND LOWER(`Primary Email`)=LOWER(:email)
+            """), {"sid": sid, "email": email, "actor": actor})
+            _renumber_active_email_priorities(conn, sid)
+        return jsonify({"ok": True})
+    except Exception as e:
+        print(f"❌ Email DO NOT USE error: {e}")
+        return jsonify({"ok": False, "error": "Could not disable email"}), 500
+
+@app.route("/api/email_accounts/restore", methods=["POST"])
+def api_email_restore():
+    if not _require_login():
+        return jsonify({"ok": False, "error": "Unauthorized"}), 401
+    schema_error = _require_email_management_schema()
+    if schema_error:
+        return schema_error
+    sid = _current_sid()
+    email = str((request.get_json(silent=True) or {}).get("email") or "").strip()
+    if not email:
+        return jsonify({"ok": False, "error": "Missing email"}), 400
+    try:
+        with engine.begin() as conn:
+            row = conn.execute(text("""
+                SELECT COALESCE(`do_not_use`,0)
+                FROM `Sid_Email_Admission`
+                WHERE `Student ID`=:sid AND LOWER(`Primary Email`)=LOWER(:email)
+                FOR UPDATE
+            """), {"sid": sid, "email": email}).fetchone()
+            if not row:
+                return jsonify({"ok": False, "error": "Email is not associated with your Student ID"}), 404
+            conn.execute(text("""
+                UPDATE `Sid_Email_Admission`
+                SET `do_not_use`=0, `do_not_use_at`=NULL, `do_not_use_by`=NULL,
+                    `primary_selected_by_user`=0
+                WHERE `Student ID`=:sid AND LOWER(`Primary Email`)=LOWER(:email)
+            """), {"sid": sid, "email": email})
+            _renumber_active_email_priorities(conn, sid)
+        return jsonify({"ok": True})
+    except Exception as e:
+        print(f"❌ Email restore error: {e}")
+        return jsonify({"ok": False, "error": "Could not restore email"}), 500
+
 # =========================================================
 # AUTH ROUTES
 # =========================================================
@@ -629,20 +884,19 @@ def login():
         if action == "recover_email":
             student_id = request.form.get("student_id", "").strip()
             try:
-                with engine.connect() as conn:
-                    query = text(
-                        "SELECT `Primary Email` FROM `Sid_Email_Admission` "
-                        "WHERE `Student ID` = :sid ORDER BY COALESCE(`email_priority`, 999999) ASC, `Primary Email` ASC LIMIT 1"
-                    )
-                    res = conn.execute(query, {"sid": student_id}).fetchone()
-                    if res and res[0]:
-                        masked = mask_email(str(res[0]).strip())
-                        return render_template("login.html", popup_message=f"Please use {masked}")
+                primary = _get_priority1_email_db(student_id)
+                if primary:
+                    masked = mask_email(primary)
                     return render_template(
                         "login.html",
-                        ask_student_id=True,
-                        error="Nu există ID / ID does not exist.",
+                        popup_title="Registered primary email",
+                        popup_message=f"Please use {masked}",
                     )
+                return render_template(
+                    "login.html",
+                    ask_student_id=True,
+                    error="Nu există ID / ID does not exist.",
+                )
             except Exception as e:
                 print(f"❌ DB Error Recovery: {e}")
                 return render_template("login.html", error="An error occurred. Please try again.")
@@ -651,18 +905,49 @@ def login():
         email = request.form.get("email", "").strip().lower()
         try:
             with engine.begin() as conn:
-                res = conn.execute(
-                    text(
-                        "SELECT `Student ID` FROM `Sid_Email_Admission` "
-                        "WHERE LOWER(`Primary Email`) = :email LIMIT 1"
-                    ),
-                    {"email": email},
-                ).fetchone()
+                if _email_flags_enabled():
+                    matches = conn.execute(
+                        text("""
+                            SELECT `Student ID`, COALESCE(`do_not_use`,0) AS dnu
+                            FROM `Sid_Email_Admission`
+                            WHERE LOWER(`Primary Email`) = :email
+                            ORDER BY COALESCE(`do_not_use`,0), `Student ID`
+                        """),
+                        {"email": email},
+                    ).fetchall()
+                else:
+                    matches = conn.execute(
+                        text("""
+                            SELECT `Student ID`, 0 AS dnu
+                            FROM `Sid_Email_Admission`
+                            WHERE LOWER(`Primary Email`) = :email
+                            ORDER BY `Student ID`
+                        """),
+                        {"email": email},
+                    ).fetchall()
 
-                if not res:
+                if not matches:
                     return render_template("login.html", ask_student_id=True, error="Email not found.")
 
-                sid = str(res[0]).strip()
+                distinct_sids = list(dict.fromkeys(str(r[0]).strip() for r in matches if r[0]))
+                if len(distinct_sids) != 1:
+                    return render_template(
+                        "login.html",
+                        error="This email is associated with more than one Student ID. Please contact the CO-OP office before signing in.",
+                    )
+
+                sid = distinct_sids[0]
+                matched_row = next((r for r in matches if str(r[0]).strip() == sid), matches[0])
+                if bool(matched_row[1]):
+                    return render_template(
+                        "login.html",
+                        popup_title="Email marked DO NOT USE",
+                        popup_message=(
+                            "This email is no longer active for the MIAE CO-OP Planner. "
+                            "Please sign in with another active email associated with your Student ID."
+                        ),
+                        popup_kind="warning",
+                    )
                 now = datetime.datetime.now()
 
                 recent_res = conn.execute(
@@ -787,12 +1072,41 @@ def verify():
 
                 # correct code
                 if res and str(res[0]).strip() == code:
+                    sid = str(session.get("temp_sid") or "").strip()
+                    # Re-check the alias at OTP verification time. If the student marked
+                    # it DO NOT USE in another session after the OTP was issued, do not
+                    # create a new authenticated session from that disabled alias.
+                    if _email_flags_enabled():
+                        active_alias = conn.execute(
+                            text("""
+                                SELECT 1 FROM `Sid_Email_Admission`
+                                WHERE `Student ID`=:sid AND LOWER(`Primary Email`)=:email
+                                  AND COALESCE(`do_not_use`,0)=0
+                                LIMIT 1
+                            """),
+                            {"sid": sid, "email": email},
+                        ).fetchone()
+                        if not active_alias:
+                            conn.execute(
+                                text("UPDATE logins SET used = 2 WHERE email = :email AND login_code = :c AND used < 2"),
+                                {"email": email, "c": code},
+                            )
+                            session.clear()
+                            return render_template(
+                                "login.html",
+                                popup_title="Email marked DO NOT USE",
+                                popup_message=(
+                                    "This email is no longer active for the MIAE CO-OP Planner. "
+                                    "Please sign in with another active email associated with your Student ID."
+                                ),
+                                popup_kind="warning",
+                            )
+
                     conn.execute(
                         text("UPDATE logins SET used = 1 WHERE email = :email AND login_code = :c"),
                         {"email": email, "c": code},
                     )
 
-                    sid = session.get("temp_sid")
                     name_res = conn.execute(
                         text("SELECT `Name` FROM `login vs id` WHERE `Student ID` = :sid LIMIT 1"),
                         {"sid": sid},
@@ -908,8 +1222,17 @@ def planner_page():
         nm = _get_student_name_db(target_sid)
         viewing_name = nm or ""
 
-    # Student email for header display
+    # Student communication email + validated aliases. The banner applies only to
+    # the logged-in student's own account; admin view remains read-only here.
     student_email = _get_student_email_db(target_sid) if not is_guest else ""
+    email_accounts = _get_student_email_accounts_db(cur_sid, include_inactive=True) if not is_guest else []
+    own_primary_email = _get_student_email_db(cur_sid) if not is_guest else ""
+    email_schema_ready = _email_flags_enabled() if not is_guest else False
+    show_email_policy_banner = bool(
+        not is_guest
+        and target_sid == cur_sid
+        and (not own_primary_email or not _is_concordia_email(own_primary_email))
+    )
     # Admin's own email (for notes double-click)
     admin_email = _get_student_email_db(cur_sid) if is_power_user else ""
 
@@ -1048,6 +1371,10 @@ def planner_page():
             program_names_db=program_names_db,
             student_email=student_email,
             admin_email=admin_email,
+            email_accounts=email_accounts,
+            own_primary_email=own_primary_email,
+            email_schema_ready=email_schema_ready,
+            show_email_policy_banner=show_email_policy_banner,
             initial_plan=initial_plan,
             initial_plan_id=initial_plan_id,
             initial_plan_status=initial_plan_status,
@@ -1610,7 +1937,7 @@ def api_sequence_save():
         email_sent = None
         if status_db == STATUS_PENDING_APPROVAL:
             try:
-                student_email_addr = email_to_save or _get_student_email_db(target_sid)
+                student_email_addr = _get_priority1_email_db(target_sid) or email_to_save
                 student_display_name = sid_name or _get_student_name_db(target_sid) or target_sid
 
                 # Get program from database (more reliable than frontend data)
@@ -2128,7 +2455,7 @@ def api_admin_run_check():
                                        PARTITION BY `Student ID`
                                        ORDER BY COALESCE(email_priority, 999999), `Primary Email`
                                    ) AS rn
-                            FROM Sid_Email_Admission
+                            FROM {('v_student_primary_email' if _email_flags_enabled() else 'Sid_Email_Admission')}
                             WHERE `Student ID` IN ({placeholders})
                         ) ranked_email
                         WHERE rn = 1
@@ -2483,7 +2810,7 @@ def api_admin_check_wt_attention():
 
             # Get emails
             email_rows = conn.execute(
-                text(f"SELECT `Student ID`, `Primary Email` FROM `Sid_Email_Admission` WHERE `Student ID` IN ({placeholders}) ORDER BY `Student ID`, COALESCE(`email_priority`, 999999), `Primary Email`"),
+                text(f"SELECT `Student ID`, `Primary Email` FROM `{('v_student_primary_email' if _email_flags_enabled() else 'Sid_Email_Admission')}` WHERE `Student ID` IN ({placeholders}) ORDER BY `Student ID`, COALESCE(`email_priority`, 999999), `Primary Email`"),
                 sid_params
             ).fetchall()
             email_map = {}

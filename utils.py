@@ -212,6 +212,10 @@ def get_email_recipients(program, target_sid, submitter_email, priority1_email, 
         priority1_email = debug_email
         submitter_email = debug_email
 
+    # V03_014: student communications always use the ACTIVE Primary email.
+    # submitter_email is retained as a compatibility/audit input only.
+    communication_email = priority1_email or submitter_email
+
     # Check if student is GRAD
     is_grad = 'GRAD' in str(program).upper() if program else False
     
@@ -250,38 +254,34 @@ def get_email_recipients(program, target_sid, submitter_email, priority1_email, 
 
     if action_type == "SUBMIT":
         recipients["to"].append(coop_ad_email)
-        cc_list = [coord_email, submitter_email]
+        cc_list = [coord_email, communication_email]
         if miae_program_assistant:
             cc_list.append(miae_program_assistant)
         if grad_coord_email:
             cc_list.append(grad_coord_email)
         recipients["cc"].extend(cc_list)
         recipients["bcc"].append(submit_notification)
-        if priority1_email and priority1_email.strip().lower() != submitter_email.strip().lower():
-            recipients["bcc"].append(priority1_email)
 
     elif action_type == "REWORK":
-        recipients["to"].append(submitter_email)
+        recipients["to"].append(communication_email)
         cc_list = [coop_ad_email, coord_email]
         if miae_program_assistant:
             cc_list.append(miae_program_assistant)
         if grad_coord_email:
             cc_list.append(grad_coord_email)
         recipients["cc"].extend(cc_list)
-        if priority1_email and priority1_email.strip().lower() != submitter_email.strip().lower():
-            recipients["bcc"].append(priority1_email)
 
     elif action_type == "APPROVED":
         if wts_changed:
             recipients["to"].append(email_coop_approval)
-            cc_list = [coop_ad_email, coord_email, submitter_email]
+            cc_list = [coop_ad_email, coord_email, communication_email]
             if miae_program_assistant:
                 cc_list.append(miae_program_assistant)
             if grad_coord_email:
                 cc_list.append(grad_coord_email)
             recipients["cc"].extend(cc_list)
         else:
-            recipients["to"].append(submitter_email)
+            recipients["to"].append(communication_email)
             cc_list = [coop_ad_email, coord_email]
             if miae_program_assistant:
                 cc_list.append(miae_program_assistant)
@@ -289,8 +289,6 @@ def get_email_recipients(program, target_sid, submitter_email, priority1_email, 
                 cc_list.append(grad_coord_email)
             recipients["cc"].extend(cc_list)
 
-        if priority1_email and priority1_email.strip().lower() != submitter_email.strip().lower():
-            recipients["bcc"].append(priority1_email)
 
     recipients["to"] = _merge_email_lists(recipients["to"])
     recipients["cc"] = _merge_email_lists(recipients["cc"])
@@ -323,7 +321,7 @@ def send_email(to, subject, content, cc=None, bcc=None, reply_to=None, is_html=T
                 <strong style="color:#912338;">To update your sequence:</strong>
             </p>
             <p style="font-size:12px;color:#666;line-height:1.6;margin-top:0;">
-                Login to <strong>concordia-sequence-planner.onrender.com</strong> using your CO-OP registered email (the one used for this communication).
+                Login to <strong>concordia-sequence-planner.onrender.com</strong> using any active email address associated with your Student ID.
             </p>
             <p style="font-size:11px;color:#999;margin-top:15px;font-style:italic;">
                 This is an automated message from the MIAE CO-OP Sequence Planner.
@@ -334,7 +332,7 @@ def send_email(to, subject, content, cc=None, bcc=None, reply_to=None, is_html=T
     footer_text = """
 ---
 To update your sequence:
-Login to concordia-sequence-planner.onrender.com using your CO-OP registered email (the one used for this communication).
+Login to concordia-sequence-planner.onrender.com using any active email address associated with your Student ID.
 
 This is an automated message from the MIAE CO-OP Sequence Planner.
 """

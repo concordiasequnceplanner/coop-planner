@@ -1132,3 +1132,100 @@ tr.term-names-row td { border: none !important; }
     background: #f4f6f7;
     border-left-color: #95a5a6;
 }
+
+/* V03_013 final WT colour guard: any transcript-backed WT (including CWTE/WILE
+   aliases and ungraded/floating current-term WTs) stays visually green. */
+.course-box.wt,
+.course-box.wt-alias,
+.course-box.wt.floating-transcript-course,
+.course-box.wt-alias.floating-transcript-course,
+.course-box.course-taken.wt,
+.course-box.course-taken.wt-alias {
+    background-color: #d5f5e3 !important;
+    border-left: 4px solid #27ae60 !important;
+    color: #1e8449 !important;
+    opacity: 1 !important;
+}
+
+/* =========================================================
+   V03_014 — EMAIL ACCOUNT / LOGIN STATUS UI
+   ========================================================= */
+.login-popup-overlay,
+.email-account-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100000;
+    padding: 20px;
+}
+.login-popup-card,
+.email-account-modal-card {
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 12px 40px rgba(0,0,0,.3);
+    width: min(680px, 94vw);
+    max-height: 88vh;
+    overflow-y: auto;
+    padding: 24px;
+    border-top: 6px solid #912338;
+}
+.login-popup-card h3,
+.email-account-modal-card h2 { margin-top: 0; color: #912338; }
+.login-popup-warning { border-top-color: #e67e22; }
+.login-popup-card button,
+.email-account-action {
+    border: 0;
+    border-radius: 6px;
+    padding: 8px 13px;
+    font-weight: 700;
+    cursor: pointer;
+}
+.email-policy-banner {
+    background: #b00020;
+    color: #fff;
+    text-align: center;
+    padding: 10px 14px;
+    font-weight: 800;
+    cursor: pointer;
+    position: relative;
+    z-index: 9996;
+    box-shadow: 0 2px 5px rgba(0,0,0,.18);
+}
+.email-policy-banner small { display:block; font-weight:500; margin-top:3px; }
+.email-account-list { display:flex; flex-direction:column; gap:10px; margin:16px 0; }
+.email-account-row {
+    border: 1px solid #d9d9d9;
+    border-left: 5px solid #7f8c8d;
+    border-radius: 8px;
+    padding: 12px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:12px;
+    background:#fff;
+}
+.email-account-row.primary { border-left-color:#27ae60; background:#f1fbf5; }
+.email-account-row.non-concordia-primary { border-left-color:#c0392b; background:#fff0f0; }
+.email-account-row.do-not-use { opacity:.58; background:#eceff1; color:#666; text-decoration:none; }
+.email-account-row.do-not-use .email-account-address { text-decoration: line-through; }
+.email-account-address { font-weight:800; overflow-wrap:anywhere; }
+.email-account-badges { display:flex; gap:6px; flex-wrap:wrap; margin-top:5px; }
+.email-badge { font-size:10px; border-radius:999px; padding:3px 7px; background:#e9ecef; color:#333; font-weight:800; }
+.email-badge.primary { background:#d4edda; color:#155724; }
+.email-badge.concordia { background:#e3f2fd; color:#0d47a1; }
+.email-badge.dnu { background:#6c757d; color:#fff; }
+.email-account-actions { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
+.email-account-action.primary { background:#27ae60; color:#fff; }
+.email-account-action.dnu { background:#6c757d; color:#fff; }
+.email-account-action.restore { background:#3498db; color:#fff; }
+.email-account-info {
+    background:#f8f9fa;
+    border:1px solid #dee2e6;
+    border-radius:8px;
+    padding:12px;
+    font-size:12px;
+    line-height:1.55;
+}

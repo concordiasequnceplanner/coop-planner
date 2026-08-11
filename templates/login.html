@@ -36,10 +36,13 @@
     </div>
 
     {% if popup_message %}
-    <script>
-        alert("{{ popup_message }}");
-        window.location.href = "/login";
-    </script>
+    <div class="login-popup-overlay" role="dialog" aria-modal="true" aria-labelledby="loginPopupTitle">
+        <div class="login-popup-card {{ 'login-popup-warning' if popup_kind == 'warning' else '' }}">
+            <h3 id="loginPopupTitle">{{ popup_title or 'Notice' }}</h3>
+            <p>{{ popup_message }}</p>
+            <button type="button" onclick="window.location.href='/login'">OK</button>
+        </div>
+    </div>
     {% endif %}
 </body>
 </html>

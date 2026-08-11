@@ -27,6 +27,16 @@
 </div>
 {% endif %}
 
+{% if show_email_policy_banner %}
+<div id="emailPolicyBanner" class="email-policy-banner"
+     style="top:{% if is_withdrawn %}{% if is_debug %}66px{% else %}46px{% endif %}{% elif is_debug %}20px{% else %}0{% endif %};"
+     onclick="window.showEmailPolicyDetails && window.showEmailPolicyDetails()"
+     title="Click for details">
+    ⚠ Official Concordia email required for university communications
+    <small>Your current Primary communication email does not end in concordia.ca. Click for details.</small>
+</div>
+{% endif %}
+
 <div id="acsdBanner" style="display:none;background:#8e44ad;color:#fff;text-align:center;padding:10px 0;font-weight:900;font-size:16px;letter-spacing:1px;position:sticky;top:{% if is_withdrawn %}{% if is_debug %}66px{% else %}46px{% endif %}{% elif is_debug %}20px{% else %}0{% endif %};z-index:9997;">
     ℹ️ ACSD REGISTERED — Reduced credit load approved
 </div>
@@ -146,6 +156,12 @@
                 </div>
                 {% endif %}
                 <span style="font-size:11px;color:#aaa;">Logged in as: <b>{{ student_id }}</b>{% if student_name %} ({{ student_name }}){% endif %}</span>
+                {% if not is_guest and viewing_sid == student_id %}
+                <button type="button" onclick="window.openEmailAccounts && window.openEmailAccounts()"
+                        style="margin-top:3px;background:#eef5ff;color:#1f4e79;border:1px solid #aac4df;padding:4px 8px;border-radius:12px;font-size:10px;font-weight:bold;cursor:pointer;">
+                    📧 My email accounts
+                </button>
+                {% endif %}
             </div>
             <a href="#" onclick="window.handleLogout(event)" class="logout-link" style="margin-left:8px;">Logout</a>
         </div>
@@ -447,6 +463,10 @@
         studentName: {{ (viewing_name or student_name or viewing_sid or '') | tojson }},
         studentEmail: {{ (student_email or '') | tojson }},
         adminEmail: {{ (admin_email or '') | tojson }},
+        emailAccounts: {{ (email_accounts or []) | tojson }},
+        ownPrimaryEmail: {{ (own_primary_email or '') | tojson }},
+        emailSchemaReady: {{ email_schema_ready | tojson }},
+        showEmailPolicyBanner: {{ show_email_policy_banner | tojson }},
         initialPlan: {{ (initial_plan if initial_plan else none) | tojson }},
         initialPlanId: {{ (initial_plan_id if initial_plan_id else none) | tojson }},
         initialPlanStatus: {{ (initial_plan_status if initial_plan_status else none) | tojson }}
@@ -535,6 +555,44 @@
         });
     })();
 </script>
+
+{% if not is_guest and viewing_sid == student_id %}
+<div id="emailAccountsModal" class="email-account-modal-overlay" style="display:none;" onclick="if(event.target===this) window.closeEmailAccounts && window.closeEmailAccounts();">
+    <div class="email-account-modal-card">
+        <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
+            <div>
+                <h2 style="margin-bottom:4px;">📧 My email accounts</h2>
+                <div style="font-size:12px;color:#666;">Any ACTIVE email can be used to sign in. All planner communications are sent to the single PRIMARY email.</div>
+            </div>
+            <button type="button" class="email-account-action" onclick="window.closeEmailAccounts && window.closeEmailAccounts()">✕</button>
+        </div>
+        <div id="emailAccountsList" class="email-account-list"></div>
+        <div class="email-account-info">
+            <b>Email addresses cannot be added or edited in the MIAE CO-OP Planner.</b><br>
+            Email addresses are synchronized from CO-OP Institute records. To add or change an email address, update it with the CO-OP Institute. Once the update is done, please email <a href="mailto:coop_miae@concordia.ca">coop_miae@concordia.ca</a> so we can verify the synchronization.<br><br>
+            You may mark an address <b>DO NOT USE</b>; it will remain in the database as ignored and will not be automatically reactivated by the next synchronization.
+        </div>
+    </div>
+</div>
+
+<div id="emailPolicyDetailsModal" class="email-account-modal-overlay" style="display:none;" onclick="if(event.target===this) this.style.display='none';">
+    <div class="email-account-modal-card" style="border-top-color:#b00020;">
+        <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
+            <h2 style="color:#b00020;margin-bottom:8px;">Official Concordia email required</h2>
+            <button type="button" class="email-account-action" onclick="document.getElementById('emailPolicyDetailsModal').style.display='none'">✕</button>
+        </div>
+        <p style="line-height:1.6;">A <b>Concordia Email Account</b> is an electronic email address with the suffix <b>concordia.ca</b> provided by the University to its students and employees.</p>
+        <p style="line-height:1.6;">The Planner will <b>not block your access</b> if your current Primary email is not a Concordia email, but university communications should use your official Concordia email.</p>
+        <div class="email-account-info">
+            <b>Your email address cannot be changed directly in the MIAE CO-OP Planner.</b><br>
+            Please update your email with the CO-OP Institute. Once the update is done, please email <a href="mailto:coop_miae@concordia.ca">coop_miae@concordia.ca</a> so we can verify the synchronization.
+        </div>
+        <div style="margin-top:14px;display:flex;justify-content:flex-end;">
+            <button type="button" class="email-account-action primary" onclick="document.getElementById('emailPolicyDetailsModal').style.display='none'; window.openEmailAccounts && window.openEmailAccounts();">Review my email accounts</button>
+        </div>
+    </div>
+</div>
+{% endif %}
 
 {% if show_rules_popup %}
 <div id="rulesOverlay" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:99999;display:flex;align-items:center;justify-content:center;">

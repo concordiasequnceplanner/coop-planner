@@ -895,9 +895,9 @@ document.addEventListener("DOMContentLoaded", () => {
                         if (seen.has(r.text)) return;
                         seen.add(r.text);
                         const div = document.createElement('div');
-                        div.className = `term-restriction-warning ${r.isWarning ? 'warning-yes' : 'warning-no'}`;
+                        div.className = `term-restriction-warning ${r.isError ? 'warning-yes' : 'warning-no'}`;
                         div.style.whiteSpace = 'pre-line';
-                        div.textContent = r.text;
+                        div.textContent = r.isError ? `▶ ${r.text}` : r.text;
                         restContainer.appendChild(div);
                     });
                 }
@@ -1403,7 +1403,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // Delete a generated _REP course from the current plan.  The delete control
     // is shown only while the repeat is in the Unallocated sidebar, so historical
     // transcript attempts / locked courses can never be removed through this path.
-    window.deleteRepeatCourse = function(repCid, event) {
+    window.deleteRepeatCourse = async function(repCid, event) {
         if (event) {
             event.preventDefault();
             event.stopPropagation();
@@ -1436,6 +1436,18 @@ document.addEventListener("DOMContentLoaded", () => {
         window.sortUnallocated();
         window.updateCredits();
         if (typeof window.validateGrid === 'function') window.validateGrid();
+
+        // Persist the deletion as a NEW working draft. Historical APPROVED/PENDING/
+        // REWORK rows are never edited or deleted; the new draft simply becomes the
+        // newest working state and therefore survives refresh/next login.
+        if (typeof window.saveWorkingDraftSilently === 'function') {
+            try {
+                await window.saveWorkingDraftSilently(`deleting ${did}`);
+            } catch (e) {
+                console.error('Could not persist repeated-course deletion:', e);
+                alert(`${did} was removed from the screen, but the automatic draft save failed. Please use Save Draft before leaving the page.`);
+            }
+        }
     };
 
     window.populateRepeatDropdown = function() {
@@ -1605,7 +1617,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     window.checkRestrictions = function(zoneId, season, yearStr) {
-        // Returns array of { text, isWarning (true=red → goes to error list), isFyi (orange → no error list) }
+        // Returns array of { text, severity, isError, isWarning, isFyi }.
+        // In the CORE_TE restrictions sheet, WARNING=YES means the condition must
+        // block/flag the sequence as an ERROR. WARNING=NO/FYI remains informational.
         const results = [];
         if (!window.restrictionsDb || !window.restrictionsDb.length) return results;
 
@@ -1710,12 +1724,17 @@ document.addEventListener("DOMContentLoaded", () => {
             if (!match) return;
 
             const warningCol = String(r['WARNING'] || '').trim().toUpperCase();
-            // Default: YES (warning). Only NO/FYI explicitly marks as non-warning.
+            // Business rule for planner validation:
+            //   WARNING=YES (or blank, legacy default) -> ERROR
+            //   WARNING=NO/FYI                    -> FYI only
             const isFyi = warningCol === 'NO' || warningCol === 'FYI';
-            const isWarning = !isFyi;
+            const isError = !isFyi;
+            const severity = isError ? 'error' : 'fyi';
             const text = String(r['Restriction'] || 'Restriction applies');
 
-            results.push({ text, isWarning, isFyi });
+            // Keep isWarning as a backward-compatible alias used by the existing
+            // term-header CSS path; its meaning is now "blocking/error".
+            results.push({ text, severity, isError, isWarning: isError, isFyi });
         });
 
         return results;
@@ -2119,6 +2138,12 @@ window.setLoadedSequenceContext = function(seqId, status) {
 // PENDING APPROVALS DROPDOWN (header button for admins)
 // =========================================================
 window.openPendingMenu = async function() {
+    // Debounce the header button itself: one physical click must not immediately
+    // open+close the dropdown because a duplicate click event is queued.
+    if (window._pendingMenuClickLock) return;
+    window._pendingMenuClickLock = true;
+    setTimeout(() => { window._pendingMenuClickLock = false; }, 400);
+
     const dropdown = document.getElementById('pendingMenuDropdown');
     if (!dropdown) return;
     if (dropdown.style.display !== 'none') { dropdown.style.display = 'none'; return; }
@@ -2341,7 +2366,12 @@ window.processApproval = async function(action) {
         return;
     }
 
-    const conf = confirm(`Are you sure you want to ${action} this sequence for ${viewingSid}?`);
+    const actionPrompt = action === 'APPROVED'
+        ? 'APPROVE'
+        : action === 'REWORK'
+            ? 'send back for REWORK'
+            : action;
+    const conf = confirm(`Are you sure you want to ${actionPrompt} this sequence for ${viewingSid}?`);
     if (!conf) { window._approvalInProgress = false; return; }
 
     // Client-side reason_code validation (mandatory for both APPROVED and REWORK)
@@ -3979,16 +4009,29 @@ window.validateGrid = function() {
         el.style.display = 'none';
     });
 
-    // Collect all issues across all boxes; apply badges at end
-    const allIssues = []; // { courseId, msg, sev }
-    const boxIssues = new Map(); // box element → [{msg, sev}]
+    // Collect all issues across all boxes; apply badges at end. zoneId/termLevel
+    // allow every term-specific ERROR to be mirrored into the affected term while
+    // keeping the detailed right-side panel as the canonical full issue list.
+    const allIssues = []; // { courseId, msg, sev, zoneId?, termLevel? }
+    const boxIssues = new Map(); // box element → [{msg, sev, zoneId?, termMsg?}]
 
     function flagBox(box, issues) {
         if (!issues.length) return;
         const cid = (box.dataset.courseId || '?').toUpperCase();
-        issues.forEach(i => allIssues.push({ courseId: cid, msg: i.msg, sev: i.sev }));
+        const defaultZoneId = box.parentElement?.id || '';
+        issues.forEach(i => allIssues.push({
+            courseId: cid,
+            msg: i.msg,
+            sev: i.sev,
+            zoneId: i.zoneId || defaultZoneId
+        }));
         const existing = boxIssues.get(box) || [];
         boxIssues.set(box, [...existing, ...issues]);
+    }
+
+    function addTermIssue(zoneId, msg, sev = 'error') {
+        if (!zoneId || zoneId === 'zone_Y0' || zoneId === 'zone_Unallocated') return;
+        allIssues.push({ courseId: '', msg, sev, zoneId, termLevel: true });
     }
 
     // 2. Build placement snapshot. Keep ALL occurrences of a course rather than
@@ -4332,7 +4375,13 @@ window.validateGrid = function() {
                     if (prevCr < _creditsFT8c) {
                         const lastWtName = (lastWt.el.dataset.displayId || lastWt.el.dataset.courseId || 'last WT').toUpperCase();
                         const prevLabel = prevZone.id.replace('zone_', '').replace(/_/g, ' ');
-                        flagBox(lastWt.el, [{ msg: `Not full-time: ${prevLabel} has ${prevCr}cr < FT minimum of ${_creditsFT8c}cr — the term before ${lastWtName} must be Full-Time`, sev: 'error' }]);
+                        const ftMsg = `Not full-time: ${prevLabel} has ${prevCr}cr < FT minimum of ${_creditsFT8c}cr — the term before ${lastWtName} must be Full-Time`;
+                        flagBox(lastWt.el, [{
+                            msg: ftMsg,
+                            sev: 'error',
+                            zoneId: prevZone.id,
+                            termMsg: ftMsg
+                        }]);
                     }
                 }
             }
@@ -4435,19 +4484,23 @@ window.validateGrid = function() {
 
     // Check 10: Restrictions from CORE_TE.xlsx
     if (window.checkRestrictions && window.restrictionsDb) {
-        const seenRestrictions = new Set(); // deduplicate global restrictions
+        const seenTermRestrictions = new Set();
+        const seenGlobalRestrictions = new Set();
         
-        // 10a: Per-term restrictions (shown in term headers AND in error list if WARNING)
+        // 10a: Per-term restrictions. CORE_TE WARNING=YES is a blocking ERROR.
+        // Keep one issue per affected term even when the same restriction text is
+        // intentionally reused for more than one academic term.
         allZones.forEach(({ id: zid, el: zoneEl }) => {
             const season = zid.split('_').pop();
             const yearMatch = zid.match(/zone_(\d{4}-\d{4})/);
             const yearStr = yearMatch ? yearMatch[1] : '';
             const restrictions = window.checkRestrictions(zid, season, yearStr);
             restrictions.forEach(r => {
-                if (r.isWarning && !seenRestrictions.has(r.text)) {
-                    seenRestrictions.add(r.text);
-                    allIssues.push({ courseId: '', msg: '⚠ ' + r.text, sev: 'warning' });
-                }
+                if (!r.isError) return;
+                const key = `${zid}|${r.text}`;
+                if (seenTermRestrictions.has(key)) return;
+                seenTermRestrictions.add(key);
+                addTermIssue(zid, r.text, 'error');
             });
         });
         
@@ -4501,12 +4554,12 @@ window.validateGrid = function() {
             
             const warningCol = String(r['WARNING'] || '').trim().toUpperCase();
             const isFyi = warningCol === 'NO' || warningCol === 'FYI';
-            const isWarning = !isFyi;
+            const isError = !isFyi;
             const text = String(r['Restriction'] || 'Restriction applies');
             
-            if (isWarning && !seenRestrictions.has(text)) {
-                seenRestrictions.add(text);
-                allIssues.push({ courseId: '', msg: '⚠ ' + text, sev: 'warning' });
+            if (isError && !seenGlobalRestrictions.has(text)) {
+                seenGlobalRestrictions.add(text);
+                allIssues.push({ courseId: '', msg: text, sev: 'error' });
             }
         });
     }
@@ -4656,7 +4709,7 @@ window.validateGrid = function() {
             const label = `${yearMatch ? yearMatch[1] : ''} ${season}`.trim();
 
             if (termCr < creditsFT) {
-                lowTerms.push({ label, cr: termCr });
+                lowTerms.push({ label, cr: termCr, zoneId: zid });
             }
         });
 
@@ -4669,12 +4722,12 @@ window.validateGrid = function() {
                 sev: 'warning'
             });
         } else {
-            lowTerms.forEach(({ label, cr }) => {
-                allIssues.push({
-                    courseId: '',
-                    msg: `Not full-time: ${label} has ${cr}cr < FT minimum of ${creditsFT}cr — add justification`,
-                    sev: 'error'
-                });
+            lowTerms.forEach(({ label, cr, zoneId }) => {
+                addTermIssue(
+                    zoneId,
+                    `Not full-time: ${label} has ${cr}cr < FT minimum of ${creditsFT}cr — add justification`,
+                    'error'
+                );
             });
         }
     })();
@@ -4836,6 +4889,14 @@ window.validateGrid = function() {
             const cleanMsg = String(msg || '').trim();
             if (!cleanMsg) return;
 
+            // Some term-level conditions (CORE_TE restrictions, generic FT checks)
+            // are already rendered in the term's restrictions strip. Do not print
+            // the exact same sentence twice in the same term.
+            const existingRestrictionTexts = Array.from(
+                document.querySelectorAll(`#restrictions_${CSS.escape(zoneId)} .term-restriction-warning`)
+            ).map(el => String(el.textContent || '').replace(/^▶\s*/, '').trim());
+            if (!courseId && existingRestrictionTexts.includes(cleanMsg)) return;
+
             // Work-term overload is intentionally shown once per term, not once
             // for every course affected by the same term-level condition.
             let displayMsg = cleanMsg;
@@ -4859,7 +4920,18 @@ window.validateGrid = function() {
             const zone = box.parentElement;
             if (!zone || !zone.classList.contains('drop-zone')) return;
             const courseId = getBoxDisplayId(box) || (box.dataset.courseId || '').toUpperCase();
-            issues.forEach(issue => addToZone(zone.id, issue.msg, issue.sev, courseId));
+            issues.forEach(issue => {
+                const targetZoneId = issue.zoneId || zone.id;
+                const termMsg = issue.termMsg || issue.msg;
+                // A custom termMsg is already self-contained; do not prepend WT/course id.
+                addToZone(targetZoneId, termMsg, issue.sev, issue.termMsg ? '' : courseId);
+            });
+        });
+
+        // Include term-level validation that is not attached to a single course
+        // (e.g. CORE_TE restrictions and generic full-time errors).
+        allIssues.filter(i => i.termLevel && i.zoneId).forEach(issue => {
+            addToZone(issue.zoneId, issue.msg, issue.sev, '');
         });
 
         byZone.forEach((issueMap, zoneId) => {
@@ -5317,6 +5389,132 @@ async function apiJson(url, method = 'GET', body = null) {
     return await resp.json();
 }
 
+// =========================================================
+// V03_014 — STUDENT EMAIL ACCOUNTS
+// =========================================================
+window.showEmailPolicyDetails = function() {
+    const el = document.getElementById('emailPolicyDetailsModal');
+    if (el) el.style.display = 'flex';
+};
+
+window.closeEmailAccounts = function() {
+    const el = document.getElementById('emailAccountsModal');
+    if (el) el.style.display = 'none';
+};
+
+window.openEmailAccounts = async function() {
+    const modal = document.getElementById('emailAccountsModal');
+    if (!modal) return;
+    modal.style.display = 'flex';
+    const list = document.getElementById('emailAccountsList');
+    if (list) list.innerHTML = '<div style="padding:12px;color:#666;">Loading email accounts…</div>';
+    try {
+        const res = await apiJson('/api/email_accounts');
+        window.APP_CONFIG.emailAccounts = res.accounts || [];
+        window.APP_CONFIG.ownPrimaryEmail = res.primary_email || '';
+        window.APP_CONFIG.emailSchemaReady = !!res.schema_ready;
+        renderEmailAccounts(res);
+    } catch (e) {
+        if (list) list.innerHTML = `<div style="color:#c0392b;padding:12px;">${escapeHtml(String(e.message || e))}</div>`;
+    }
+};
+
+function renderEmailAccounts(res) {
+    const list = document.getElementById('emailAccountsList');
+    if (!list) return;
+    const accounts = Array.isArray(res.accounts) ? res.accounts : [];
+    if (!accounts.length) {
+        list.innerHTML = '<div style="padding:12px;color:#c0392b;font-weight:bold;">No email addresses are currently associated with your Student ID.</div>';
+        return;
+    }
+    const schemaReady = !!res.schema_ready;
+    list.innerHTML = accounts.map(acc => {
+        const email = String(acc.email || '');
+        const encoded = encodeURIComponent(email).replace(/'/g, '%27');
+        const dnu = !!acc.do_not_use;
+        const primary = !!acc.is_primary;
+        const concordia = !!acc.is_concordia;
+        const rowClasses = [
+            'email-account-row',
+            primary ? 'primary' : '',
+            primary && !concordia ? 'non-concordia-primary' : '',
+            dnu ? 'do-not-use' : ''
+        ].filter(Boolean).join(' ');
+        const badges = [
+            primary ? '<span class="email-badge primary">PRIMARY — communications</span>' : '',
+            concordia ? '<span class="email-badge concordia">CONCORDIA</span>' : '',
+            dnu ? '<span class="email-badge dnu">DO NOT USE</span>' : (!primary ? '<span class="email-badge">ACTIVE — login enabled</span>' : '')
+        ].join('');
+        let actions = '';
+        if (!schemaReady) {
+            actions = '<span style="font-size:10px;color:#888;">DB migration required</span>';
+        } else if (dnu) {
+            actions = `<button class="email-account-action restore" onclick="window.emailAccountAction('restore','${encoded}')">Restore</button>`;
+        } else {
+            if (!primary) actions += `<button class="email-account-action primary" onclick="window.emailAccountAction('set_primary','${encoded}')">Make Primary</button>`;
+            actions += `<button class="email-account-action dnu" onclick="window.emailAccountAction('do_not_use','${encoded}')">DO NOT USE</button>`;
+        }
+        const source = acc.source ? `<div style="font-size:10px;color:#999;margin-top:4px;">Source: ${escapeHtml(String(acc.source))}</div>` : '';
+        return `<div class="${rowClasses}">
+            <div style="min-width:0;">
+                <div class="email-account-address">${escapeHtml(email)}</div>
+                <div class="email-account-badges">${badges}</div>
+                ${source}
+            </div>
+            <div class="email-account-actions">${actions}</div>
+        </div>`;
+    }).join('');
+}
+
+window.emailAccountAction = async function(action, encodedEmail) {
+    const email = decodeURIComponent(String(encodedEmail || ''));
+    if (!email) return;
+    const labels = {
+        set_primary: `Make ${email} the Primary communication email?`,
+        do_not_use: `Mark ${email} DO NOT USE? You will no longer be able to sign in with this address.`,
+        restore: `Restore ${email} as an ACTIVE login email?`
+    };
+    if (!confirm(labels[action] || 'Continue?')) return;
+    try {
+        const resp = await fetch(`/api/email_accounts/${action}`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({email})
+        });
+        let data = {};
+        try { data = await resp.json(); } catch (_) {}
+        if (resp.status === 401) {
+            window.location.href = '/login';
+            return;
+        }
+        if (!resp.ok || !data.ok) {
+            alert(data.error || `Could not update ${email}.`);
+            return;
+        }
+        window.location.reload();
+    } catch (e) {
+        alert('Could not update email account: ' + (e.message || e));
+    }
+};
+
+window.saveWorkingDraftSilently = async function(reasonLabel = 'editing the plan') {
+    const now = new Date();
+    const autoName = `Auto-save after ${reasonLabel} ${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+    const plan = collectPlanSnapshot();
+    const payload = {
+        status: 'DRAFT',
+        name: autoName,
+        plan,
+        issues: currentIssues(),
+        reason_code: getSelectedReasonCode(),
+        justification: getJustificationText(),
+        term_summary: buildEmailTermSummary(plan)
+    };
+    const res = await apiJson('/api/sequence/save', 'POST', payload);
+    console.log(`[AUTO-SAVE] ${autoName} -> ${res.sequence_id || ''}`);
+    return res;
+};
+
 window.saveDraft = async function() {
     // Generate default name with current date and time
     const now = new Date();
@@ -5407,6 +5605,8 @@ window.handleLogout = async function(event) {
 };
 
 window.loadPlan = async function() {
+    if (window._loadPlanInProgress) return;
+    window._loadPlanInProgress = true;
     showSpinner('Loading sequences…');
     try {
         const res = await apiJson('/api/sequence/list');
@@ -5442,6 +5642,8 @@ window.loadPlan = async function() {
         hideSpinner();
         console.error(e);
         alert(`Load failed: ${e.message}`);
+    } finally {
+        window._loadPlanInProgress = false;
     }
 };
 
@@ -5692,6 +5894,8 @@ window.adminViewStudent = async function() {
 };
 
 window.openPendingApprovals = async function() {
+    if (window._openPendingApprovalsInProgress) return;
+    window._openPendingApprovalsInProgress = true;
     try {
         const res = await apiJson('/api/admin/pending', 'GET');
         const pending = res.pending || [];
@@ -5717,6 +5921,8 @@ window.openPendingApprovals = async function() {
     } catch (e) {
         console.error(e);
         alert(`Pending approvals failed: ${e.message}`);
+    } finally {
+        window._openPendingApprovalsInProgress = false;
     }
 };
 

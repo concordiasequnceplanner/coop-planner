@@ -36,7 +36,7 @@ from utils import (
 # =========================================================
 # APP_VERSION is explicit; the displayed tool date comes from this app.py file
 # modification time on the server, matching the deployment workflow.
-APP_VERSION = "V03.021"
+APP_VERSION = "V03.025"
 
 # Baseline dates are used only until System_Metadata has been populated by the
 # corresponding updater. This avoids rerunning past CO-OP/MIAE imports merely
@@ -1424,6 +1424,21 @@ def planner_page():
                 print(f"⚠ Rules ack check error (non-fatal): {ack_err}")
                 show_rules_popup = False
 
+        # V03_025: compare the immutable last APPROVED sequence with the latest
+        # MIAE transcript placement. The comparison is read-only: APPROVED rows
+        # are never rewritten. The frontend preserves the loaded sequence, keeps
+        # graded transcript courses locked in their real term, and dynamically
+        # marks movable academic courses whenever the planner term differs from
+        # the latest MIAE transcript term.
+        approved_transcript_deviation = {
+            "has_deviation": False, "approved_id": None, "approved_at": None, "items": []
+        }
+        try:
+            with engine.connect() as conn:
+                approved_transcript_deviation = _approved_transcript_deviation_for_sid(conn, target_sid)
+        except Exception as dev_err:
+            print(f"⚠ Approved-vs-transcript comparison failed for SID {target_sid}: {dev_err}")
+
         freshness = _get_data_freshness_display()
 
         return render_template(
@@ -1465,6 +1480,7 @@ def planner_page():
             miae_data_date=freshness["miae_data_date"],
             tool_version=freshness["tool_version"],
             tool_update_date=freshness["tool_update_date"],
+            approved_transcript_deviation=approved_transcript_deviation,
         )
 
     except Exception as e:
@@ -1527,13 +1543,26 @@ def admin_checks_page():
     except Exception as e:
         print(f"❌ Error loading ADMIN_checks: {e}")
     
+    # V03_023: keep the visible Admin Check definitions aligned with the
+    # implemented logic without requiring a write to the legacy ADMIN_checks table.
+    check_label_overrides = {
+        2: "active MIAE ugrad students GPA past 24cr < 2.5 with at least 1 WT remaining",
+        3: "active MIAE ugrad students GPA past 24cr between 2.5 and 2.7 with at least 1 WT remaining",
+        4: "last approved sequence is not consistent with the transcript. Submit a new change of sequence.",
+        6: "Registered for COOP WT: WT missing while taking courses, or WT + more than 1 academic course (Summer may be OFF)",
+        7: "Must re-sequence: at least 1 internship left but without an approved sequence.",
+    }
+    for chk in checks:
+        if chk.get("id") in check_label_overrides:
+            chk["what"] = check_label_overrides[chk["id"]]
+
     # Ensure Check 7 and 8 exist even if not in DB
     check_ids = {c["id"] for c in checks}
 
     if 7 not in check_ids:
         checks.append({
             "id": 7,
-            "what": "No sequence but WT left in the future",
+            "what": "Must re-sequence: at least 1 internship left but without an approved sequence.",
             "msg": "",
             "short": "",
             "disabled": False
@@ -2219,6 +2248,7 @@ def api_sequence_get(seq_id):
                 ),
                 {"sid": target_sid, "ts": ts},
             ).fetchone()
+            approved_deviation = _approved_transcript_deviation_for_sid(conn, target_sid)
 
         if not r:
             return jsonify({"ok": False, "error": "Not found"}), 404
@@ -2253,6 +2283,11 @@ def api_sequence_get(seq_id):
                 "status": str(r[2] or ""),
                 "reason_code": _nullable_int(r[3]),
                 "justification": str(r[4] or ""),
+                "approved_transcript_deviation": approved_deviation,
+                "is_latest_approved": (
+                    str(r[2] or "").strip().upper() == "APPROVED"
+                    and str(approved_deviation.get("approved_id") or "") == ts
+                ),
             }
         )
 
@@ -2460,290 +2495,690 @@ def api_admin_search_students():
         return jsonify({"ok": False, "error": "Search failed"}), 500
 
 
+
+# =========================================================
+# ADMIN CHECK HELPERS (V03_023)
+# =========================================================
+
+def _admin_current_term(now=None):
+    """Canonical current academic term used by Admin Checks."""
+    now = now or datetime.datetime.now()
+    y = now.year
+    m = now.month
+    if 1 <= m <= 4:
+        start_year, season, code = y - 1, "Winter", "-4"
+        calendar_year = y
+    elif 5 <= m <= 8:
+        start_year, season, code = y, "Summer", "-1"
+        calendar_year = y
+    else:
+        start_year, season, code = y, "Fall", "-2"
+        calendar_year = y
+    year_range = f"{start_year}-{start_year + 1}"
+    season_order = {"Summer": 1, "Fall": 2, "Winter": 3}[season]
+    return {
+        "year_range": year_range,
+        "season": season,
+        "sort_key": start_year * 3 + season_order,
+        "transcript_term": f"{year_range} {code} {season}",
+        "legacy_term": f"{calendar_year} {season}",
+        "display": f"{year_range} {season}",
+    }
+
+
+def _admin_term_sort_key(term_raw):
+    yr, season = parse_term(term_raw)
+    if yr == "UNKNOWN" or season == "UNKNOWN":
+        return None
+    try:
+        start_year = int(str(yr).split("-")[0])
+    except Exception:
+        return None
+    order = {"Summer": 1, "Fall": 2, "Winter": 3}.get(season)
+    if not order:
+        return None
+    return start_year * 3 + order
+
+
+def _admin_is_inactive_coop_status(value):
+    s = str(value or "").strip().lower()
+    return "withdr" in s or "moved" in s
+
+
+def _admin_is_wt_course(course, cournam=""):
+    c = re.sub(r"\s+", "", str(course or "").upper())
+    dept = re.sub(r"\s+", "", str(cournam or "").upper())
+    return (
+        c.startswith("CWTE")
+        or c.startswith("WILE")
+        or dept.startswith("CWTE")
+        or dept.startswith("WILE")
+        or bool(re.match(r"^WT[123](?:\b|$)", c))
+    )
+
+
+def _admin_course_key(course):
+    s = str(course or "").strip().upper()
+    s = re.sub(r"_REP\d*$", "", s)
+    return re.sub(r"[^A-Z0-9]", "", s)
+
+
+def _admin_sid_where(sids, prefix="sid"):
+    sids = [str(s).strip() for s in sids if str(s).strip()]
+    placeholders = ",".join(f":{prefix}{i}" for i in range(len(sids)))
+    params = {f"{prefix}{i}": sid for i, sid in enumerate(sids)}
+    return placeholders, params
+
+
+def _admin_active_sids(conn):
+    """Use the DB's active-COOP definition; conservative fallback if unavailable."""
+    try:
+        rows = conn.execute(text("SELECT `Student ID` FROM `v_active_coop_students`")).fetchall()
+        return {str(r[0]).strip() for r in rows if str(r[0] or "").strip()}
+    except Exception as exc:
+        print(f"⚠ v_active_coop_students unavailable; using coop fallback: {exc}")
+        rows = conn.execute(
+            text("SELECT `Student ID`, `Transferred Withdrawn OK` FROM `coop`")
+        ).fetchall()
+        states = {}
+        for sid, status in rows:
+            sid = str(sid or "").strip()
+            if not sid:
+                continue
+            states.setdefault(sid, False)
+            if not _admin_is_inactive_coop_status(status):
+                states[sid] = True
+        return {sid for sid, active in states.items() if active}
+
+
+def _admin_wt_records(conn, sids=None):
+    """Return valid CO-OP W-x records with canonical full academic-year labels."""
+    sql = """
+        SELECT `Student ID`, `Term`, `Term number Sx or Wx`,
+               `Transferred Withdrawn OK`, `Co-op Program`
+        FROM `coop`
+        WHERE `Term number Sx or Wx` LIKE 'W-%'
+    """
+    params = {}
+    if sids:
+        ph, params = _admin_sid_where(sids, "wt_sid")
+        sql += f" AND `Student ID` IN ({ph})"
+    rows = conn.execute(text(sql), params).fetchall()
+    out = {}
+    for sid_raw, term_raw, wt_raw, status, coop_program in rows:
+        sid = str(sid_raw or "").strip()
+        if not sid or sid.startswith("8") or sid.startswith("9"):
+            continue
+        if _admin_is_inactive_coop_status(status):
+            continue
+        yr, season = parse_term(term_raw)
+        sort_key = _admin_term_sort_key(term_raw)
+        if yr == "UNKNOWN" or season == "UNKNOWN" or sort_key is None:
+            continue
+        wt_raw = str(wt_raw or "").strip().upper()
+        m = re.search(r"W-?\s*([123])", wt_raw)
+        wt_key = f"WT{m.group(1)}" if m else wt_raw.replace("-", "")
+        rec = {
+            "wt": wt_key,
+            "term": f"{yr} {season}",
+            "sort_key": sort_key,
+            "coop_program": str(coop_program or "").strip(),
+        }
+        out.setdefault(sid, []).append(rec)
+    for sid in out:
+        # De-duplicate exact term/type pairs and sort chronologically.
+        uniq = {}
+        for rec in out[sid]:
+            uniq[(rec["wt"], rec["term"])] = rec
+        out[sid] = sorted(uniq.values(), key=lambda r: (r["sort_key"], r["wt"]))
+    return out
+
+
+def _admin_future_wts(conn, sids=None):
+    current_key = _admin_current_term()["sort_key"]
+    all_wts = _admin_wt_records(conn, sids)
+    return {
+        sid: [r for r in recs if r["sort_key"] > current_key]
+        for sid, recs in all_wts.items()
+        if any(r["sort_key"] > current_key for r in recs)
+    }
+
+
+def _admin_expected_terms_from_approved(term_json_raw, sequence_json_raw, plan_json_raw):
+    """Course -> approved academic-term set, plus the approved sequence term range."""
+    term_summary = _safe_json_load(term_json_raw) or []
+    seq_meta = _safe_json_load(sequence_json_raw) or {}
+    plan = _safe_json_load(plan_json_raw) or {}
+
+    if not (isinstance(term_summary, list) and any(isinstance(x, dict) and "data" in x for x in term_summary)):
+        term_summary = seq_meta.get("term_summary") or [] if isinstance(seq_meta, dict) else []
+
+    expected = {}
+    term_orders = []
+
+    if isinstance(term_summary, list):
+        season_by_key = {"SUM": "Summer", "FALL": "Fall", "WIN": "Winter"}
+        for year_row in term_summary:
+            if not isinstance(year_row, dict):
+                continue
+            year_range = str(year_row.get("year") or "").strip()
+            data = year_row.get("data") or {}
+            if not re.fullmatch(r"\d{4}-\d{4}", year_range) or not isinstance(data, dict):
+                continue
+            for key, season in season_by_key.items():
+                term_data = data.get(key) or {}
+                courses = term_data.get("courses") or [] if isinstance(term_data, dict) else []
+                term_label = f"{year_range} {season}"
+                ord_key = _admin_term_sort_key(term_label)
+                if ord_key is not None:
+                    term_orders.append(ord_key)
+                for item in courses:
+                    if not isinstance(item, dict):
+                        continue
+                    name = str(item.get("name") or "").strip()
+                    if not name or item.get("is_wt") or _admin_is_wt_course(name):
+                        continue
+                    ck = _admin_course_key(name)
+                    if ck:
+                        expected.setdefault(ck, set()).add(term_label)
+
+    # Older rows may not have a usable Term_Json_data. The immutable v2
+    # fullPlacements snapshot is the next-best source.
+    if not expected and isinstance(plan, dict):
+        placements = plan.get("fullPlacements") or plan.get("placements") or []
+        if isinstance(placements, list):
+            for item in placements:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("displayId") or "").strip()
+                zid = str(item.get("zoneId") or "").strip()
+                m = re.match(r"^zone_(\d{4}-\d{4})_(Summer|Fall|Winter)$", zid)
+                if not name or not m or item.get("isWt") or _admin_is_wt_course(name):
+                    continue
+                term_label = f"{m.group(1)} {m.group(2)}"
+                ck = _admin_course_key(name)
+                if ck:
+                    expected.setdefault(ck, set()).add(term_label)
+                ord_key = _admin_term_sort_key(term_label)
+                if ord_key is not None:
+                    term_orders.append(ord_key)
+
+    if not term_orders:
+        return expected, None, None
+    return expected, min(term_orders), max(term_orders)
+
+
+
+def _approved_transcript_deviation_for_sid(conn, sid):
+    """
+    Compare the latest APPROVED academic course placements with the student's
+    current MIAE transcript.
+
+    Only courses that exist in BOTH sources are compared.  This avoids treating
+    an as-yet-unregistered future course as a deviation merely because a future
+    transcript row does not exist yet.  WT/CWTE/WILE are deliberately excluded:
+    Work-Term placement keeps the established CO-OP/approved logic.
+
+    Returned labels are canonical, e.g.:
+      ENGR301: Approved 2026-2027 Fall -> MIAE transcript 2026-2027 Summer (B+)
+    """
+    sid = str(sid or "").strip()
+    empty = {"has_deviation": False, "approved_id": None, "approved_at": None, "items": [], "approved_terms": {}}
+    if not sid:
+        return empty
+
+    row = conn.execute(text("""
+        SELECT Date_Saved, Term_Json_data, sequence_Json_data, JSON_Data
+        FROM Saved_Sequences
+        WHERE student_id = :sid AND UPPER(TRIM(status)) = 'APPROVED'
+        ORDER BY Date_Saved DESC
+        LIMIT 1
+    """), {"sid": sid}).fetchone()
+    if not row:
+        return empty
+
+    approved_id = str(row[0] or "")
+    expected, min_ord, max_ord = _admin_expected_terms_from_approved(row[1], row[2], row[3])
+    approved_terms = {
+        str(course): sorted(list(terms), key=lambda t: _admin_term_sort_key(t) or 999999)
+        for course, terms in expected.items()
+    }
+    if not expected:
+        return {"has_deviation": False, "approved_id": approved_id, "approved_at": approved_id, "items": [], "approved_terms": {}}
+
+    tr_rows = conn.execute(text("""
+        SELECT COURSE, COURNAM, `Academic Term`, GRADE
+        FROM Transcripts
+        WHERE `Student ID` = :sid
+        ORDER BY `Academic Term` ASC, COURSE ASC
+    """), {"sid": sid}).fetchall()
+
+    items = []
+    seen = set()
+    for course, cournam, academic_term, grade in tr_rows:
+        if _admin_is_wt_course(course, cournam):
+            continue
+        ck = _admin_course_key(course)
+        expected_terms = expected.get(ck)
+        if not expected_terms:
+            continue
+        actual_ord = _admin_term_sort_key(academic_term)
+        if actual_ord is None or (min_ord is not None and actual_ord < min_ord) or (max_ord is not None and actual_ord > max_ord):
+            continue
+        yr, season = parse_term(academic_term)
+        if yr == "UNKNOWN" or season == "UNKNOWN":
+            continue
+        actual_label = f"{yr} {season}"
+        if actual_label in expected_terms:
+            continue
+        expected_label = ", ".join(sorted(expected_terms, key=lambda t: _admin_term_sort_key(t) or 999999))
+        grade_text = str(grade or "").strip()
+        item_key = (ck, expected_label, actual_label, grade_text)
+        if item_key in seen:
+            continue
+        seen.add(item_key)
+        items.append({
+            "course": str(course or "").strip().replace(" ", ""),
+            "approved_term": expected_label,
+            "transcript_term": actual_label,
+            "grade": grade_text,
+            "ungraded": grade_text == "",
+        })
+
+    items.sort(key=lambda x: (
+        _admin_term_sort_key(x.get("transcript_term")) or 999999,
+        str(x.get("course") or ""),
+    ))
+    return {
+        "has_deviation": bool(items),
+        "approved_id": approved_id,
+        "approved_at": approved_id,
+        "items": items,
+        "approved_terms": approved_terms,
+    }
+
+def _admin_check4_rows(conn):
+    """Latest APPROVED sequence vs the actual transcript course-term placement."""
+    active_sids = _admin_active_sids(conn)
+    approved = conn.execute(text("""
+        SELECT s.student_id, s.Date_Saved, s.Term_Json_data, s.sequence_Json_data, s.JSON_Data
+        FROM Saved_Sequences s
+        INNER JOIN (
+            SELECT student_id, MAX(Date_Saved) AS max_date
+            FROM Saved_Sequences
+            WHERE UPPER(TRIM(status)) = 'APPROVED'
+            GROUP BY student_id
+        ) latest
+          ON latest.student_id = s.student_id
+         AND latest.max_date = s.Date_Saved
+        WHERE UPPER(TRIM(s.status)) = 'APPROVED'
+    """)).fetchall()
+
+    approved_map = {}
+    for sid_raw, saved_at, term_json, seq_json, plan_json in approved:
+        sid = str(sid_raw or "").strip()
+        if not sid or sid not in active_sids or sid.startswith("8") or sid.startswith("9"):
+            continue
+        expected, min_ord, max_ord = _admin_expected_terms_from_approved(term_json, seq_json, plan_json)
+        if expected and min_ord is not None and max_ord is not None:
+            approved_map[sid] = {
+                "expected": expected,
+                "min_ord": min_ord,
+                "max_ord": max_ord,
+                "approved_at": str(saved_at or ""),
+            }
+
+    if not approved_map:
+        return []
+
+    sids = list(approved_map)
+    ph, params = _admin_sid_where(sids, "c4_sid")
+    transcript_rows = conn.execute(text(f"""
+        SELECT `Student ID`, COURSE, COURNAM, `Academic Term`, GRADE
+        FROM Transcripts
+        WHERE `Student ID` IN ({ph})
+    """), params).fetchall()
+
+    deviations = {}
+    for sid_raw, course, cournam, academic_term, grade in transcript_rows:
+        sid = str(sid_raw or "").strip()
+        info = approved_map.get(sid)
+        if not info or _admin_is_wt_course(course, cournam):
+            continue
+        actual_ord = _admin_term_sort_key(academic_term)
+        if actual_ord is None or actual_ord < info["min_ord"] or actual_ord > info["max_ord"]:
+            # Courses before/after the approved planner horizon are not evidence
+            # that this approved sequence was violated.
+            continue
+        ck = _admin_course_key(course)
+        expected_terms = info["expected"].get(ck)
+        if not expected_terms:
+            # Do not guess substitutions for Z-OTHER / technical electives.
+            continue
+        yr, season = parse_term(academic_term)
+        if yr == "UNKNOWN" or season == "UNKNOWN":
+            continue
+        actual_label = f"{yr} {season}"
+        if actual_label not in expected_terms:
+            expected_label = ", ".join(sorted(expected_terms, key=lambda t: _admin_term_sort_key(t) or 999999))
+            grade_text = str(grade or "").strip()
+            grade_suffix = f" ({grade_text})" if grade_text else ""
+            msg = f"{str(course or '').strip().replace(' ', '')}: Approved {expected_label} → MIAE transcript {actual_label}{grade_suffix}"
+            deviations.setdefault(sid, [])
+            if msg not in deviations[sid]:
+                deviations[sid].append(msg)
+
+    return [
+        {"Student ID": sid, "Deviated_Courses": "\n".join(items)}
+        for sid, items in sorted(deviations.items())
+        if items
+    ]
+
+
+def _admin_check6_rows(conn):
+    """
+    Current scheduled CO-OP WT attention:
+      - Summer with no courses at all is allowed (OFF), so it is not flagged.
+      - WT marker present + >1 academic course -> flag.
+      - WT marker absent while academic course(s) are present -> flag.
+    """
+    current = _admin_current_term()
+    active_sids = _admin_active_sids(conn)
+    all_wts = _admin_wt_records(conn, active_sids)
+
+    current_wt = {}
+    for sid, recs in all_wts.items():
+        for rec in recs:
+            if rec["sort_key"] != current["sort_key"]:
+                continue
+            if "C.EDGE" in rec.get("coop_program", "").upper():
+                continue
+            current_wt[sid] = rec
+            break
+
+    if not current_wt:
+        return []
+
+    sids = list(current_wt)
+    ph, params = _admin_sid_where(sids, "c6_sid")
+    params.update({"current_term": current["transcript_term"], "legacy_term": current["legacy_term"]})
+    tr_rows = conn.execute(text(f"""
+        SELECT `Student ID`, COURSE, COURNAM, CREDVAL, `Academic Term`
+        FROM Transcripts
+        WHERE `Student ID` IN ({ph})
+          AND (`Academic Term` = :current_term OR `Academic Term` = :legacy_term)
+    """), params).fetchall()
+
+    grouped = {sid: [] for sid in sids}
+    for row in tr_rows:
+        sid = str(row[0] or "").strip()
+        if sid in grouped:
+            grouped[sid].append(row)
+
+    output = []
+    for sid, rec in current_wt.items():
+        rows = grouped.get(sid, [])
+        if not rows:
+            # Explicitly allow an empty current Summer (and preserve the legacy
+            # non-flag behavior for an otherwise empty WT term in any season).
+            continue
+
+        wt_present = False
+        academic_courses = set()
+        all_courses = set()
+        for _sid, course, cournam, credval, _term in rows:
+            course_label = str(course or "").strip()
+            if course_label:
+                all_courses.add(course_label)
+            if _admin_is_wt_course(course, cournam):
+                wt_present = True
+                continue
+            try:
+                credits = float(str(credval or "").strip())
+                counts_as_academic = credits > 0
+            except Exception:
+                counts_as_academic = bool(course_label)
+            if counts_as_academic and course_label:
+                academic_courses.add(course_label)
+
+        academic_count = len(academic_courses)
+        should_flag = academic_count > 1 or (academic_count > 0 and not wt_present)
+        if not should_flag:
+            continue
+
+        output.append({
+            "Student ID": sid,
+            "Co-op Program": rec.get("coop_program", ""),
+            "Current_Term_Courses": "<br>".join(sorted(all_courses)),
+        })
+    return output
+
+
 @app.route("/api/admin_run_check", methods=["POST"])
 @limiter.limit("100 per 15 minutes")
 def api_admin_run_check():
-    """Run admin check query and return matching students"""
+    """Run an Admin Check and return one normalized row per student."""
     if not _require_login():
         return jsonify({"ok": False, "error": "Unauthorized"}), 401
     if not _is_power_user():
         return jsonify({"ok": False, "error": "Unauthorized"}), 403
-    
+
     try:
         data = request.get_json(silent=True) or {}
-        check_id = data.get("check_id")
-        
+        check_id = str(data.get("check_id") or "").strip()
         if not check_id:
             return jsonify([])
-        
-        # Map check_id to view name
+
         view_mapping = {
             "1": "v_check_1_cgpa_low",
             "2": "v_check_2_gpa24_low",
             "3": "v_check_3_gpa24_borderline",
             "5": "v_check_5_wt_violation",
-            "6": "v_check_6_wt_with_courses",
-            "7": "v_check_7_sequence_deviations"
         }
-        
-        view_name = view_mapping.get(str(check_id))
-        
-        if not view_name:
-            return jsonify([])
-        
-        # Query the view
+
         with engine.connect() as conn:
-            result = conn.execute(text(f"SELECT * FROM {view_name}"))
-            
-            # Get column names from the result
-            column_names = list(result.keys())
-            
-            rows = result.fetchall()
-            
-            if not rows:
+            # Checks 4 and 6 are deliberately calculated from current base-table
+            # data so they no longer depend on the historically mis-mapped/stale
+            # v_check_7_sequence_deviations / v_check_6_wt_with_courses views.
+            if check_id == "4":
+                row_dicts = _admin_check4_rows(conn)
+            elif check_id == "6":
+                row_dicts = _admin_check6_rows(conn)
+            else:
+                view_name = view_mapping.get(check_id)
+                if not view_name:
+                    return jsonify([])
+                result = conn.execute(text(f"SELECT * FROM {view_name}"))
+                column_names = list(result.keys())
+                row_dicts = [dict(zip(column_names, row)) for row in result.fetchall()]
+
+            if not row_dicts:
                 return jsonify([])
-            
-            # Extract all student IDs from the view results
-            student_ids = []
-            for row in rows:
-                row_dict = dict(zip(column_names, row))
-                student_id = row_dict.get('Student ID') or row_dict.get('StudentID') or row_dict.get('student_id') or ""
-                if student_id:
-                    student_ids.append(str(student_id).strip())
-            
-            # De-duplicate view output early. Some legacy views can return one row per
-            # historical email/program; the admin UI should remain one student = one row.
-            student_ids = list(dict.fromkeys(student_ids))
 
-            # Batch query 1: Get all names at once
+            # De-duplicate view/custom output while preserving the first row.
+            rows_by_sid = {}
+            for row_dict in row_dicts:
+                student_id = row_dict.get("Student ID") or row_dict.get("StudentID") or row_dict.get("student_id") or ""
+                sid = str(student_id).strip()
+                if not sid:
+                    continue
+                if sid not in rows_by_sid:
+                    rows_by_sid[sid] = dict(row_dict)
+                else:
+                    # Check 4 can accumulate multiple mismatch strings.
+                    extra = str(row_dict.get("Deviated_Courses") or row_dict.get("Deviated Courses") or "").strip()
+                    if extra:
+                        old = str(rows_by_sid[sid].get("Deviated_Courses") or "").strip()
+                        if extra not in old:
+                            rows_by_sid[sid]["Deviated_Courses"] = "\n".join(x for x in [old, extra] if x)
+
+            student_ids = list(rows_by_sid)
+            if not student_ids:
+                return jsonify([])
+
+            # V03_023: GPA/CGPA checks are actionable only while a future internship
+            # remains. The current/yellow term itself is not counted as "remaining".
+            # Apply this consistently to Checks 1, 2 and 3.
+            future_wts_map = _admin_future_wts(conn, student_ids)
+            if check_id in {"1", "2", "3"}:
+                student_ids = [sid for sid in student_ids if future_wts_map.get(sid)]
+                rows_by_sid = {sid: rows_by_sid[sid] for sid in student_ids}
+                if not student_ids:
+                    return jsonify([])
+
+            placeholders, params = _admin_sid_where(student_ids, "adm_sid")
+
             names_map = {}
-            if student_ids:
-                placeholders = ','.join([f':sid{i}' for i in range(len(student_ids))])
-                params = {f'sid{i}': sid for i, sid in enumerate(student_ids)}
-                names_result = conn.execute(
-                    text(f"SELECT `Student ID`, `Name` FROM `login vs id` WHERE `Student ID` IN ({placeholders})"),
-                    params
-                ).fetchall()
-                for name_row in names_result:
-                    names_map[str(name_row[0]).strip()] = str(name_row[1]).strip() if name_row[1] else ""
+            names_result = conn.execute(
+                text(f"SELECT `Student ID`, `Name` FROM `login vs id` WHERE `Student ID` IN ({placeholders})"),
+                params,
+            ).fetchall()
+            for name_row in names_result:
+                names_map[str(name_row[0]).strip()] = str(name_row[1]).strip() if name_row[1] else ""
 
-            # Normalize preferred email and latest program independently of the view.
             preferred_email_map = {}
-            latest_program_map = {}
-            if student_ids:
-                email_rows = conn.execute(
-                    text(f"""
-                        SELECT `Student ID`, `Primary Email`
-                        FROM (
-                            SELECT `Student ID`, `Primary Email`,
-                                   ROW_NUMBER() OVER (
-                                       PARTITION BY `Student ID`
-                                       ORDER BY COALESCE(email_priority, 999999), `Primary Email`
-                                   ) AS rn
-                            FROM {('v_student_primary_email' if _email_flags_enabled() else 'Sid_Email_Admission')}
-                            WHERE `Student ID` IN ({placeholders})
-                        ) ranked_email
-                        WHERE rn = 1
-                    """),
-                    params
-                ).fetchall()
-                for email_row in email_rows:
-                    preferred_email_map[str(email_row[0]).strip()] = str(email_row[1]).strip() if email_row[1] else ""
+            email_rows = conn.execute(
+                text(f"""
+                    SELECT `Student ID`, `Primary Email`
+                    FROM (
+                        SELECT `Student ID`, `Primary Email`,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY `Student ID`
+                                   ORDER BY COALESCE(email_priority, 999999), `Primary Email`
+                               ) AS rn
+                        FROM {('v_student_primary_email' if _email_flags_enabled() else 'Sid_Email_Admission')}
+                        WHERE `Student ID` IN ({placeholders})
+                    ) ranked_email
+                    WHERE rn = 1
+                """), params,
+            ).fetchall()
+            for email_row in email_rows:
+                preferred_email_map[str(email_row[0]).strip()] = str(email_row[1]).strip() if email_row[1] else ""
 
-                program_rows = conn.execute(
-                    text(f"""
-                        SELECT `Student ID`, PROG_LINK
-                        FROM (
-                            SELECT `Student ID`, PROG_LINK,
-                                   ROW_NUMBER() OVER (
-                                       PARTITION BY `Student ID`
-                                       ORDER BY `Academic Term` DESC
-                                   ) AS rn
-                            FROM Transcripts
-                            WHERE `Student ID` IN ({placeholders})
-                              AND PROG_LINK IS NOT NULL AND PROG_LINK <> ''
-                        ) ranked_program
-                        WHERE rn = 1
-                    """),
-                    params
-                ).fetchall()
-                for program_row in program_rows:
-                    latest_program_map[str(program_row[0]).strip()] = str(program_row[1]).strip() if program_row[1] else ""
-            
-            # Batch query 2: Get all notes at once
+            # Human-readable academic program name, not the internal PROG_LINK code.
+            # Example: "Mechanical Engineering" / "Aerospace Engineering".
+            latest_program_map = {}
+            program_rows = conn.execute(
+                text(f"""
+                    SELECT `Student ID`, PROGRAM
+                    FROM (
+                        SELECT `Student ID`, PROGRAM,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY `Student ID`
+                                   ORDER BY `Academic Term` DESC
+                               ) AS rn
+                        FROM Transcripts
+                        WHERE `Student ID` IN ({placeholders})
+                          AND PROGRAM IS NOT NULL AND TRIM(PROGRAM) <> ''
+                    ) ranked_program
+                    WHERE rn = 1
+                """), params,
+            ).fetchall()
+            for program_row in program_rows:
+                latest_program_map[str(program_row[0]).strip()] = str(program_row[1]).strip() if program_row[1] else ""
+
             notes_map = {}
-            if student_ids:
-                placeholders = ','.join([f':sid{i}' for i in range(len(student_ids))])
-                params = {f'sid{i}': sid for i, sid in enumerate(student_ids)}
-                notes_result = conn.execute(
-                    text(f"SELECT S_id, Public_comments, PRIVATE_comments FROM S_id_comments WHERE S_id IN ({placeholders})"),
-                    params
-                ).fetchall()
-                for notes_row in notes_result:
-                    sid = str(notes_row[0]).strip()
-                    notes_map[sid] = {
-                        'visible': str(notes_row[1]).strip() if notes_row[1] else "",
-                        'invisible': str(notes_row[2]).strip() if notes_row[2] else ""
-                    }
-            
-            # Batch query 3: Get scheduled WTs from coop table
-            wts_map = {}
-            if student_ids:
-                current_year = datetime.datetime.now().year
-                current_month = datetime.datetime.now().month
-                
-                # Determine current academic year and season (same logic as planner yellow term)
-                if current_month >= 9:  # Sep-Dec: Fall of current academic year
-                    current_academic_year = current_year
-                    current_season = 'Fall'
-                elif current_month >= 5:  # May-Aug: Summer starts the YYYY-YYYY+1 academic year
-                    current_academic_year = current_year
-                    current_season = 'Summer'
-                else:  # Jan-Apr: Winter of previous academic year
-                    current_academic_year = current_year - 1
-                    current_season = 'Winter'
-                
-                # Calculate current term sort key
-                current_sort_key = current_academic_year * 3 + {'Summer': 1, 'Fall': 2, 'Winter': 3}.get(current_season, 0)
-                
-                placeholders = ','.join([f':sid{i}' for i in range(len(student_ids))])
-                params = {f'sid{i}': sid for i, sid in enumerate(student_ids)}
-                
-                # Get all coop terms for these students
-                coop_result = conn.execute(
-                    text(f"SELECT `Student ID`, `Term`, `Term number Sx or Wx` FROM `coop` WHERE `Student ID` IN ({placeholders})"),
-                    params
-                ).fetchall()
-                
-                for coop_row in coop_result:
-                    sid = str(coop_row[0]).strip()
-                    term_raw = str(coop_row[1]).strip() if coop_row[1] else ""
-                    term_type = str(coop_row[2]).strip() if coop_row[2] else ""
-                    
-                    # Only include W-x terms (work terms)
-                    if not term_type or not term_type.upper().startswith('W-'):
-                        continue
-                    
-                    # Use parse_term from utils.py to normalize the term (same as when loading coop for a student)
-                    year_range, season = parse_term(term_raw)
-                    
-                    # Skip if parsing failed
-                    if year_range == "UNKNOWN" or season == "UNKNOWN":
-                        continue
-                    
-                    try:
-                        term_start_year = int(year_range.split('-')[0])
-                    except:
-                        continue
-                    
-                    # Determine display year based on season
-                    # Summer/Fall: use first year (e.g., 2026-2027 Summer → 2026 Summer)
-                    # Winter: use second year (e.g., 2025-2026 Winter → 2026 Winter)
-                    if season == 'Winter':
-                        display_year = term_start_year + 1
-                    else:
-                        display_year = term_start_year
-                    
-                    # Create sort key using same logic as planner.js getTermOrdFromZoneId
-                    # year * 3 + season_order (Summer=1, Fall=2, Winter=3)
-                    season_order = {'Summer': 1, 'Fall': 2, 'Winter': 3}[season]
-                    term_sort_key = term_start_year * 3 + season_order
-                    
-                    # Only include future terms (after current yellow term)
-                    if term_sort_key > current_sort_key:
-                        if sid not in wts_map:
-                            wts_map[sid] = []
-                        wts_map[sid].append({
-                            'label': f"{display_year} {season}",
-                            'sort_key': term_sort_key
-                        })
-                
-                # Sort and format WTs for each student (one per line with <br>)
-                for sid in wts_map:
-                    wts_map[sid] = sorted(wts_map[sid], key=lambda x: x['sort_key'])
-                    wts_map[sid] = "<br>".join([wt['label'] for wt in wts_map[sid]])
-            
-            # Format results for frontend - map by column name
-            students = []
-            students_by_id = {}
-            for row in rows:
-                row_dict = dict(zip(column_names, row))
-                
-                # Map columns to expected format (handle different column names)
-                student_id = row_dict.get('Student ID') or row_dict.get('StudentID') or row_dict.get('student_id') or ""
-                student_id = str(student_id).strip()
-                
-                # Get name from the batch query results
-                name = names_map.get(student_id, "")
-                
-                email = preferred_email_map.get(student_id) or row_dict.get('Primary Email') or row_dict.get('Email') or row_dict.get('email') or ""
-                program = latest_program_map.get(student_id) or row_dict.get('PROG_LINK') or row_dict.get('Program') or row_dict.get('program') or ""
-                coop_program = row_dict.get('Co-op Program') or ""
-                current_courses = row_dict.get('Current_Term_Courses') or ""
-                
-                # Get notes from the batch query results
-                notes = notes_map.get(student_id, {'visible': '', 'invisible': ''})
-                notes_vis = notes['visible']
-                notes_invis = notes['invisible']
-                
-                # Get scheduled WTs from the batch query results
-                scheduled_wts = wts_map.get(student_id, "")
-                
-                # Get deviated courses if present (for check 7)
-                deviated_courses = row_dict.get('Deviated_Courses') or row_dict.get('Deviated Courses') or ""
-                deviated_courses = str(deviated_courses).strip() if deviated_courses else ""
-                
-                student_obj = {
-                    "id": student_id,
-                    "name": name,
-                    "program": str(program).strip(),
-                    "coop_program": str(coop_program).strip(),
-                    "current_courses": str(current_courses).strip(),
-                    "email": str(email).strip(),
-                    "cgpa": str(row_dict.get('CGPA') or row_dict.get('GPA_X_CR') or "").strip(),
-                    "cgpa_cr": str(row_dict.get('CGPA_Total_Credits') or row_dict.get('GPA_X_CR_Actual_Credits') or "").strip(),
-                    "gpa24": str(row_dict.get('GPA24') or row_dict.get('GPA_X_CR') or "").strip(),
-                    "gpa24_cr": str(row_dict.get('GPA24_Credits') or row_dict.get('GPA_X_CR_Actual_Credits') or "").strip(),
-                    "wts": scheduled_wts,
-                    "deviated_courses": deviated_courses,
-                    "notes_vis": notes_vis,
-                    "notes_invis": notes_invis
+            notes_result = conn.execute(
+                text(f"SELECT S_id, Public_comments, PRIVATE_comments FROM S_id_comments WHERE S_id IN ({placeholders})"),
+                params,
+            ).fetchall()
+            for notes_row in notes_result:
+                sid = str(notes_row[0]).strip()
+                notes_map[sid] = {
+                    "visible": str(notes_row[1]).strip() if notes_row[1] else "",
+                    "invisible": str(notes_row[2]).strip() if notes_row[2] else "",
                 }
 
-                if student_id in students_by_id:
-                    # Preserve one row per SID while retaining any additional deviation text.
-                    existing = students_by_id[student_id]
-                    if deviated_courses and deviated_courses not in existing.get("deviated_courses", ""):
-                        existing["deviated_courses"] = "\n".join(
-                            x for x in [existing.get("deviated_courses", ""), deviated_courses] if x
-                        )
-                    continue
+            # Latest GPA values are loaded for every check. This lets Checks 4/6
+            # display the same useful columns as the legacy GPA views.
+            latest_gpa_map = {}
+            gpa_rows = conn.execute(text(f"""
+                SELECT g.`Student ID`, g.CGPA, g.CGPA_Total_Credits,
+                       g.GPA_X_CR, g.GPA_X_CR_Actual_Credits
+                FROM CGPA_Timeline g
+                INNER JOIN (
+                    SELECT `Student ID`, MAX(`Academic Term`) AS max_term
+                    FROM CGPA_Timeline
+                    WHERE `Student ID` IN ({placeholders})
+                    GROUP BY `Student ID`
+                ) latest
+                  ON latest.`Student ID` = g.`Student ID`
+                 AND latest.max_term = g.`Academic Term`
+            """), params).fetchall()
+            for gr in gpa_rows:
+                latest_gpa_map[str(gr[0]).strip()] = {
+                    "CGPA": gr[1],
+                    "CGPA_Total_Credits": gr[2],
+                    "GPA_X_CR": gr[3],
+                    "GPA_X_CR_Actual_Credits": gr[4],
+                }
 
-                students_by_id[student_id] = student_obj
-                students.append(student_obj)
-            
+            # Full-year scheduled WT labels (e.g. 2026-2027 Winter), future only.
+            if not future_wts_map:
+                future_wts_map = _admin_future_wts(conn, student_ids)
+
+            students = []
+            for student_id in student_ids:
+                row_dict = rows_by_sid[student_id]
+                gpa = latest_gpa_map.get(student_id, {})
+                notes = notes_map.get(student_id, {"visible": "", "invisible": ""})
+
+                scheduled_wts = "<br>".join(r["term"] for r in future_wts_map.get(student_id, []))
+                deviated_courses = str(row_dict.get("Deviated_Courses") or row_dict.get("Deviated Courses") or "").strip()
+
+                cgpa_val = row_dict.get("CGPA")
+                if cgpa_val is None:
+                    cgpa_val = gpa.get("CGPA")
+                cgpa_cr_val = row_dict.get("CGPA_Total_Credits")
+                if cgpa_cr_val is None:
+                    cgpa_cr_val = gpa.get("CGPA_Total_Credits")
+                gpa24_val = row_dict.get("GPA24")
+                if gpa24_val is None:
+                    gpa24_val = row_dict.get("GPA_X_CR")
+                if gpa24_val is None:
+                    gpa24_val = gpa.get("GPA_X_CR")
+                gpa24_cr_val = row_dict.get("GPA24_Credits")
+                if gpa24_cr_val is None:
+                    gpa24_cr_val = row_dict.get("GPA_X_CR_Actual_Credits")
+                if gpa24_cr_val is None:
+                    gpa24_cr_val = gpa.get("GPA_X_CR_Actual_Credits")
+
+                students.append({
+                    "id": student_id,
+                    "name": names_map.get(student_id, ""),
+                    "program": latest_program_map.get(student_id) or str(row_dict.get("Program") or row_dict.get("program") or "").strip(),
+                    "coop_program": str(row_dict.get("Co-op Program") or "").strip(),
+                    "current_courses": str(row_dict.get("Current_Term_Courses") or "").strip(),
+                    "email": preferred_email_map.get(student_id) or str(row_dict.get("Primary Email") or row_dict.get("Email") or row_dict.get("email") or "").strip(),
+                    "cgpa": "" if cgpa_val is None else str(cgpa_val),
+                    "cgpa_cr": "" if cgpa_cr_val is None else str(cgpa_cr_val),
+                    "gpa24": "" if gpa24_val is None else ("N/A" if isinstance(gpa24_val, (int, float)) and gpa24_val < 0 else str(gpa24_val)),
+                    "gpa24_cr": "" if gpa24_cr_val is None else str(gpa24_cr_val),
+                    "wts": scheduled_wts,
+                    "deviated_courses": deviated_courses,
+                    "notes_vis": notes["visible"],
+                    "notes_invis": notes["invisible"],
+                })
+
             return jsonify(students)
-            
+
     except Exception as e:
         error_msg = str(e)
         print(f"❌ Error running admin check: {e}")
         import traceback
         traceback.print_exc()
-        
-        # Check if it's a disk space error
         if "No space left on device" in error_msg or "errno 28" in error_msg:
             return jsonify({
                 "error": "Database server is out of disk space. Please contact your database administrator to clean up temporary files in /tmp/mysqltmp/",
-                "error_type": "disk_space"
-            }), 507  # HTTP 507 Insufficient Storage
-        
+                "error_type": "disk_space",
+            }), 507
         return jsonify({"error": "An error occurred while running the check"}), 500
 
 
 @app.route("/api/admin_check_wt_attention", methods=["POST"])
 @limiter.limit("100 per 15 minutes")
 def api_admin_check_wt_attention():
-    """Check #7: Students with at least 2 planned WTs, at least 1 future, no approved sequence, not grad."""
+    """Check #7: active UGRD CO-OP, >=1 future WT, and no APPROVED sequence."""
     if not _require_login():
         return jsonify({"ok": False, "error": "Unauthorized"}), 401
     if not _is_power_user():
@@ -2751,227 +3186,143 @@ def api_admin_check_wt_attention():
 
     try:
         with engine.connect() as conn:
-            all_coop = conn.execute(
-                text("SELECT `Student ID`, `Term`, `Term number Sx or Wx`, `Transferred Withdrawn OK` FROM `coop`")
-            ).fetchall()
+            active_sids = _admin_active_sids(conn)
+            all_wts = _admin_wt_records(conn, active_sids)
+            current_key = _admin_current_term()["sort_key"]
 
-            # Collect withdrawn/moved students (any row with "Withdr" or "Moved" in status)
-            excluded_sids = set()
-            for cr in all_coop:
-                status = str(cr[3] or "").strip().lower()
-                if "withdr" in status or "moved" in status:
-                    excluded_sids.add(str(cr[0]).strip())
-
-            now = datetime.datetime.now()
-
-            def term_start_date(year_range, season):
-                try:
-                    first_year = int(year_range.split('-')[0])
-                except:
-                    return None
-                if season == "Summer":
-                    return datetime.datetime(first_year, 5, 1)
-                elif season == "Fall":
-                    return datetime.datetime(first_year, 9, 1)
-                elif season == "Winter":
-                    return datetime.datetime(first_year + 1, 1, 1)
-                return None
-
-            # Build all W-x per student
-            all_wt = {}  # sid -> { wt_key: { term_str, is_future } }
-            for cr in all_coop:
-                sid = str(cr[0]).strip()
-                if sid[0:1] >= '8':
-                    continue
-                if sid in excluded_sids:
-                    continue
-                term_raw = str(cr[1]).strip() if cr[1] else ""
-                term_type = str(cr[2]).strip() if cr[2] else ""
-                if not term_type.upper().startswith('W-'):
-                    continue
-                wt_num = term_type.upper().replace('W-', '')
-                wt_key = f"WT{wt_num}"
-                yr, sn = parse_term(term_raw)
-                if yr == "UNKNOWN":
-                    continue
-                td = term_start_date(yr, sn)
-                is_future = td is not None and td > now
-                if sid not in all_wt:
-                    all_wt[sid] = {}
-                all_wt[sid][wt_key] = {"term": f"{yr} {sn}", "future": is_future}
-
-            # Filter: must have at least 2 W-x terms and at least 1 future
+            # At least ONE internship remaining. Keep the full WT history for the
+            # WT1/WT2/WT3 columns, but only students with a future W-x qualify.
             students_wt = {}
-            for sid, wts in all_wt.items():
-                if len(wts) < 2:
+            for sid, recs in all_wts.items():
+                if not any(r["sort_key"] > current_key for r in recs):
                     continue
-                has_future = any(v["future"] for v in wts.values())
-                if has_future:
-                    students_wt[sid] = {k: {"term": v["term"], "future": v["future"]} for k, v in wts.items()}
+                by_wt = {}
+                for r in recs:
+                    candidate = {"term": r["term"], "future": r["sort_key"] > current_key, "sort_key": r["sort_key"]}
+                    prev = by_wt.get(r["wt"])
+                    # Prefer the future/current valid record; otherwise latest historical.
+                    if prev is None or (candidate["future"], candidate["sort_key"]) > (prev["future"], prev["sort_key"]):
+                        by_wt[r["wt"]] = candidate
+                students_wt[sid] = by_wt
 
             if not students_wt:
                 return jsonify({"ok": True, "students": []})
 
-            # Exclude grad
-            sids_list = list(students_wt.keys())
-            placeholders = ','.join([f':sid{i}' for i in range(len(sids_list))])
-            sid_params = {f'sid{i}': sid for i, sid in enumerate(sids_list)}
+            # Exclude GRAD based on the latest transcript program link.
+            sids_list = list(students_wt)
+            ph, params = _admin_sid_where(sids_list, "c7_sid")
+            prog_rows = conn.execute(text(f"""
+                SELECT `Student ID`, PROG_LINK
+                FROM (
+                    SELECT `Student ID`, PROG_LINK,
+                           ROW_NUMBER() OVER (PARTITION BY `Student ID` ORDER BY `Academic Term` DESC) AS rn
+                    FROM Transcripts
+                    WHERE `Student ID` IN ({ph})
+                      AND PROG_LINK IS NOT NULL AND PROG_LINK <> ''
+                ) p
+                WHERE rn = 1
+            """), params).fetchall()
+            for sid_raw, plink in prog_rows:
+                sid = str(sid_raw or "").strip()
+                up = str(plink or "").upper()
+                if "GRAD" in up and "UGRD" not in up:
+                    students_wt.pop(sid, None)
 
-            prog_rows = conn.execute(
-                text(f"""
-                    SELECT DISTINCT t.`Student ID`, t.PROG_LINK
-                    FROM Transcripts t
-                    INNER JOIN (
-                        SELECT `Student ID`, MAX(`Academic Term`) AS max_term
-                        FROM Transcripts
-                        WHERE `Student ID` IN ({placeholders})
-                        GROUP BY `Student ID`
-                    ) latest
-                      ON t.`Student ID` = latest.`Student ID`
-                     AND t.`Academic Term` = latest.max_term
-                    WHERE t.PROG_LINK IS NOT NULL AND t.PROG_LINK <> ''
-                """),
-                sid_params
+            if not students_wt:
+                return jsonify({"ok": True, "students": []})
+
+            # Any APPROVED sequence removes the student from Check 7. If the
+            # approved sequence later conflicts with the transcript, Check 4 owns it.
+            sids_list = list(students_wt)
+            ph, params = _admin_sid_where(sids_list, "c7a_sid")
+            approved_rows = conn.execute(
+                text(f"SELECT DISTINCT student_id FROM Saved_Sequences WHERE student_id IN ({ph}) AND UPPER(TRIM(status))='APPROVED'"),
+                params,
             ).fetchall()
-            grad_sids = set()
-            for pr in prog_rows:
-                plink = str(pr[1] or "").upper()
-                if "GRAD" in plink and "UGRD" not in plink:
-                    grad_sids.add(str(pr[0]).strip())
-            for gsid in grad_sids:
-                students_wt.pop(gsid, None)
+            for row in approved_rows:
+                students_wt.pop(str(row[0] or "").strip(), None)
 
             if not students_wt:
                 return jsonify({"ok": True, "students": []})
 
-            # Exclude those who already have an APPROVED sequence
-            sids_list = list(students_wt.keys())
-            placeholders = ','.join([f':sid{i}' for i in range(len(sids_list))])
-            sid_params = {f'sid{i}': sid for i, sid in enumerate(sids_list)}
+            sids_list = list(students_wt)
+            ph, params = _admin_sid_where(sids_list, "c7b_sid")
 
-            approved_sids_rows = conn.execute(
-                text(f"SELECT DISTINCT student_id FROM Saved_Sequences WHERE student_id IN ({placeholders}) AND status = 'APPROVED'"),
-                sid_params
-            ).fetchall()
-            approved_sids = set(str(r[0]).strip() for r in approved_sids_rows)
-            for asid in approved_sids:
-                students_wt.pop(asid, None)
-
-            if not students_wt:
-                return jsonify({"ok": True, "students": []})
-
-            # Get best sequence status per student (for sorting: PENDING > DRAFT > none)
-            sids_list = list(students_wt.keys())
-            placeholders = ','.join([f':sid{i}' for i in range(len(sids_list))])
-            sid_params = {f'sid{i}': sid for i, sid in enumerate(sids_list)}
             seq_status_rows = conn.execute(
-                text(f"SELECT student_id, status FROM Saved_Sequences WHERE student_id IN ({placeholders})"),
-                sid_params
+                text(f"SELECT student_id, status FROM Saved_Sequences WHERE student_id IN ({ph})"), params
             ).fetchall()
-            # Build best status per student: PENDING APPROVAL > SAVED DRAFT > (none)
-            seq_status_map = {}  # sid -> best status string
-            for sr in seq_status_rows:
-                ssid = str(sr[0]).strip()
-                st = str(sr[1] or "").strip().upper()
-                cur = seq_status_map.get(ssid, "")
+            seq_status_map = {}
+            for sid_raw, status_raw in seq_status_rows:
+                sid = str(sid_raw or "").strip()
+                st = str(status_raw or "").strip().upper()
+                cur = seq_status_map.get(sid, "")
                 if "PENDING" in st:
-                    seq_status_map[ssid] = "PENDING"
+                    seq_status_map[sid] = "PENDING"
                 elif "DRAFT" in st and cur != "PENDING":
-                    seq_status_map[ssid] = "DRAFT"
+                    seq_status_map[sid] = "DRAFT"
                 elif "REWORK" in st and cur not in ("PENDING", "DRAFT"):
-                    seq_status_map[ssid] = "REWORK"
+                    seq_status_map[sid] = "REWORK"
                 elif not cur:
-                    seq_status_map[ssid] = st if st else ""
+                    seq_status_map[sid] = st or "NONE"
 
-            # Get names
-            sids_list = list(students_wt.keys())
-            placeholders = ','.join([f':sid{i}' for i in range(len(sids_list))])
-            sid_params = {f'sid{i}': sid for i, sid in enumerate(sids_list)}
             name_rows = conn.execute(
-                text(f"SELECT `Student ID`, `Name` FROM `login vs id` WHERE `Student ID` IN ({placeholders})"),
-                sid_params
+                text(f"SELECT `Student ID`, `Name` FROM `login vs id` WHERE `Student ID` IN ({ph})"), params
             ).fetchall()
-            name_map = {str(nr[0]).strip(): str(nr[1] or "").strip() for nr in name_rows}
+            name_map = {str(r[0]).strip(): str(r[1] or "").strip() for r in name_rows}
 
-            # Get emails
             email_rows = conn.execute(
-                text(f"SELECT `Student ID`, `Primary Email` FROM `{('v_student_primary_email' if _email_flags_enabled() else 'Sid_Email_Admission')}` WHERE `Student ID` IN ({placeholders}) ORDER BY `Student ID`, COALESCE(`email_priority`, 999999), `Primary Email`"),
-                sid_params
+                text(f"SELECT `Student ID`, `Primary Email` FROM `{('v_student_primary_email' if _email_flags_enabled() else 'Sid_Email_Admission')}` WHERE `Student ID` IN ({ph}) ORDER BY `Student ID`, COALESCE(`email_priority`, 999999), `Primary Email`"),
+                params,
             ).fetchall()
             email_map = {}
-            for er in email_rows:
-                esid = str(er[0]).strip()
-                if esid not in email_map:
-                    email_map[esid] = str(er[1] or "").strip()
+            for sid_raw, email_raw in email_rows:
+                sid = str(sid_raw or "").strip()
+                email_map.setdefault(sid, str(email_raw or "").strip())
 
-            # Batch GPA/CGPA from CGPA_Timeline (pre-calculated by 0_master)
-            # Get the latest term row per student in one query
-            gpa_rows = conn.execute(
-                text(f"""
-                    SELECT g.`Student ID`, g.CGPA, g.CGPA_Total_Credits, g.GPA_X_CR, g.GPA_X_CR_Actual_Credits
-                    FROM `CGPA_Timeline` g
-                    INNER JOIN (
-                        SELECT `Student ID`, MAX(`Academic Term`) AS max_term
-                        FROM `CGPA_Timeline`
-                        WHERE `Student ID` IN ({placeholders})
-                        GROUP BY `Student ID`
-                    ) latest ON g.`Student ID` = latest.`Student ID` AND g.`Academic Term` = latest.max_term
-                """),
-                sid_params
-            ).fetchall()
-
+            gpa_rows = conn.execute(text(f"""
+                SELECT g.`Student ID`, g.CGPA, g.CGPA_Total_Credits, g.GPA_X_CR, g.GPA_X_CR_Actual_Credits
+                FROM CGPA_Timeline g
+                INNER JOIN (
+                    SELECT `Student ID`, MAX(`Academic Term`) AS max_term
+                    FROM CGPA_Timeline
+                    WHERE `Student ID` IN ({ph})
+                    GROUP BY `Student ID`
+                ) latest
+                  ON latest.`Student ID`=g.`Student ID` AND latest.max_term=g.`Academic Term`
+            """), params).fetchall()
             gpa_map = {}
             for gr in gpa_rows:
-                gsid = str(gr[0]).strip()
-                cgpa_val = float(gr[1]) if gr[1] is not None else 0.0
-                total_cr = float(gr[2]) if gr[2] is not None else 0.0
-                gpa24_val = float(gr[3]) if gr[3] is not None else 0.0
-                gpa_map[gsid] = {
-                    "cgpa": f"{cgpa_val:.2f}",
-                    "gpa24": f"{gpa24_val:.2f}" if gpa24_val >= 0 else "N/A",
-                    "credits": total_cr
+                sid = str(gr[0] or "").strip()
+                gpa24 = float(gr[3]) if gr[3] is not None else -1
+                gpa_map[sid] = {
+                    "cgpa": f"{float(gr[1]):.2f}" if gr[1] is not None else "",
+                    "gpa24": f"{gpa24:.2f}" if gpa24 >= 0 else "N/A",
+                    "credits": float(gr[2]) if gr[2] is not None else 0,
                 }
 
             result = []
             for sid, wts in students_wt.items():
-                gpa_info = gpa_map.get(sid, {})
-                seq_st = seq_status_map.get(sid, "NONE")
-                if not seq_st:
-                    seq_st = "NONE"
+                gpa = gpa_map.get(sid, {})
                 result.append({
                     "sid": sid,
                     "name": name_map.get(sid, ""),
                     "email": email_map.get(sid, ""),
-                    "wts": wts,
-                    "gpa24": gpa_info.get("gpa24", ""),
-                    "cgpa": gpa_info.get("cgpa", ""),
-                    "credits": gpa_info.get("credits", 0),
-                    "seq_status": seq_st
+                    "wts": {k: {"term": v["term"], "future": v["future"]} for k, v in wts.items()},
+                    "gpa24": gpa.get("gpa24", ""),
+                    "cgpa": gpa.get("cgpa", ""),
+                    "credits": gpa.get("credits", 0),
+                    "seq_status": seq_status_map.get(sid, "NONE") or "NONE",
                 })
 
-            # Sort: first by number of future WTs descending (3 first, then 2, then 1),
-            # then by earliest future WT term ascending,
-            # then by seq_status (NONE first, DRAFT, REWORK, PENDING last)
-            season_ord = {"Summer": 1, "Fall": 2, "Winter": 3}
             status_ord = {"NONE": 0, "DRAFT": 1, "REWORK": 2, "PENDING": 3}
-            def sort_key(x):
-                wts = x["wts"]
-                future_count = sum(1 for v in wts.values() if v.get("future"))
-                # Find earliest future WT term for secondary sort
-                earliest = "9999-9999 Z"
-                for wt_key in ["WT1", "WT2", "WT3"]:
-                    if wt_key in wts and wts[wt_key].get("future"):
-                        t = wts[wt_key]["term"]
-                        parts = t.split(" ")
-                        yr = parts[0] if parts else "9999-9999"
-                        sn = season_ord.get(parts[1], 9) if len(parts) > 1 else 9
-                        sort_t = f"{yr}-{sn}"
-                        if sort_t < earliest:
-                            earliest = sort_t
-                st_ord = status_ord.get(x.get("seq_status", "NONE"), 0)
-                return (-future_count, earliest, st_ord)
-            result.sort(key=sort_key)
+            def sort_key(item):
+                future = [v for v in item["wts"].values() if v.get("future")]
+                future_count = len(future)
+                future_orders = [_admin_term_sort_key(v.get("term")) or 999999 for v in future]
+                earliest = min(future_orders) if future_orders else 999999
+                return (-future_count, earliest, status_ord.get(item.get("seq_status", "NONE"), 0), item["sid"])
 
+            result.sort(key=sort_key)
             return jsonify({"ok": True, "students": result})
 
     except Exception as e:

@@ -497,20 +497,9 @@ tr.term-names-row td { border: none !important; }
 .admin-results-table td { border: 1px solid #dee2e6; padding: 8px; text-align: center; }
 .admin-results-table th { background: #2c3e50; color: white; position: sticky; top: 0; }
 
-/* Wrap long emails */
-.admin-results-table td:nth-child(4) { 
-    word-break: break-word; 
-    max-width: 200px; 
-    white-space: normal;
-}
-
-/* Notes columns - prevent overlap */
-.admin-results-table td:nth-child(11),
-.admin-results-table td:nth-child(12) {
-    vertical-align: top;
-    padding: 0;
-    width: 300px;
-}
+/* V03_022: Admin table uses semantic column classes instead of nth-child.
+   Optional Check 4/6 columns change column positions, so nth-child widths were
+   stretching the wrong cells and could make a single Notes entry enormously tall. */
 
 .notes-cell-vis, .notes-cell-invis {
     display: block;
@@ -1231,7 +1220,7 @@ tr.term-names-row td { border: none !important; }
 }
 
 /* =========================================================
-   DATA FRESHNESS (V03.021)
+   DATA FRESHNESS (V03.022)
    Reuses the lower-right space formerly occupied by the
    Errors/Warnings summary. Validation remains local to terms.
    ========================================================= */
@@ -1250,4 +1239,227 @@ tr.term-names-row td { border: none !important; }
 .data-freshness-box strong {
     color: #444;
     font-weight: 600;
+}
+
+
+/* =========================================================
+   ADMIN CHECKS TABLE REBALANCE (V03.022)
+   ========================================================= */
+.admin-results-wrap {
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: visible;
+    margin-bottom: 20px;
+}
+
+.admin-results-table {
+    min-width: 1450px;
+    margin-bottom: 0;
+    table-layout: fixed;
+}
+
+.admin-results-table th,
+.admin-results-table td {
+    box-sizing: border-box;
+    vertical-align: top;
+    overflow-wrap: anywhere;
+}
+
+.admin-results-table .admin-col-select { width: 42px; text-align: center; }
+.admin-results-table .admin-col-name { width: 130px; font-weight: bold; color: #2980b9; }
+.admin-results-table th.admin-col-name { color: #fff; }
+.admin-results-table .admin-col-program { width: 155px; font-size: 11px; }
+.admin-results-table .admin-col-coop-program { width: 125px; font-size: 11px; font-weight: bold; color: #16a085; }
+.admin-results-table th.admin-col-coop-program { color: #fff; }
+.admin-results-table .admin-col-current-courses { width: 190px; padding: 0; background: #e8f8f5; }
+.admin-results-table th.admin-col-current-courses { padding: 8px; background: #2c3e50; }
+.admin-results-table .admin-col-email { width: 175px; font-size: 11px; word-break: break-word; white-space: normal; }
+.admin-results-table .admin-col-sid { width: 92px; }
+.admin-results-table .admin-col-gpa { width: 78px; font-weight: bold; }
+.admin-results-table .admin-cgpa { color: #c0392b; }
+.admin-results-table .admin-gpa24 { color: #e67e22; }
+.admin-results-table .admin-col-credits { width: 92px; }
+.admin-results-table .admin-col-wts { width: 145px; font-size: 11px; white-space: normal; text-align: left; }
+.admin-results-table .admin-col-deviations { width: 270px; padding: 0; background: #fff8e1; }
+.admin-results-table th.admin-col-deviations { padding: 8px; background: #2c3e50; }
+.admin-results-table .admin-col-notes { width: 225px; padding: 0; }
+.admin-results-table .admin-notes-visible { background: #f9fff9; }
+.admin-results-table .admin-notes-invisible { background: #fdf2f2; }
+
+.admin-notes-scroll,
+.admin-deviations-scroll,
+.admin-current-courses-scroll {
+    box-sizing: border-box;
+    width: 100%;
+    max-height: 135px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 8px;
+    font-size: 11px;
+    line-height: 1.28;
+    text-align: left;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.admin-deviations-scroll {
+    max-height: 150px;
+    font-family: Consolas, "Courier New", monospace;
+}
+
+.admin-current-courses-scroll {
+    max-height: 150px;
+    white-space: normal;
+}
+
+/* =========================================================
+   ADMIN CHECKS V03.023 — compact auto-height rows + sorting
+   ========================================================= */
+.admin-results-table tbody tr,
+.admin-results-table tbody td {
+    height: auto !important;
+    min-height: 0 !important;
+}
+
+.admin-results-table tbody td {
+    padding-top: 7px;
+    padding-bottom: 7px;
+}
+
+.admin-notes-scroll,
+.admin-deviations-scroll,
+.admin-current-courses-scroll {
+    height: auto !important;
+    min-height: 0 !important;
+}
+
+/* Short text uses only the space it needs. Long notes cap and scroll. */
+.admin-notes-scroll { max-height: 125px; }
+.admin-deviations-scroll,
+.admin-current-courses-scroll { max-height: 135px; }
+
+.admin-results-table th.admin-sortable {
+    cursor: pointer;
+    user-select: none;
+    position: sticky;
+    padding-right: 20px;
+}
+.admin-results-table th.admin-sortable::after {
+    content: "↕";
+    position: absolute;
+    right: 6px;
+    opacity: 0.45;
+    font-size: 10px;
+}
+.admin-results-table th.admin-sortable.sort-asc::after {
+    content: "▲";
+    opacity: 1;
+}
+.admin-results-table th.admin-sortable.sort-desc::after {
+    content: "▼";
+    opacity: 1;
+}
+
+/* =========================================================
+   V03.025 — APPROVED vs MIAE transcript deviation banner
+   ========================================================= */
+.approved-transcript-deviation-banner {
+    margin: 8px 14px 10px;
+    padding: 10px 14px;
+    border: 2px solid #e67e22;
+    border-radius: 7px;
+    background: #fff4e6;
+    color: #7a3e00;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    font-size: 12px;
+    line-height: 1.4;
+}
+.approved-transcript-deviation-title {
+    font-weight: 800;
+    margin-bottom: 5px;
+}
+.approved-transcript-deviation-items {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-weight: 600;
+}
+.approved-transcript-deviation-item {
+    overflow-wrap: anywhere;
+}
+
+/* =========================================================
+   V03.025 — stacked floating alerts + live MIAE course marker
+   ========================================================= */
+.planner-top-banner-stack {
+    position: sticky;
+    top: 0;
+    z-index: 10000;
+    width: 100%;
+}
+/* Children stack naturally inside the single sticky container. This prevents
+   two or three simultaneous global bars from covering one another. */
+.planner-top-banner-stack > * {
+    position: relative !important;
+    top: auto !important;
+}
+
+.approved-transcript-deviation-banner {
+    margin: 0;
+    border-left: 0;
+    border-right: 0;
+    border-radius: 0;
+    box-shadow: 0 2px 5px rgba(0,0,0,.16);
+}
+
+.course-box.miae-transcript-mismatch {
+    box-shadow: inset 0 0 0 2px #c0392b, 0 1px 3px rgba(0,0,0,.12);
+}
+.miae-course-discrepancy {
+    display: flex;
+    align-items: flex-start;
+    gap: 5px;
+    margin-top: 5px;
+    padding: 4px 5px;
+    border: 1px solid #e74c3c;
+    border-radius: 4px;
+    background: #fff0f0;
+    color: #b00020;
+    font-size: 9px;
+    line-height: 1.3;
+    font-weight: 600;
+    pointer-events: none;
+}
+.miae-course-discrepancy-x {
+    color: #d00000;
+    font-size: 15px;
+    line-height: 1;
+    font-weight: 900;
+    flex: 0 0 auto;
+}
+.miae-course-discrepancy-text {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.admin-student-link {
+    color: #1f6fb2;
+    font-weight: 700;
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+}
+.admin-student-link:hover,
+.admin-student-link:focus {
+    color: #912338;
+}
+
+.sequence-loaded-banner {
+    background: #2196F3;
+    color: #fff;
+    text-align: center;
+    padding: 9px 14px;
+    font-weight: 800;
+    box-shadow: 0 2px 5px rgba(0,0,0,.15);
+    cursor: pointer;
 }

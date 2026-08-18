@@ -32,6 +32,50 @@ from utils import (
 
 
 # =========================================================
+# TOOL VERSION + DATA FRESHNESS
+# =========================================================
+# APP_VERSION is explicit; the displayed tool date comes from this app.py file
+# modification time on the server, matching the deployment workflow.
+APP_VERSION = "V03.021"
+
+# Baseline dates are used only until System_Metadata has been populated by the
+# corresponding updater. This avoids rerunning past CO-OP/MIAE imports merely
+# to initialize the display. Future successful updater commits replace the
+# relevant value independently.
+DATA_FRESHNESS_FALLBACK = {
+    "COOP_DATA": datetime.date(2026, 8, 10),
+    "MIAE_DATA": datetime.date(2026, 8, 17),
+}
+
+def _format_display_date(value):
+    """Return dates as 'Aug 10, 2026'; tolerate DB/date/string values."""
+    if value is None:
+        return "Not available"
+    d = None
+    if isinstance(value, datetime.datetime):
+        d = value.date()
+    elif isinstance(value, datetime.date):
+        d = value
+    else:
+        raw = str(value or "").strip()
+        if raw:
+            try:
+                d = datetime.datetime.fromisoformat(raw.replace("Z", "+00:00")).date()
+            except Exception:
+                try:
+                    d = datetime.datetime.strptime(raw[:10], "%Y-%m-%d").date()
+                except Exception:
+                    return raw
+    return f"{d.strftime('%b')} {d.day}, {d.year}" if d else "Not available"
+
+def _tool_file_update_date():
+    """Deployment date based on app.py mtime on the running server."""
+    try:
+        return datetime.datetime.fromtimestamp(os.path.getmtime(__file__)).date()
+    except Exception:
+        return datetime.date.today()
+
+# =========================================================
 # STATUS CONSTANTS
 # =========================================================
 STATUS_PENDING_APPROVAL = "PENDING APPROVAL"
@@ -292,6 +336,41 @@ if all(_db_values.values()):
 
 def _require_login():
     return ("student_id" in session) and (engine is not None)
+
+
+def _get_data_freshness_display():
+    """
+    Read independent CO-OP/MIAE successful-update dates from System_Metadata.
+
+    The table is intentionally NOT created by the web application. The updater
+    scripts own it. Until their next successful run, known baseline dates are
+    displayed so no historical updater needs to be rerun.
+    """
+    values = dict(DATA_FRESHNESS_FALLBACK)
+    if engine is not None:
+        try:
+            with engine.connect() as conn:
+                rows = conn.execute(
+                    text(
+                        "SELECT `metadata_key`, `metadata_date` "
+                        "FROM `System_Metadata` "
+                        "WHERE `metadata_key` IN ('COOP_DATA','MIAE_DATA')"
+                    )
+                ).fetchall()
+                for row in rows:
+                    key = str(row[0] or "").strip().upper()
+                    if key in values and row[1] is not None:
+                        values[key] = row[1]
+        except Exception as e:
+            # Normal before the first future updater creates System_Metadata.
+            print(f"ℹ️ System_Metadata unavailable; using freshness baselines: {e}")
+
+    return {
+        "coop_data_date": _format_display_date(values.get("COOP_DATA")),
+        "miae_data_date": _format_display_date(values.get("MIAE_DATA")),
+        "tool_version": APP_VERSION,
+        "tool_update_date": _format_display_date(_tool_file_update_date()),
+    }
 
 
 def _is_power_user():
@@ -1345,6 +1424,8 @@ def planner_page():
                 print(f"⚠ Rules ack check error (non-fatal): {ack_err}")
                 show_rules_popup = False
 
+        freshness = _get_data_freshness_display()
+
         return render_template(
             "planner.html",
             student_id=cur_sid,
@@ -1380,6 +1461,10 @@ def planner_page():
             initial_plan_status=initial_plan_status,
             is_debug=(debug_no_emails == "DEBUG"),
             show_rules_popup=show_rules_popup,
+            coop_data_date=freshness["coop_data_date"],
+            miae_data_date=freshness["miae_data_date"],
+            tool_version=freshness["tool_version"],
+            tool_update_date=freshness["tool_update_date"],
         )
 
     except Exception as e:

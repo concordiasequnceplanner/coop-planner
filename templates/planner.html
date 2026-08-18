@@ -415,7 +415,12 @@
         <hr style="border:none;border-top:2px solid #eee;margin:0 0 6px 0;">
         <div class="drop-zone" id="zone_Unallocated" ondragover="allowDrop(event)" ondrop="drop(event)"></div>
 
-        
+        <!-- Data/tool freshness: replaces the former Errors/Warnings panel. -->
+        <div class="data-freshness-box" aria-label="Planner data freshness">
+            <div><strong>CO-OP data:</strong> {{ coop_data_date }}</div>
+            <div><strong>MIAE data:</strong> {{ miae_data_date }}</div>
+            <div><strong>Tool {{ tool_version }}:</strong> {{ tool_update_date }}</div>
+        </div>
 
     </div><!-- end sidebar -->
 

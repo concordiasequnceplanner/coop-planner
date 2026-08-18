@@ -313,7 +313,7 @@ tr.term-names-row td { border: none !important; }
 #zone_Unallocated {
     flex-grow: 1;
     max-height: none;
-    min-height: 40vh;
+    min-height: 55vh;
     overflow-y: auto;
     border: 2px dashed #3498db !important;
     background: #fff !important;

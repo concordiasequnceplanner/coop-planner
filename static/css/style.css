@@ -1229,3 +1229,25 @@ tr.term-names-row td { border: none !important; }
     font-size:12px;
     line-height:1.55;
 }
+
+/* =========================================================
+   DATA FRESHNESS (V03.021)
+   Reuses the lower-right space formerly occupied by the
+   Errors/Warnings summary. Validation remains local to terms.
+   ========================================================= */
+.data-freshness-box {
+    margin-top: 10px;
+    padding: 8px 10px;
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    background: #fafafa;
+    color: #555;
+    font-size: 11px;
+    line-height: 1.55;
+    flex: 0 0 auto;
+}
+
+.data-freshness-box strong {
+    color: #444;
+    font-weight: 600;
+}

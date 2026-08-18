@@ -12,6 +12,18 @@ function escapeHtml(value) {
     }[ch]));
 }
 
+function studentPlannerUrl(sid) {
+    const studentId = String(sid || '').trim();
+    return `/planner?switch_to=${encodeURIComponent(studentId)}`;
+}
+
+function studentNameLink(name, sid) {
+    const studentId = String(sid || '').trim();
+    const label = escapeHtml(name || studentId || 'Student');
+    if (!studentId) return label;
+    return `<a class="admin-student-link" href="${studentPlannerUrl(studentId)}" target="_blank" rel="noopener" title="Open ${label} in Planner">${label}</a>`;
+}
+
 function toggleAll(source) {
     const checkboxes = document.getElementsByName('studentCheck');
     for (let i = 0; i < checkboxes.length; i++) {
@@ -65,7 +77,7 @@ async function loadCheckData() {
     const deviatedCoursesHeader = document.getElementById('deviatedCoursesHeader');
     const coopProgramHeader = document.getElementById('coopProgramHeader');
     const currentCoursesHeader = document.getElementById('currentCoursesHeader');
-    const showDeviatedCourses = (checkId === '7');
+    const showDeviatedCourses = (checkId === '4');
     const showCoopProgram = (checkId === '6');
     const showCurrentCourses = (checkId === '6');
     deviatedCoursesHeader.style.display = showDeviatedCourses ? '' : 'none';
@@ -106,17 +118,17 @@ async function loadCheckData() {
             // Build deviated courses cell if applicable
             let deviatedCoursesCell = '';
             if (showDeviatedCourses && s.deviated_courses) {
-                deviatedCoursesCell = `<td style="font-size:11px; text-align:left; background:#fff8e1; padding:8px; white-space:pre-wrap; word-wrap:break-word; max-width:400px; overflow-y:auto; max-height:200px; font-family:monospace;">${escapeHtml(s.deviated_courses)}</td>`;
+                deviatedCoursesCell = `<td class="admin-col-deviations"><div class="admin-deviations-scroll">${escapeHtml(s.deviated_courses)}</div></td>`;
             } else if (showDeviatedCourses) {
-                deviatedCoursesCell = '<td></td>';
+                deviatedCoursesCell = '<td class="admin-col-deviations"></td>';
             }
             
             // Build coop program cell if applicable (for Check 6)
             let coopProgramCell = '';
             if (showCoopProgram && s.coop_program) {
-                coopProgramCell = `<td style="font-size:12px; font-weight:bold; color:#16a085; text-align:center;">${escapeHtml(s.coop_program)}</td>`;
+                coopProgramCell = `<td class="admin-col-coop-program">${escapeHtml(s.coop_program)}</td>`;
             } else if (showCoopProgram) {
-                coopProgramCell = '<td></td>';
+                coopProgramCell = '<td class="admin-col-coop-program"></td>';
             }
             
             // Build current courses cell if applicable (for Check 6)
@@ -132,27 +144,27 @@ async function loadCheckData() {
                     return `<span style="display:inline-block; margin:2px 0;">${trimmedCourse}</span>`;
                 }).join('<br>');
                 
-                currentCoursesCell = `<td style="font-size:11px; text-align:left; background:#e8f8f5; padding:8px; max-width:200px; vertical-align:top;">${processedCourses}</td>`;
+                currentCoursesCell = `<td class="admin-col-current-courses"><div class="admin-current-courses-scroll">${processedCourses}</div></td>`;
             } else if (showCurrentCourses) {
-                currentCoursesCell = '<td></td>';
+                currentCoursesCell = '<td class="admin-col-current-courses"></td>';
             }
             
             tr.innerHTML = `
-                <td style="text-align:center;"><input type="checkbox" name="studentCheck" value="${escapeHtml(s.id)}" checked></td>
-                <td style="font-weight:bold; color:#2980b9;">${escapeHtml(s.name)}</td>
-                <td style="font-size:11px;">${escapeHtml(s.program)}</td>
+                <td class="admin-col-select"><input type="checkbox" name="studentCheck" value="${escapeHtml(s.id)}" checked></td>
+                <td class="admin-col-name">${studentNameLink(s.name, s.id)}</td>
+                <td class="admin-col-program">${escapeHtml(s.program)}</td>
                 ${coopProgramCell}
                 ${currentCoursesCell}
-                <td style="font-size:12px;">${escapeHtml(s.email)}</td>
-                <td>${escapeHtml(s.id)}</td>
-                <td style="font-weight:bold; color:#c0392b;">${escapeHtml(s.cgpa)}</td>
-                <td>${escapeHtml(s.cgpa_cr)}</td>
-                <td style="font-weight:bold; color:#e67e22;">${escapeHtml(s.gpa24)}</td>
-                <td>${escapeHtml(s.gpa24_cr)}</td>
-                <td style="font-size:11px; white-space:nowrap; text-align:left;">${String(s.wts || "").split("<br>").map(escapeHtml).join("<br>")}</td>
+                <td class="admin-col-email">${escapeHtml(s.email)}</td>
+                <td class="admin-col-sid">${escapeHtml(s.id)}</td>
+                <td class="admin-col-gpa admin-cgpa">${escapeHtml(s.cgpa)}</td>
+                <td class="admin-col-credits">${escapeHtml(s.cgpa_cr)}</td>
+                <td class="admin-col-gpa admin-gpa24">${escapeHtml(s.gpa24)}</td>
+                <td class="admin-col-credits">${escapeHtml(s.gpa24_cr)}</td>
+                <td class="admin-col-wts">${String(s.wts || "").split("<br>").map(escapeHtml).join("<br>")}</td>
                 ${deviatedCoursesCell}
-                <td style="font-size:11px; text-align:left; background:#f9fff9; padding:8px; white-space:pre-wrap; word-wrap:break-word; max-width:300px; overflow-y:auto; max-height:150px;">${escapeHtml(s.notes_vis)}</td>
-                <td style="font-size:11px; text-align:left; background:#fdf2f2; padding:8px; white-space:pre-wrap; word-wrap:break-word; max-width:300px; overflow-y:auto; max-height:150px;">${escapeHtml(s.notes_invis)}</td>`;
+                <td class="admin-col-notes admin-notes-visible"><div class="admin-notes-scroll">${escapeHtml(s.notes_vis)}</div></td>
+                <td class="admin-col-notes admin-notes-invisible"><div class="admin-notes-scroll">${escapeHtml(s.notes_invis)}</div></td>`;
             tbody.appendChild(tr);
         });
 
@@ -163,6 +175,82 @@ async function loadCheckData() {
         document.getElementById('loadingOverlay').style.display = 'none';
     }
 }
+
+// =========================================================
+// V03.023 — CLICK-TO-SORT ADMIN TABLE
+// =========================================================
+let adminSortHeader = null;
+let adminSortDirection = 'asc';
+
+function adminCellSortValue(cell, sortType) {
+    const raw = String(cell?.innerText || '').trim();
+    if (sortType === 'numeric') {
+        if (!raw || raw.toUpperCase() === 'N/A') return null;
+        const n = Number(raw.replace(/,/g, ''));
+        return Number.isFinite(n) ? n : null;
+    }
+    return raw.toLocaleLowerCase();
+}
+
+function sortAdminTableByHeader(th) {
+    const table = document.getElementById('resultsTable');
+    const tbody = document.getElementById('studentsTableBody');
+    if (!table || !tbody || !th) return;
+
+    // Rows only contain the optional Check 4/6 cells when those headers are
+    // visible, so calculate the index among VISIBLE headers, not all <th>s.
+    const headers = Array.from(th.parentElement.children);
+    const visibleHeaders = headers.filter(h => window.getComputedStyle(h).display !== 'none');
+    const columnIndex = visibleHeaders.indexOf(th);
+    if (columnIndex < 0) return;
+
+    if (adminSortHeader === th) {
+        adminSortDirection = adminSortDirection === 'asc' ? 'desc' : 'asc';
+    } else {
+        adminSortHeader = th;
+        adminSortDirection = 'asc';
+    }
+
+    document.querySelectorAll('#resultsTable thead th.admin-sortable').forEach(h => {
+        h.classList.remove('sort-asc', 'sort-desc');
+        h.removeAttribute('aria-sort');
+    });
+    th.classList.add(adminSortDirection === 'asc' ? 'sort-asc' : 'sort-desc');
+    th.setAttribute('aria-sort', adminSortDirection === 'asc' ? 'ascending' : 'descending');
+
+    const sortType = th.dataset.sortType || 'text';
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    rows.sort((a, b) => {
+        const av = adminCellSortValue(a.children[columnIndex], sortType);
+        const bv = adminCellSortValue(b.children[columnIndex], sortType);
+
+        // Empty/N/A values always go to the bottom, regardless of direction.
+        if (av === null || av === '') return (bv === null || bv === '') ? 0 : 1;
+        if (bv === null || bv === '') return -1;
+
+        let cmp = 0;
+        if (sortType === 'numeric') cmp = av - bv;
+        else cmp = String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: 'base' });
+        return adminSortDirection === 'asc' ? cmp : -cmp;
+    });
+    rows.forEach(row => tbody.appendChild(row));
+}
+
+function initAdminTableSorting() {
+    document.querySelectorAll('#resultsTable thead th.admin-sortable').forEach(th => {
+        th.tabIndex = 0;
+        th.title = 'Click to sort ascending/descending';
+        th.addEventListener('click', () => sortAdminTableByHeader(th));
+        th.addEventListener('keydown', ev => {
+            if (ev.key === 'Enter' || ev.key === ' ') {
+                ev.preventDefault();
+                sortAdminTableByHeader(th);
+            }
+        });
+    });
+}
+
+document.addEventListener('DOMContentLoaded', initAdminTableSorting);
 
 async function sendBulkEmails() {
     const selected = document.querySelector('input[name="checkOption"]:checked');
@@ -258,6 +346,16 @@ async function sendBulkEmails() {
 // =========================================================
 // CHECK 7: Students Needing WT Attention
 // =========================================================
+window.openCheck7Student = function(sid, event) {
+    if (event) {
+        const tag = String(event.target?.tagName || '').toUpperCase();
+        if (tag === 'INPUT' || tag === 'BUTTON' || tag === 'A') return;
+    }
+    const studentId = String(sid || '').trim();
+    if (!studentId) return;
+    window.open(`/planner?switch_to=${encodeURIComponent(studentId)}`, '_blank', 'noopener');
+};
+
 async function runCheck7() {
     document.getElementById('loadingOverlay').style.display = 'flex';
     document.getElementById('check7Results').style.display = 'none';
@@ -280,7 +378,7 @@ async function runCheck7() {
         const students = data.students || [];
         const summary = document.createElement('div');
         summary.style.cssText = 'font-weight:bold; color:#2c3e50; margin-bottom:10px;';
-        summary.innerHTML = `🔍 Found <span style="color:#912338;">${students.length}</span> student${students.length !== 1 ? 's' : ''} with 2 or 3 WTs in the future, no approved sequence`;
+        summary.innerHTML = `🔍 Found <span style="color:#912338;">${students.length}</span> student${students.length !== 1 ? 's' : ''} with at least 1 WT remaining and no approved sequence`;
         resultsEl.appendChild(summary);
 
         if (students.length === 0) {
@@ -313,10 +411,10 @@ async function runCheck7() {
                 const seqStatus = s.seq_status || 'NONE';
                 const seqColor = seqStatus === 'NONE' ? '#e74c3c' : seqStatus === 'DRAFT' ? '#e67e22' : seqStatus === 'PENDING' ? '#2980b9' : seqStatus === 'REWORK' ? '#8e44ad' : '#888';
                 const tdS = 'padding:4px 10px;border-bottom:1px solid #eee;';
-                html += `<tr style="background:${bg};">
-                    <td style="${tdS}"><input type="checkbox" name="studentCheck" value="${escapeHtml(s.sid)}" checked></td>
-                    <td style="${tdS}color:#2980b9;font-weight:bold;cursor:pointer;" onclick="window.open('/planner?switch_to=${encodeURIComponent(s.sid)}','_blank')">${escapeHtml(s.sid)}</td>
-                    <td style="${tdS}">${escapeHtml(s.name)}</td>
+                html += `<tr style="background:${bg};cursor:pointer;" title="Open this student in the Planner" onclick="window.openCheck7Student('${escapeHtml(s.sid)}', event)">
+                    <td style="${tdS}"><input type="checkbox" name="studentCheck" value="${escapeHtml(s.sid)}" checked onclick="event.stopPropagation()"></td>
+                    <td style="${tdS}color:#2980b9;font-weight:bold;">${escapeHtml(s.sid)}</td>
+                    <td style="${tdS}color:#2980b9;font-weight:600;">${studentNameLink(s.name, s.sid)}</td>
                     <td style="${tdS}font-size:11px;">${escapeHtml(s.email || '')}</td>
                     <td style="${tdS}">${escapeHtml(s.gpa24 || '-')}</td>
                     <td style="${tdS}">${escapeHtml(s.cgpa || '-')}</td>

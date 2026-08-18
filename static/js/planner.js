@@ -744,6 +744,9 @@ document.addEventListener("DOMContentLoaded", () => {
             div.dataset.displayId = normDisplayId(displayId);
             div.dataset.grade    = gradeValue;
             div.dataset.transcriptState = isLockedTaken ? 'locked-graded' : 'floating-ungraded';
+            div.dataset.transcriptTerm = `${c.year} ${c.season}`;
+            const _approvedTerms = approvedTermsForCourse(displayId);
+            if (_approvedTerms.length) div.dataset.approvedTerm = _approvedTerms.join(' / ');
 
             // A graded transcript course is genuinely locked: the browser must not
             // start a drag operation for it. Ungraded transcript courses remain movable.
@@ -1151,6 +1154,7 @@ document.addEventListener("DOMContentLoaded", () => {
             });
         })();
 
+        if (window.refreshMiaeTranscriptDiscrepancies) window.refreshMiaeTranscriptDiscrepancies();
         if (window.validateGrid) window.validateGrid();
     };
 
@@ -1258,10 +1262,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Load notes + apply initial loaded plan (if any)
     if (window.loadNotes) window.loadNotes();
+    window.renderApprovedTranscriptDeviationBanner?.();
     if (window.APP_CONFIG && window.APP_CONFIG.initialPlan) {
         try {
             const ip = window.APP_CONFIG.initialPlan;
             const obj = (typeof ip === 'string') ? JSON.parse(ip) : ip;
+            const dev = approvedTranscriptDeviationInfo();
+            if (String(window.APP_CONFIG.initialPlanStatus || '').toUpperCase() === 'APPROVED'
+                && String(window.APP_CONFIG.initialPlanId || '') === String(dev.approved_id || '')
+                && dev.has_deviation) {
+                obj._approvedDeviationMode = true;
+            }
             window.applyLoadedPlan(obj);
             window.setLoadedSequenceContext?.(
                 window.APP_CONFIG.initialPlanId,
@@ -2045,9 +2056,17 @@ document.addEventListener("DOMContentLoaded", () => {
                 const item = await apiJson(`/api/sequence/get/${encodeURIComponent(seq.id)}`);
                 console.log('[AUTOLOAD] Received plan data:', item.plan ? 'YES' : 'NO', item.plan ? `(${Object.keys(item.plan).length} keys)` : '');
                 
+                let loadedApprovedDeviationMode = false;
                 if (item.plan) {
                     item.plan.reason_code = item.reason_code;
                     item.plan.justification = item.justification;
+                    const dev = item.approved_transcript_deviation || approvedTranscriptDeviationInfo();
+                    if (dev && typeof dev === 'object') {
+                        window.APP_CONFIG.approvedTranscriptDeviation = dev;
+                        window.renderApprovedTranscriptDeviationBanner?.(dev);
+                    }
+                    loadedApprovedDeviationMode = !!item.is_latest_approved && !!dev?.has_deviation;
+                    if (loadedApprovedDeviationMode) item.plan._approvedDeviationMode = true;
                     window.applyLoadedPlan(item.plan);
                     window.setLoadedSequenceContext?.(seq.id, item.status || seq.status || '');
                 } else {
@@ -2057,15 +2076,25 @@ document.addEventListener("DOMContentLoaded", () => {
                 // Hide spinner
                 hideSpinner();
                 
-                // Show success banner
-                const banner = document.createElement('div');
-                banner.id = 'debugBanner';
-                banner.style.cssText = 'position:fixed;top:10px;left:50%;transform:translateX(-50%);background:#2196F3;color:white;padding:12px 24px;border-radius:6px;z-index:10000;font-weight:bold;box-shadow:0 4px 8px rgba(0,0,0,0.2);';
-                banner.textContent = `Sequence loaded: ${seq.name} - ${seq.type.toUpperCase()}`;
-                document.body.appendChild(banner);
-                
-                // Remove banner on first click anywhere
-                document.addEventListener('click', () => banner.remove(), { once: true });
+                // V03_025: always confirm what sequence was loaded.  The blue load
+                // bar and the orange MIAE discrepancy bar are intentionally separate
+                // and stack without covering one another.
+                {
+                    const oldBanner = document.getElementById('sequenceLoadedBanner');
+                    if (oldBanner) oldBanner.remove();
+                    const banner = document.createElement('div');
+                    banner.id = 'sequenceLoadedBanner';
+                    banner.className = 'sequence-loaded-banner';
+                    banner.textContent = `Sequence loaded: ${seq.name} - ${seq.type.toUpperCase()}`;
+                    const stack = document.getElementById('plannerTopBannerStack');
+                    if (stack) {
+                        const orange = document.getElementById('approvedTranscriptDeviationBanner');
+                        stack.insertBefore(banner, orange || null);
+                    } else {
+                        document.body.appendChild(banner);
+                    }
+                    banner.addEventListener('click', () => banner.remove(), { once: true });
+                }
             } else {
                 console.log('[AUTOLOAD] No auto_load_sequence found in response');
             }
@@ -5104,12 +5133,174 @@ function currentIssues() {
     return Array.isArray(window.latestIssues) ? window.latestIssues : [];
 }
 
+// =========================================================
+// V03_025 — DYNAMIC MIAE TRANSCRIPT PLACEMENT CHECK
+// =========================================================
+function approvedTranscriptDeviationInfo() {
+    const info = window.APP_CONFIG?.approvedTranscriptDeviation;
+    return (info && typeof info === 'object')
+        ? info
+        : { has_deviation: false, items: [], approved_terms: {} };
+}
+
+function academicLabelFromZoneId(zoneId) {
+    const zid = String(zoneId || '');
+    if (zid === 'zone_Y0') return 'Year 0';
+    if (zid === 'zone_Unallocated') return 'Unallocated';
+    const m = zid.match(/^zone_(\d{4}-\d{4})_(Summer|Fall|Winter)$/);
+    return m ? `${m[1]} ${m[2]}` : '';
+}
+
+function approvedTermsForCourse(displayId) {
+    const key = normDisplayId(displayId).replace(/_REP\d*$/i, '');
+    const map = approvedTranscriptDeviationInfo().approved_terms || {};
+    const raw = map[key];
+    if (Array.isArray(raw)) return raw.map(String).filter(Boolean);
+    if (raw) return [String(raw)];
+    return [];
+}
+
+function removeMiaeCourseMarker(box) {
+    if (!box) return;
+    box.classList.remove('miae-transcript-mismatch');
+    box.querySelectorAll(':scope > .miae-course-discrepancy').forEach(el => el.remove());
+}
+
+function addMiaeCourseMarker(box, approvedTerm, transcriptTerm) {
+    if (!box) return;
+    removeMiaeCourseMarker(box);
+    box.classList.add('miae-transcript-mismatch');
+    const marker = document.createElement('div');
+    marker.className = 'miae-course-discrepancy';
+    marker.innerHTML = `
+        <span class="miae-course-discrepancy-x">✕</span>
+        <span class="miae-course-discrepancy-text"><b>Approved:</b> ${escapeHtml(approvedTerm || '—')}<br><b>Transcript:</b> ${escapeHtml(transcriptTerm || '—')}</span>`;
+    box.appendChild(marker);
+}
+
+function historicalGradedDeviationRows() {
+    const info = approvedTranscriptDeviationInfo();
+    const items = Array.isArray(info.items) ? info.items : [];
+    return items
+        .filter(item => String(item?.grade || '').trim() !== '')
+        .map(item => ({
+            kind: 'historical',
+            course: normDisplayId(item?.course || ''),
+            approved: String(item?.approved_term || ''),
+            transcript: String(item?.transcript_term || ''),
+            grade: String(item?.grade || '').trim(),
+            current: String(item?.transcript_term || '')
+        }));
+}
+
+window.refreshMiaeTranscriptDiscrepancies = function() {
+    const banner = document.getElementById('approvedTranscriptDeviationBanner');
+    const itemsEl = document.getElementById('approvedTranscriptDeviationItems');
+    if (!banner || !itemsEl) return;
+
+    const dynamicRows = [];
+
+    // Transcript course boxes carry originalZone/transcriptTerm from placeCourses().
+    // Graded academic courses are locked and therefore remain in their transcript
+    // term. Ungraded registrations remain movable, but any move away from the MIAE
+    // term is marked immediately on the course card and in the orange banner.
+    document.querySelectorAll('.course-box[data-transcript-state]').forEach(box => {
+        if (box.classList.contains('wt')) {
+            removeMiaeCourseMarker(box);
+            return; // WT placement has its own CO-OP logic.
+        }
+
+        const transcriptZone = String(box.dataset.originalZone || '');
+        const currentZone = String(box.parentElement?.id || '');
+        const transcriptTerm = String(box.dataset.transcriptTerm || academicLabelFromZoneId(transcriptZone) || '');
+        const displayId = normDisplayId(box.dataset.displayId || box.dataset.courseId || '');
+        if (!displayId || !transcriptZone || !currentZone) {
+            removeMiaeCourseMarker(box);
+            return;
+        }
+
+        const approvedTerms = approvedTermsForCourse(displayId);
+        const approvedTerm = approvedTerms.length
+            ? approvedTerms.join(' / ')
+            : 'Not in last approved sequence';
+        box.dataset.approvedTerm = approvedTerm;
+
+        if (currentZone === transcriptZone) {
+            removeMiaeCourseMarker(box);
+            return;
+        }
+
+        addMiaeCourseMarker(box, approvedTerm, transcriptTerm);
+        dynamicRows.push({
+            kind: 'current',
+            key: box.id || `${displayId}|${transcriptTerm}`,
+            course: displayId,
+            approved: approvedTerm,
+            transcript: transcriptTerm,
+            current: academicLabelFromZoneId(currentZone) || currentZone,
+            grade: String(box.dataset.grade || '').trim()
+        });
+    });
+
+    // A graded course that was historically approved in another term is already
+    // auto-positioned in the transcript term and locked. Keep that historical fact
+    // visible in the orange banner even though it does not receive a red X.
+    const rows = [...historicalGradedDeviationRows(), ...dynamicRows];
+    const deduped = [];
+    const seen = new Set();
+    rows.forEach(row => {
+        const key = `${row.kind}|${row.course}|${row.approved}|${row.transcript}|${row.current}|${row.grade}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        deduped.push(row);
+    });
+
+    if (!deduped.length) {
+        banner.style.display = 'none';
+        itemsEl.innerHTML = '';
+        return;
+    }
+
+    const titleEl = banner.querySelector('.approved-transcript-deviation-title');
+    if (titleEl) {
+        titleEl.textContent = dynamicRows.length
+            ? '⚠ MIAE transcript placement differences — review the marked courses before submitting.'
+            : '⚠ Latest MIAE data differs from the last approved sequence.';
+    }
+
+    itemsEl.innerHTML = deduped.map(row => {
+        const course = escapeHtml(row.course || '');
+        const approved = escapeHtml(row.approved || '—');
+        const transcript = escapeHtml(row.transcript || '—');
+        const current = escapeHtml(row.current || '—');
+        const grade = String(row.grade || '').trim();
+        const gradeSuffix = grade ? ` (${escapeHtml(grade)})` : '';
+
+        if (row.kind === 'historical') {
+            return `<div class="approved-transcript-deviation-item">${course}: Approved <b>${approved}</b> → MIAE transcript <b>${transcript}</b>${gradeSuffix}</div>`;
+        }
+        if (String(row.current || '') === String(row.approved || '')) {
+            return `<div class="approved-transcript-deviation-item">${course}: Approved <b>${approved}</b> → MIAE transcript <b>${transcript}</b>${gradeSuffix}</div>`;
+        }
+        return `<div class="approved-transcript-deviation-item">${course}: Approved <b>${approved}</b> · MIAE transcript <b>${transcript}</b>${gradeSuffix} · Planner now <b>${current}</b></div>`;
+    }).join('');
+    banner.style.display = '';
+};
+
+// Backward-compatible name used by existing load/initialization paths.
+window.renderApprovedTranscriptDeviationBanner = function() {
+    window.refreshMiaeTranscriptDiscrepancies?.();
+};
+
 window.applyLoadedPlan = function(planObj) {
     console.log('[applyLoadedPlan] CALLED with planObj:', planObj ? 'YES' : 'NO', planObj ? `(keys: ${Object.keys(planObj).length})` : '');
     if (!planObj) {
         console.log('[applyLoadedPlan] ABORT: planObj is null/undefined');
         return;
     }
+
+    const approvedDeviationModeRequested =
+        planObj._approvedDeviationMode === true && approvedTranscriptDeviationInfo().has_deviation;
 
     // =========================================================
     // COMPATIBILITY: detect old format (zone-based dict without 'version')
@@ -5180,6 +5371,13 @@ window.applyLoadedPlan = function(planObj) {
 
         planObj = converted;
     }
+
+    // V03_025: always restore the loaded sequence exactly as saved.  Transcript
+    // differences are now a VISUAL/DYNAMIC layer only.  Graded transcript courses
+    // remain locked in their true transcript term because the placement loop below
+    // never moves course-taken boxes; ungraded courses may be moved but receive a
+    // red marker whenever their current term differs from the MIAE transcript.
+    window._approvedDeviationModeActive = !!approvedDeviationModeRequested;
 
     // Restore settings first (without triggering onchange events)
     const startYearEl = document.getElementById('startYear');
@@ -5323,7 +5521,7 @@ window.applyLoadedPlan = function(planObj) {
         const box = (p.boxKey && boxIdMap.get(String(p.boxKey))) || boxMap.get(normDisplayId(p.displayId));
         const zone = document.getElementById(p.zoneId);
         if (!box || !zone) return;
-        // Don't move taken courses
+        // Don't move taken courses: graded transcript reality always wins.
         if (box.classList.contains('course-taken')) return;
 
         zone.appendChild(box);
@@ -5634,6 +5832,14 @@ window.loadPlan = async function() {
         if (!item.plan) { hideSpinner(); alert('Selected sequence has no plan data.'); return; }
         item.plan.reason_code = item.reason_code;
         item.plan.justification = item.justification;
+        const dev = item.approved_transcript_deviation || approvedTranscriptDeviationInfo();
+        if (dev && typeof dev === 'object') {
+            window.APP_CONFIG.approvedTranscriptDeviation = dev;
+            window.renderApprovedTranscriptDeviationBanner?.(dev);
+        }
+        if (item.is_latest_approved && dev?.has_deviation) {
+            item.plan._approvedDeviationMode = true;
+        }
         
         sessionStorage.setItem('_skipAutoLoad', '1');
         window.applyLoadedPlan(item.plan);

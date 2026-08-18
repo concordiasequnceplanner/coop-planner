@@ -712,8 +712,31 @@ document.addEventListener("DOMContentLoaded", () => {
             //   no grade       -> floating / movable
             // This deliberately replaces the previous "current Summer only" exception.
             const gradeValue = c.grade == null ? '' : String(c.grade).trim();
-            const isLockedTaken = gradeValue !== '';
+
+            // V03_017 — FUTURE WT SAFETY.
+            // A transcript/registration row can already contain a non-blank status in
+            // GRADE for a FUTURE CWTE/WILE/WT registration.  That status must not make
+            // the planned Work Term immutable.  Otherwise loading an APPROVED sequence
+            // cannot restore WT1/WT2/WT3 to its approved future term (the box remains
+            // stuck in the registration term because applyLoadedPlan() never moves a
+            // course-taken box).
+            //
+            // Keep the normal source-of-truth rule everywhere else:
+            //   academic course with grade -> locked
+            //   past/current WT with grade -> locked
+            //   FUTURE WT / WT alias        -> movable, even if GRADE is non-blank
+            const seasonRankForLock = { Summer: 1, Fall: 2, Winter: 3 };
+            const transcriptYearStart = parseInt(String(c.year || '').split('-')[0], 10);
+            const transcriptTermOrd = (Number.isFinite(transcriptYearStart) ? transcriptYearStart : -9999) * 10
+                + (seasonRankForLock[c.season] || 0);
+            const currentTermOrd = currentAcaYearStart * 10 + (seasonRankForLock[currentSeason] || 0);
+            const isFutureWtRegistration = isWtDisplay && transcriptTermOrd > currentTermOrd;
+
+            const isLockedTaken = gradeValue !== '' && !isFutureWtRegistration;
             const isFloatingTranscriptCourse = !isLockedTaken;
+            if (isFutureWtRegistration && gradeValue !== '') {
+                div.dataset.futureWtGradeIgnoredForLock = 'true';
+            }
 
             div.className        = `course-box ${borderClass} ${isWtDisplay ? 'wt' : ''} ${isCvteWt ? 'wt-alias' : ''} ${isLockedTaken ? 'course-taken' : 'floating-transcript-course movable-current-term'}`;
             div.dataset.credit   = isWt ? 0 : c.credit;
@@ -897,7 +920,7 @@ document.addEventListener("DOMContentLoaded", () => {
                         const div = document.createElement('div');
                         div.className = `term-restriction-warning ${r.isError ? 'warning-yes' : 'warning-no'}`;
                         div.style.whiteSpace = 'pre-line';
-                        div.textContent = r.isError ? `▶ ${r.text}` : r.text;
+                        div.textContent = (r.isError || r.severity === 'warning') ? `▶ ${r.text}` : r.text;
                         restContainer.appendChild(div);
                     });
                 }
@@ -1724,17 +1747,20 @@ document.addEventListener("DOMContentLoaded", () => {
             if (!match) return;
 
             const warningCol = String(r['WARNING'] || '').trim().toUpperCase();
+            const restrictionCourseNorm = String(r['Course'] || '').replace(/\s/g, '').toUpperCase();
             // Business rule for planner validation:
             //   WARNING=YES (or blank, legacy default) -> ERROR
-            //   WARNING=NO/FYI                    -> FYI only
-            const isFyi = warningCol === 'NO' || warningCol === 'FYI';
-            const isError = !isFyi;
-            const severity = isError ? 'error' : 'fyi';
+            //   WARNING=NO/FYI                         -> FYI only
+            // Exception requested for MIAE383: its sequence-compliance message is
+            // advisory and must remain a WARNING, never a blocking ERROR.
+            const forceWarning = restrictionCourseNorm === 'MIAE383';
+            const isFyi = !forceWarning && (warningCol === 'NO' || warningCol === 'FYI');
+            const isError = !forceWarning && !isFyi;
+            const isWarning = forceWarning;
+            const severity = isError ? 'error' : isWarning ? 'warning' : 'fyi';
             const text = String(r['Restriction'] || 'Restriction applies');
 
-            // Keep isWarning as a backward-compatible alias used by the existing
-            // term-header CSS path; its meaning is now "blocking/error".
-            results.push({ text, severity, isError, isWarning: isError, isFyi });
+            results.push({ text, severity, isError, isWarning, isFyi });
         });
 
         return results;
@@ -4003,15 +4029,14 @@ window.validateGrid = function() {
         if (distEl) distEl.remove();
     });
     // Also clear the term-level validation summaries. They are rebuilt below
-    // from the same validation results used for the course cards/right panel.
+    // from the same validation results used for the course cards and term summaries.
     document.querySelectorAll('.term-validation-container').forEach(el => {
         el.innerHTML = '';
         el.style.display = 'none';
     });
 
     // Collect all issues across all boxes; apply badges at end. zoneId/termLevel
-    // allow every term-specific ERROR to be mirrored into the affected term while
-    // keeping the detailed right-side panel as the canonical full issue list.
+    // allow every term-specific issue to be mirrored into the affected term.
     const allIssues = []; // { courseId, msg, sev, zoneId?, termLevel? }
     const boxIssues = new Map(); // box element → [{msg, sev, zoneId?, termMsg?}]
 
@@ -4094,6 +4119,18 @@ window.validateGrid = function() {
         const boxes     = Array.from(zone.children).filter(c => c.classList.contains('course-box'));
         const wtBoxes   = boxes.filter(b => b.classList.contains('wt'));
         const realBoxes = boxes.filter(b => !b.classList.contains('wt') && !b.classList.contains('course-taken'));
+
+        // A Work Term with exactly ONE academic course is allowed with approval,
+        // but should produce ONE warning at the term level only (not duplicated
+        // inside the WT card and the academic-course card). More than one academic
+        // course remains a blocking ERROR through the existing per-course checks.
+        if (wtBoxes.length > 0 && realBoxes.length === 1) {
+            addTermIssue(
+                zone.id,
+                'You may take a maximum of one course during your internship term. You must obtain approval of your sequence from your Academic Director and written permission from your employer. The course must not interfere with the internship or conflict with normal business hours. Students are responsible for their coursework; employers are not obligated to adjust work schedules, and professors are not obligated to grant accommodations.',
+                'warning'
+            );
+        }
 
         boxes.forEach(box => {
             if (box.classList.contains('course-taken')) {
@@ -4195,11 +4232,6 @@ window.validateGrid = function() {
                 issues.push({ msg: 'Too many courses in a Work Term', sev: 'error' });
             }
             
-            // Check 4b: Warning when exactly 1 course is taken during WT
-            if (!box.classList.contains('wt') && wtBoxes.length > 0 && realBoxes.length === 1) {
-                issues.push({ msg: 'You may take a maximum of one course during your internship term. You must obtain approval of your sequence from your Academic Director and written permission from your employer. The course must not interfere with the internship or conflict with normal business hours. Students are responsible for their coursework; employers are not obligated to adjust work schedules, and professors are not obligated to grant accommodations.', sev: 'warning' });
-            }
-
             // Check 5: Capstone (490) cannot be in a WT term
             if (cid.includes('490') && wtBoxes.length > 0) {
                 issues.push({ msg: 'Capstone (490) cannot be in a Work Term', sev: 'error' });
@@ -4496,11 +4528,11 @@ window.validateGrid = function() {
             const yearStr = yearMatch ? yearMatch[1] : '';
             const restrictions = window.checkRestrictions(zid, season, yearStr);
             restrictions.forEach(r => {
-                if (!r.isError) return;
+                if (!r.isError && r.severity !== 'warning') return;
                 const key = `${zid}|${r.text}`;
                 if (seenTermRestrictions.has(key)) return;
                 seenTermRestrictions.add(key);
-                addTermIssue(zid, r.text, 'error');
+                addTermIssue(zid, r.text, r.isError ? 'error' : 'warning');
             });
         });
         
@@ -4879,8 +4911,7 @@ window.validateGrid = function() {
     boxIssues.forEach((issues, box) => addWarningBadge(box, issues));
 
     // Mirror course-level validation into the affected TERM as well.
-    // The detailed right-side panel remains unchanged; this gives an immediate
-    // visual explanation at the top of the term where the problem occurs.
+    // Show the validation directly at the top of the affected term.
     (function renderTermValidationSummaries() {
         const byZone = new Map(); // zoneId -> Map(dedupKey, {msg, sev})
 
@@ -4975,40 +5006,10 @@ window.validateGrid = function() {
         }
     })();
 
-    // Update error panel
-    const epBox   = document.getElementById('errPanel');
-    const title   = document.getElementById('errPanelTitle');
-    const panel   = document.getElementById('errPanelBody');
-    if (epBox && title && panel) {
-        panel.innerHTML = '';
-        const errCount  = allIssues.filter(i => i.sev === 'error').length;
-        const warnCount = allIssues.filter(i => i.sev === 'warning').length;
-        const fyi       = allIssues.filter(i => i.sev === 'fyi').length;
-        window.latestIssues = allIssues;
-
-        if (allIssues.length === 0) {
-            epBox.style.display = 'none';
-            panel.classList.remove('ep-open');
-        } else {
-            epBox.style.display = '';
-            panel.classList.add('ep-open');
-            const total = allIssues.length;
-            const parts = [];
-            if (errCount > 0)  parts.push(`<span style="color:#c0392b; font-weight:bold;">${errCount} Error${errCount > 1 ? 's' : ''}</span>`);
-            if (warnCount > 0) parts.push(`<span style="color:#2980b9; font-weight:bold;">${warnCount} Warning${warnCount > 1 ? 's' : ''}</span>`);
-            if (fyi > 0)       parts.push(`<span style="color:#7f8c8d;">${fyi} FYI</span>`);
-            title.innerHTML = `⚠ ${total} (${parts.join(', ')})`;
-
-            // Show ALL issues in the body (expandable)
-            allIssues.forEach(({ courseId, msg, sev }) => {
-                const item = document.createElement('div');
-                item.className = `ep-item ${sev === 'error' ? 'ep-error' : sev === 'fyi' ? 'ep-fyi' : 'ep-warning'}`;
-                item.style.whiteSpace = 'pre-line';
-                item.innerText = courseId ? `${courseId}: ${msg}` : msg;
-                panel.appendChild(item);
-            });
-        }
-    }
+    // Keep the complete validation result for submission/justification logic,
+    // but do NOT render the old duplicate Errors/Warnings panel in the right sidebar.
+    // Validation is shown directly in the affected term/course, where it is actionable.
+    window.latestIssues = allIssues;
 
     // Update student message format in justification textarea
     if (window.buildStudentMessage) window.buildStudentMessage();

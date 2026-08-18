@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <title>Academic Planner - Concordia MIAE</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=V03_025">
 </head>
 <body>
 
@@ -12,6 +12,7 @@
     <div id="spinnerMsg" style="color:#555;font-size:15px;font-weight:600;">Loading…</div>
 </div>
 
+<div id="plannerTopBannerStack" class="planner-top-banner-stack">
 {% if is_debug %}
 <div style="background:#ff0000;color:#fff;text-align:center;padding:6px 0;font-weight:900;font-size:14px;letter-spacing:2px;position:sticky;top:0;z-index:9999;">
     ⚠ DEBUG MODE — emails redirected to debug address ⚠
@@ -37,8 +38,16 @@
 </div>
 {% endif %}
 
-<div id="acsdBanner" style="display:none;background:#8e44ad;color:#fff;text-align:center;padding:10px 0;font-weight:900;font-size:16px;letter-spacing:1px;position:sticky;top:{% if is_withdrawn %}{% if is_debug %}66px{% else %}46px{% endif %}{% elif is_debug %}20px{% else %}0{% endif %};z-index:9997;">
+<!-- V03_025: dynamic MIAE transcript placement differences.
+     JS fills the item list; this remains visible until the sequence is corrected. -->
+<div id="approvedTranscriptDeviationBanner" class="approved-transcript-deviation-banner" style="display:none;">
+    <div class="approved-transcript-deviation-title">⚠ MIAE transcript placement differences — review the marked courses before submitting.</div>
+    <div id="approvedTranscriptDeviationItems" class="approved-transcript-deviation-items"></div>
+</div>
+
+<div id="acsdBanner" style="display:none;background:#8e44ad;color:#fff;text-align:center;padding:10px 0;font-weight:900;font-size:16px;letter-spacing:1px;">
     ℹ️ ACSD REGISTERED — Reduced credit load approved
+</div>
 </div>
 
 <div class="header-box">
@@ -466,10 +475,11 @@
         showEmailPolicyBanner: {{ show_email_policy_banner | tojson }},
         initialPlan: {{ (initial_plan if initial_plan else none) | tojson }},
         initialPlanId: {{ (initial_plan_id if initial_plan_id else none) | tojson }},
-        initialPlanStatus: {{ (initial_plan_status if initial_plan_status else none) | tojson }}
+        initialPlanStatus: {{ (initial_plan_status if initial_plan_status else none) | tojson }},
+        approvedTranscriptDeviation: {{ (approved_transcript_deviation or {}) | tojson }}
     };
 </script>
-<script src="{{ url_for('static', filename='js/planner.js') }}"></script>
+<script src="{{ url_for('static', filename='js/planner.js') }}?v=V03_025"></script>
 <script>
     // Auto-resize textareas to fit content
     (function() {

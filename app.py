@@ -1976,7 +1976,7 @@ def api_sequence_save():
                 except Exception as ne:
                     print(f"⚠ Could not fetch Public_comments for PENDING email: {ne}")
 
-                subject_line = f"Sequence submitted for approval - {student_display_name} ({target_sid}) - {program_from_db}"
+                subject_line = f"Sequence submitted for approval - {student_display_name} ({target_sid})"
                 html_body = render_sequence_email(
                     mode="PENDING",
                     student_email=student_email_addr,
@@ -3705,7 +3705,7 @@ def api_admin_approve():
             if reason_snippet:
                 reason_snippet = reason_snippet[:27] + "..."
 
-            subject = f"Approved sequence for {student_name} {target_sid} {program_from_db}"
+            subject = f"Approved sequence for {student_name} {target_sid}"
             if reason_snippet:
                 subject += f" — {reason_snippet}"
             html_body = render_sequence_email(

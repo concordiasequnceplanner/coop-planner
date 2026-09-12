@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 96" role="img" aria-labelledby="t">
+<title id="t">Bombardier</title>
+<g fill="#111">
+  <path d="M18 18h54l18 10-18 10H36z"/>
+  <path d="M28 39h44l18 10-18 10H46z"/>
+  <path d="M46 60h26l18 10-18 10H28z"/>
+</g>
+<text x="110" y="64" font-family="Georgia, 'Times New Roman', serif" font-size="50" font-weight="700" fill="#111">Bombardier</text>
+</svg>

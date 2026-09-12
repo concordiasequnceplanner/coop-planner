@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 180" role="img" aria-labelledby="title desc">
+  <title id="title">Continuing education icon</title>
+  <desc id="desc">Certificate and circular arrows representing ongoing professional learning.</desc>
+  <rect x="32" y="24" width="112" height="132" rx="12" fill="#ffffff" stroke="#0f6a24" stroke-width="6"/>
+  <path d="M60 58h56M60 80h56M60 102h34" stroke="#0f6a24" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="94" cy="126" r="18" fill="#eef6f0" stroke="#0f6a24" stroke-width="6"/>
+  <path d="M84 126l7 7 14-17" fill="none" stroke="#0f6a24" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M161 58c15 3 26 17 26 34" fill="none" stroke="#18324d" stroke-width="6" stroke-linecap="round"/>
+  <path d="M178 49l16 11-18 8" fill="#18324d"/>
+  <path d="M187 122c-4 13-16 23-30 26" fill="none" stroke="#18324d" stroke-width="6" stroke-linecap="round"/>
+  <path d="M171 151l-18 7 5-19" fill="#18324d"/>
+</svg>

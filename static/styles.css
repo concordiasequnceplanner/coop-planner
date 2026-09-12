@@ -51,6 +51,9 @@ a:hover{text-decoration:none}
 .social-strip .inner{max-width:1080px;margin:auto;display:flex;gap:18px;align-items:center;justify-content:space-between;flex-wrap:wrap}
 .social-strip strong{font-size:1.02rem}
 .social-strip span{opacity:.84;font-size:.92rem}
+.social-strip-copy{display:flex;align-items:center;gap:12px}
+.social-linkedin-icon{width:36px;height:36px;object-fit:contain;flex:0 0 36px}
+
 .container{max-width:1080px;margin:0 auto;padding:58px 24px 76px}
 .section{margin-bottom:56px}
 .section:last-child{margin-bottom:0}

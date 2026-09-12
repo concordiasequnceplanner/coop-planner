@@ -26,6 +26,8 @@ SRE_PAGES = {
     "professional-development-en.html",
     "professional-development-fr.html",
     "sre_montreal-en.html",
+    "sponsorships-en.html",
+    "sponsorships-fr.html",
     "technical-areas-en.html",
     "technical-areas-fr.html",
 }

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 90" role="img" aria-labelledby="t d">
+<title id="t">IREQ affiliation</title><desc id="d">Institut de recherche d’Hydro-Québec</desc>
+<rect x="1" y="1" width="318" height="88" rx="12" fill="#fff" stroke="#dce4e9"/>
+<rect x="18" y="18" width="8" height="54" rx="4" fill="#f59b23"/>
+<text x="42" y="47" font-family="Arial, Helvetica, sans-serif" font-size="31" font-weight="700" fill="#123b6d">IREQ</text>
+<text x="42" y="68" font-family="Arial, Helvetica, sans-serif" font-size="13" fill="#536477">Institut de recherche d’Hydro-Québec</text>
+</svg>

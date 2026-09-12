@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">Chapter leadership</title>
+  <desc id="desc">A board table surrounded by directors</desc>
+  <g fill="none" stroke="#0f6a24" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <ellipse cx="32" cy="34" rx="18" ry="10" fill="#eef6f0"/>
+    <circle cx="32" cy="8" r="4" fill="#0f6a24"/>
+    <path d="M25 18c2-5 12-5 14 0"/>
+    <circle cx="11" cy="22" r="4" fill="#0f6a24"/>
+    <path d="M4 32c2-5 12-5 14 0"/>
+    <circle cx="53" cy="22" r="4" fill="#0f6a24"/>
+    <path d="M46 32c2-5 12-5 14 0"/>
+    <circle cx="18" cy="53" r="4" fill="#0f6a24"/>
+    <path d="M11 63c2-5 12-5 14 0"/>
+    <circle cx="46" cy="53" r="4" fill="#0f6a24"/>
+    <path d="M39 63c2-5 12-5 14 0"/>
+    <path d="M24 34h16M32 29v10" opacity=".75"/>
+  </g>
+</svg>

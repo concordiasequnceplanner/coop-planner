@@ -1,0 +1,64 @@
+SRE Montréal v34 — route fix for the existing Flask app
+
+WHY THE HOME PAGE WORKED BUT THE OTHER PAGES RETURNED 404
+---------------------------------------------------------
+The existing application already has a Flask route for:
+
+    /SRE_MONTREAL
+
+but files inside templates/ are NOT public URLs by themselves. Therefore a link
+such as "mission-fr.html" from /SRE_MONTREAL was resolved by the browser as:
+
+    /mission-fr.html
+
+and Flask had no route for it.
+
+WHAT v34 CHANGES
+----------------
+1. Every SRE internal link now uses the /SRE_MONTREAL prefix, for example:
+
+    /SRE_MONTREAL/mission-fr.html
+    /SRE_MONTREAL/membership-fr.html
+    /SRE_MONTREAL/contact-en.html
+
+2. The included sre_routes.py adds a safe allow-listed Flask route for those
+   secondary pages.
+
+ONE REQUIRED SERVER-SIDE CHANGE
+-------------------------------
+Copy sre_routes.py to the repository root (next to the Python file that creates
+Flask's app object).
+
+Then, immediately after the Flask app object exists, add:
+
+    from sre_routes import register_sre_routes
+    register_sre_routes(app)
+
+Keep your existing /SRE_MONTREAL route. It should continue rendering:
+
+    sre_montreal.html
+
+Do not put the SRE HTML files in static/. They remain in templates/.
+CSS and images remain in static/ exactly as in v33.
+
+EXPECTED PUBLIC URLS
+--------------------
+French home:
+    https://www.sremontreal.org/SRE_MONTREAL
+
+French Mission:
+    https://www.sremontreal.org/SRE_MONTREAL/mission-fr.html
+
+English home:
+    https://www.sremontreal.org/SRE_MONTREAL/sre_montreal-en.html
+
+English Mission:
+    https://www.sremontreal.org/SRE_MONTREAL/mission-en.html
+
+GoDaddy can keep forwarding sremontreal.org to /SRE_MONTREAL.
+
+IMPORTANT
+---------
+If your main Flask application file does not expose an object named `app`, send
+that Python file and the two-line registration can be placed exactly where it
+belongs. Do not guess by replacing the existing application file.

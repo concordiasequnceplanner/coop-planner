@@ -3,7 +3,8 @@ import re
 import json
 import datetime
 import secrets
-
+from sre_routes import register_sre_routes
+register_sre_routes(app)
 
 import pandas as pd
 import pymysql  # needed for mysql+pymysql SQLAlchemy dialect

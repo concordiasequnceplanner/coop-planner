@@ -4,7 +4,6 @@ import json
 import datetime
 import secrets
 from sre_routes import register_sre_routes
-register_sre_routes(app)
 
 import pandas as pd
 import pymysql  # needed for mysql+pymysql SQLAlchemy dialect
@@ -243,6 +242,10 @@ if str(os.environ.get("SESSION_COOKIE_SECURE", "")).strip().lower() in {"1", "tr
 @app.route("/SRE_MONTREAL")
 def sre_montreal_page():
     return render_template("sre_montreal.html")
+
+
+# Register the secondary public SRE Montréal pages only after the Flask app exists.
+register_sre_routes(app)
 
 
 # =========================================================
@@ -4386,4 +4389,3 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     debug_mode = str(os.environ.get("FLASK_DEBUG", "")).strip().lower() in {"1", "true", "yes", "on"}
     app.run(host="0.0.0.0", port=port, debug=debug_mode)
-

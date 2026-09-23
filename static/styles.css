@@ -177,7 +177,6 @@ a:hover{text-decoration:none}
 .contact-page h1{font-size:clamp(2.8rem,6vw,4.3rem)}
 .contact-page p{max-width:760px}
 .section-label.with-mark.contact-label{font-size:clamp(1.9rem,3.8vw,2.65rem);letter-spacing:.08em;margin-bottom:18px;line-height:1.12}
-.contact-section-title{font-size:clamp(2rem,4.2vw,3rem);margin:0 0 18px;color:var(--navy)}
 .section-label.with-mark.contact-label .section-mark{width:48px;height:48px;flex:0 0 48px}
 .section-label.with-mark.contact-label .section-mark.leadership-mark{object-fit:contain}
 
@@ -224,3 +223,5 @@ html[lang="fr"] body{padding-bottom:112px}
 .legal-content .legal-card p+p{margin-top:8px}
 .legal-content h2{max-width:800px}
 @media(max-width:760px){.legal-content{padding-top:42px}.footer-mini{font-size:.78em}}
+
+.price-grid.single-membership{grid-template-columns:minmax(0,640px);justify-content:start}

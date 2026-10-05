@@ -5,8 +5,12 @@ This module serves only the secondary public SRE pages beneath that prefix.
 """
 
 from flask import abort, render_template
+import base64
+import datetime
+import html
 import json
 import os
+import re
 import urllib.parse
 import urllib.request
 
@@ -44,22 +48,158 @@ MEMBERS_JSON_SHARE_URL = os.environ.get(
     "https://1drv.ms/u/c/55a11f37d9971d4c/IQAPeW2Ff4qIR5dMBFkGVspQAYR-XcSMZxskecCJXM_av-g?e=nyBVV0",
 )
 
-def _members_json_download_url():
-    parts = urllib.parse.urlsplit(MEMBERS_JSON_SHARE_URL)
+# Known current OneDrive-resolved item. This is only a fallback candidate; the
+# short public sharing URL above remains the primary source and can be replaced
+# with SRE_MEMBERS_JSON_URL without changing code.
+MEMBERS_JSON_ONEDRIVE_RESID = os.environ.get(
+    "SRE_MEMBERS_JSON_RESID",
+    "55A11F37D9971D4C!s856d790f8a7f4788974c04590656ca50",
+)
+
+MEMBERS_JSON_FALLBACK_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "static",
+    "data",
+    "sre-members-public.json",
+)
+
+
+def _share_url_with_download(url):
+    parts = urllib.parse.urlsplit(url)
     query = urllib.parse.parse_qs(parts.query, keep_blank_values=True)
     query["download"] = ["1"]
-    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, urllib.parse.urlencode(query, doseq=True), parts.fragment))
+    return urllib.parse.urlunsplit(
+        (
+            parts.scheme,
+            parts.netloc,
+            parts.path,
+            urllib.parse.urlencode(query, doseq=True),
+            parts.fragment,
+        )
+    )
+
+
+def _encoded_onedrive_share_url(url):
+    """Return Microsoft's u! base64url encoding for a public sharing URL."""
+    encoded = base64.urlsafe_b64encode(url.encode("utf-8")).decode("ascii").rstrip("=")
+    return "u!" + encoded
+
+
+def _members_json_candidate_urls():
+    """Return public OneDrive download candidates, safest/most direct first."""
+    candidates = []
+
+    direct = os.environ.get("SRE_MEMBERS_JSON_DIRECT_URL", "").strip()
+    if direct:
+        candidates.append(direct)
+
+    share = MEMBERS_JSON_SHARE_URL.strip()
+    if share:
+        # Current OneDrive public share URLs sometimes honor download=1 directly.
+        candidates.append(_share_url_with_download(share))
+
+        # Legacy/public shares endpoint. It still works for some OneDrive links;
+        # if Microsoft rejects it we simply move to the next candidate.
+        encoded = _encoded_onedrive_share_url(share)
+        candidates.append(f"https://api.onedrive.com/v1.0/shares/{encoded}/root/content")
+
+    resid = MEMBERS_JSON_ONEDRIVE_RESID.strip()
+    if resid:
+        # Direct content pattern used by personal OneDrive. The public share
+        # permission is still required; no credentials are embedded here.
+        candidates.append(
+            "https://onedrive.live.com/download?" +
+            urllib.parse.urlencode({"resid": resid, "download": "1"})
+        )
+
+    # Keep order but remove duplicates.
+    seen = set()
+    unique = []
+    for url in candidates:
+        if url and url not in seen:
+            unique.append(url)
+            seen.add(url)
+    return unique
+
+
+def _decode_embedded_download_url(text):
+    """Extract a direct download URL when OneDrive returned an HTML/JS page."""
+    patterns = (
+        r'"@microsoft\.graph\.downloadUrl"\s*:\s*"([^"]+)"',
+        r'"@content\.downloadUrl"\s*:\s*"([^"]+)"',
+        r'"downloadUrl"\s*:\s*"([^"]+)"',
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        value = match.group(1)
+        try:
+            # Decode JSON/JavaScript escapes such as https:\/\/...
+            value = json.loads('"' + value.replace('"', '\\"') + '"')
+        except Exception:
+            value = value.replace(r"\/", "/").replace(r"\u0026", "&")
+        value = html.unescape(value)
+        if value.lower().startswith(("https://", "http://")):
+            return value
+    return None
+
+
+def _fetch_json_from_url(url, allow_embedded_url=True):
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 SRE-Montreal-Members/2.0",
+            "Accept": "application/json,text/plain,*/*",
+            "Cache-Control": "no-cache",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=8) as response:
+        raw = response.read(2_000_000)
+
+    text = raw.decode("utf-8-sig", errors="replace").strip()
+    if not text:
+        raise ValueError("empty response")
+
+    # Fast path: actual JSON.
+    if text.startswith("{") or text.startswith("["):
+        return json.loads(text)
+
+    # Some OneDrive links return an HTML shell containing a temporary direct
+    # download URL. Follow it once when available.
+    if allow_embedded_url:
+        direct = _decode_embedded_download_url(text)
+        if direct:
+            return _fetch_json_from_url(direct, allow_embedded_url=False)
+
+    raise ValueError("response was not JSON")
+
+
+def _load_members_json_data():
+    errors = []
+
+    for url in _members_json_candidate_urls():
+        try:
+            return _fetch_json_from_url(url), "remote"
+        except Exception as exc:
+            errors.append(f"{url}: {exc}")
+
+    # Local snapshot keeps the public directory usable if OneDrive temporarily
+    # changes its public-download behavior. The remote source is always tried
+    # first, so normal automatic updates still win when available.
+    try:
+        with open(MEMBERS_JSON_FALLBACK_FILE, "r", encoding="utf-8-sig") as fh:
+            return json.load(fh), "fallback"
+    except Exception as exc:
+        errors.append(f"local fallback: {exc}")
+
+    raise RuntimeError(" | ".join(errors) if errors else "members JSON unavailable")
+
 
 def _load_public_members():
-    current_year = __import__("datetime").date.today().year
+    current_year = datetime.date.today().year
     try:
-        req = urllib.request.Request(
-            _members_json_download_url(),
-            headers={"User-Agent": "Mozilla/5.0 SRE-Montreal-Members/1.0"},
-        )
-        with urllib.request.urlopen(req, timeout=10) as response:
-            raw = response.read()
-        data = json.loads(raw.decode("utf-8-sig"))
+        data, source = _load_members_json_data()
         rows = []
         for item in data.get("members", []):
             name = str(item.get("name", "")).strip()
@@ -72,18 +212,34 @@ def _load_public_members():
                 sponsored = max(0, int(item.get("students_sponsored", 0) or 0))
             except (TypeError, ValueError):
                 sponsored = 0
-            rows.append({
-                "name": name,
-                "company": str(item.get("company", "")).strip(),
-                "linkedin": linkedin,
-                "membership_type": str(item.get("membership_type", "")).strip(),
-                "students_sponsored": sponsored,
-            })
+            rows.append(
+                {
+                    "name": name,
+                    "company": str(item.get("company", "")).strip(),
+                    "linkedin": linkedin,
+                    "membership_type": str(item.get("membership_type", "")).strip(),
+                    "students_sponsored": sponsored,
+                }
+            )
+
         rows.sort(key=lambda m: (-m["students_sponsored"], m["name"].casefold()))
+
+        try:
+            places = max(0, int(data.get("student_places_available", 0) or 0))
+        except (TypeError, ValueError):
+            places = 0
+        try:
+            year = int(data.get("membership_year", current_year) or current_year)
+        except (TypeError, ValueError):
+            year = current_year
+
+        if source == "fallback":
+            print("SRE members JSON: OneDrive unavailable; serving bundled fallback snapshot.")
+
         return {
             "members": rows,
-            "student_places_available": max(0, int(data.get("student_places_available", 0) or 0)),
-            "membership_year": int(data.get("membership_year", current_year) or current_year),
+            "student_places_available": places,
+            "membership_year": year,
             "data_error": False,
         }
     except Exception as exc:

@@ -225,3 +225,30 @@ html[lang="fr"] body{padding-bottom:112px}
 @media(max-width:760px){.legal-content{padding-top:42px}.footer-mini{font-size:.78em}}
 
 .price-grid.single-membership{grid-template-columns:minmax(0,640px);justify-content:start}
+
+
+/* v41: memberships, public members, and 2026 event recap */
+.price-grid.membership-three{grid-template-columns:repeat(3,1fr)}
+.sponsor-handshake{display:block;width:76px;height:58px;object-fit:contain;object-position:left center;margin:0 0 10px}
+.compact-actions{margin-top:16px}
+.event-feature-card{padding:0;overflow:hidden}
+.event-feature-card h3,.event-feature-card p,.event-feature-card .small-note{margin-left:24px;margin-right:24px}
+.event-feature-card .small-note{margin-bottom:24px}
+.event-poster-thumb{display:block;width:100%;height:225px;object-fit:cover;object-position:top center;border-bottom:1px solid var(--line)}
+.event-schedule-image{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}
+.event-materials .card p{font-weight:750;color:var(--green)}
+.org-sponsor-strip{display:block;width:100%;height:auto;margin:22px 0;border-radius:12px;background:#fff;border:1px solid var(--line)}
+.thanks-columns{display:grid;grid-template-columns:1.5fr 1fr;gap:18px;margin-top:18px}
+.linkedin-thanks{margin-top:20px;padding:22px;border-radius:14px;background:var(--soft);border:1px solid #cee2d3;display:flex;align-items:center;gap:15px;flex-wrap:wrap}
+.linkedin-thanks strong{color:var(--navy);font-size:1.08rem}.linkedin-thanks span{color:var(--muted);flex:1 1 360px}
+.student-support-banner{display:grid;grid-template-columns:1.4fr .6fr;gap:28px;align-items:center;background:white;border:1px solid var(--line);border-radius:18px;padding:30px;box-shadow:var(--shadow)}
+.student-places-box{text-align:center;background:var(--soft);border:1px solid #cee2d3;border-radius:16px;padding:25px}
+.student-places-box .number{font-size:3.25rem;font-weight:950;line-height:1;color:var(--green)}
+.student-places-box .label{font-weight:850;color:var(--navy);margin-top:8px;line-height:1.25}.student-places-box .small{font-size:.8rem;color:var(--muted);margin-top:8px}
+.member-directory{margin-top:22px;border:1px solid var(--line);border-radius:16px;overflow:hidden;background:#fff}
+.member-row{display:grid;grid-template-columns:1fr auto;gap:24px;align-items:center;padding:18px 22px;border-bottom:1px solid var(--line)}
+.member-row:last-child{border-bottom:0}.member-name-line{display:flex;align-items:center;gap:9px;flex-wrap:wrap;color:var(--navy);font-size:1.08rem}.member-company{color:var(--muted);margin-top:3px;font-size:.92rem}
+.member-meta{display:flex;align-items:center;gap:14px;justify-content:flex-end;flex-wrap:wrap}.member-type{display:inline-block;border-radius:999px;background:#eef3f7;color:var(--navy);padding:6px 10px;font-size:.78rem;font-weight:800}
+.sponsor-icons{display:inline-flex;align-items:center;gap:2px}.sponsor-icons img{width:31px;height:24px;object-fit:contain}.member-order-note{margin-top:14px}
+@media(max-width:900px){.price-grid.membership-three{grid-template-columns:1fr 1fr}.student-support-banner{grid-template-columns:1fr}.thanks-columns{grid-template-columns:1fr}}
+@media(max-width:760px){.price-grid.membership-three{grid-template-columns:1fr}.member-row{grid-template-columns:1fr}.member-meta{justify-content:flex-start}.event-poster-thumb{height:165px}}

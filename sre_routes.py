@@ -11,6 +11,7 @@ import html
 import json
 import os
 import re
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -154,7 +155,18 @@ def _decode_embedded_download_url(text):
     return None
 
 
-def _fetch_json_from_url(url, allow_embedded_url=True):
+def _download_with_debug(url):
+    """Download exactly what the server receives and retain it for on-page diagnostics."""
+    record = {
+        "requested_url": url,
+        "final_url": "",
+        "status": "",
+        "content_type": "",
+        "bytes_read": 0,
+        "body": "",
+        "error": "",
+    }
+
     req = urllib.request.Request(
         url,
         headers={
@@ -163,50 +175,100 @@ def _fetch_json_from_url(url, allow_embedded_url=True):
             "Cache-Control": "no-cache",
         },
     )
-    with urllib.request.urlopen(req, timeout=8) as response:
-        raw = response.read(2_000_000)
 
-    text = raw.decode("utf-8-sig", errors="replace").strip()
-    if not text:
+    try:
+        with urllib.request.urlopen(req, timeout=8) as response:
+            raw = response.read(2_000_000)
+            record["final_url"] = response.geturl()
+            record["status"] = getattr(response, "status", "") or response.getcode()
+            record["content_type"] = response.headers.get("Content-Type", "")
+            record["bytes_read"] = len(raw)
+            record["body"] = raw.decode("utf-8-sig", errors="replace")
+            return record["body"], record
+
+    except urllib.error.HTTPError as exc:
+        try:
+            raw = exc.read(2_000_000)
+        except Exception:
+            raw = b""
+        record["final_url"] = exc.geturl() or url
+        record["status"] = exc.code
+        record["content_type"] = exc.headers.get("Content-Type", "") if exc.headers else ""
+        record["bytes_read"] = len(raw)
+        record["body"] = raw.decode("utf-8-sig", errors="replace")
+        record["error"] = repr(exc)
+        raise RuntimeError(record)
+
+    except Exception as exc:
+        record["error"] = repr(exc)
+        raise RuntimeError(record)
+
+
+def _fetch_json_from_url(url, allow_embedded_url=True, debug_attempts=None):
+    if debug_attempts is None:
+        debug_attempts = []
+
+    try:
+        text, record = _download_with_debug(url)
+        debug_attempts.append(record)
+    except RuntimeError as exc:
+        payload = exc.args[0] if exc.args else None
+        if isinstance(payload, dict):
+            debug_attempts.append(payload)
+        raise
+
+    stripped = text.strip()
+    if not stripped:
         raise ValueError("empty response")
 
-    # Fast path: actual JSON.
-    if text.startswith("{") or text.startswith("["):
-        return json.loads(text), text
+    if stripped.startswith("{") or stripped.startswith("["):
+        return json.loads(stripped), stripped
 
-    # Some OneDrive links return an HTML shell containing a temporary direct
-    # download URL. Follow it once when available.
+    # If OneDrive returned a viewer page, preserve that exact HTML above,
+    # then follow an embedded direct URL once if one is present.
     if allow_embedded_url:
         direct = _decode_embedded_download_url(text)
         if direct:
-            return _fetch_json_from_url(direct, allow_embedded_url=False)
+            return _fetch_json_from_url(
+                direct,
+                allow_embedded_url=False,
+                debug_attempts=debug_attempts,
+            )
 
     raise ValueError("response was not JSON")
 
 
 def _load_members_json_data():
     errors = []
+    debug_attempts = []
 
     for url in _members_json_candidate_urls():
         try:
-            data, raw_text = _fetch_json_from_url(url)
-            return data, "OneDrive live", raw_text
+            data, raw_text = _fetch_json_from_url(
+                url,
+                debug_attempts=debug_attempts,
+            )
+            return data, "OneDrive live", raw_text, debug_attempts, errors
         except Exception as exc:
             errors.append(f"{url}: {exc}")
 
+    # Keep fallback behavior for the public directory, but diagnostics above
+    # still show the exact OneDrive responses that failed.
     try:
         with open(MEMBERS_JSON_FALLBACK_FILE, "r", encoding="utf-8-sig") as fh:
             raw_text = fh.read().strip()
-        return json.loads(raw_text), "Bundled fallback", raw_text
+        return json.loads(raw_text), "Bundled fallback", raw_text, debug_attempts, errors
     except Exception as exc:
         errors.append(f"local fallback: {exc}")
 
-    raise RuntimeError(" | ".join(errors) if errors else "members JSON unavailable")
+    return None, "No usable JSON", "", debug_attempts, errors
 
 def _load_public_members():
     current_year = datetime.date.today().year
+    data, source, raw_text, fetch_debug, fetch_errors = _load_members_json_data()
     try:
-        data, source, raw_text = _load_members_json_data()
+        if data is None:
+            raise RuntimeError("No usable JSON source")
         rows = []
         for item in data.get("members", []):
             name = str(item.get("name", "")).strip()
@@ -254,6 +316,8 @@ def _load_public_members():
             "student_memberships_used_cumulative": data.get("student_memberships_used_cumulative", 0),
             "received_member_count": len(data.get("members", [])),
             "raw_json": raw_text,
+            "fetch_debug": fetch_debug,
+            "fetch_errors": fetch_errors,
         }
     except Exception as exc:
         print(f"SRE members JSON unavailable: {exc}")
@@ -268,6 +332,8 @@ def _load_public_members():
             "student_memberships_used_cumulative": None,
             "received_member_count": 0,
             "raw_json": "",
+            "fetch_debug": fetch_debug,
+            "fetch_errors": fetch_errors,
         }
 
 

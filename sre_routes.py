@@ -45,7 +45,16 @@ SRE_PAGES = {
 
 MEMBERS_JSON_SHARE_URL = os.environ.get(
     "SRE_MEMBERS_JSON_URL",
-    "https://1drv.ms/u/c/55a11f37d9971d4c/IQAPeW2Ff4qIR5dMBFkGVspQAYR-XcSMZxskecCJXM_av-g?e=nyBVV0",
+    "https://1drv.ms/u/c/55a11f37d9971d4c/IQAPeW2Ff4qIR5dMBFkGVspQAYR-XcSMZxskecCJXM_av-g?e=pyAkcT",
+)
+
+# Direct public OneDrive download URL copied from the file's Download action.
+# This is tried first because it points to the JSON content rather than the
+# OneDrive web viewer. It is path-based, so Excel can keep overwriting the same
+# sre-members-public.json file without changing this URL.
+MEMBERS_JSON_DIRECT_URL = os.environ.get(
+    "SRE_MEMBERS_JSON_DIRECT_URL",
+    "https://onedrive.live.com/personal/55a11f37d9971d4c/_layouts/15/download.aspx?SourceUrl=%2Fpersonal%2F55a11f37d9971d4c%2FDocuments%2F%21%203%2E%20SRE%20Montreal%2FMembership%2Fsre%2Dmembers%2Dpublic%2Ejson",
 )
 
 # Known current OneDrive-resolved item. This is only a fallback candidate; the
@@ -89,7 +98,7 @@ def _members_json_candidate_urls():
     """Return public OneDrive download candidates, safest/most direct first."""
     candidates = []
 
-    direct = os.environ.get("SRE_MEMBERS_JSON_DIRECT_URL", "").strip()
+    direct = MEMBERS_JSON_DIRECT_URL.strip()
     if direct:
         candidates.append(direct)
 

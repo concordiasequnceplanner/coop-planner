@@ -172,7 +172,7 @@ def _fetch_json_from_url(url, allow_embedded_url=True):
 
     # Fast path: actual JSON.
     if text.startswith("{") or text.startswith("["):
-        return json.loads(text)
+        return json.loads(text), text
 
     # Some OneDrive links return an HTML shell containing a temporary direct
     # download URL. Follow it once when available.
@@ -189,26 +189,24 @@ def _load_members_json_data():
 
     for url in _members_json_candidate_urls():
         try:
-            return _fetch_json_from_url(url), "remote"
+            data, raw_text = _fetch_json_from_url(url)
+            return data, "OneDrive live", raw_text
         except Exception as exc:
             errors.append(f"{url}: {exc}")
 
-    # Local snapshot keeps the public directory usable if OneDrive temporarily
-    # changes its public-download behavior. The remote source is always tried
-    # first, so normal automatic updates still win when available.
     try:
         with open(MEMBERS_JSON_FALLBACK_FILE, "r", encoding="utf-8-sig") as fh:
-            return json.load(fh), "fallback"
+            raw_text = fh.read().strip()
+        return json.loads(raw_text), "Bundled fallback", raw_text
     except Exception as exc:
         errors.append(f"local fallback: {exc}")
 
     raise RuntimeError(" | ".join(errors) if errors else "members JSON unavailable")
 
-
 def _load_public_members():
     current_year = datetime.date.today().year
     try:
-        data, source = _load_members_json_data()
+        data, source, raw_text = _load_members_json_data()
         rows = []
         for item in data.get("members", []):
             name = str(item.get("name", "")).strip()
@@ -250,6 +248,12 @@ def _load_public_members():
             "student_places_available": places,
             "membership_year": year,
             "data_error": False,
+            "data_source": source,
+            "generated_at": str(data.get("generated_at", "")).strip(),
+            "student_places_created_cumulative": data.get("student_places_created_cumulative", 0),
+            "student_memberships_used_cumulative": data.get("student_memberships_used_cumulative", 0),
+            "received_member_count": len(data.get("members", [])),
+            "raw_json": raw_text,
         }
     except Exception as exc:
         print(f"SRE members JSON unavailable: {exc}")
@@ -258,6 +262,12 @@ def _load_public_members():
             "student_places_available": None,
             "membership_year": current_year,
             "data_error": True,
+            "data_source": "No JSON received",
+            "generated_at": "",
+            "student_places_created_cumulative": None,
+            "student_memberships_used_cumulative": None,
+            "received_member_count": 0,
+            "raw_json": "",
         }
 
 

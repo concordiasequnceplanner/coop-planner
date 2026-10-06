@@ -252,3 +252,13 @@ html[lang="fr"] body{padding-bottom:112px}
 .sponsor-icons{display:inline-flex;align-items:center;gap:2px}.sponsor-icons img{width:31px;height:24px;object-fit:contain}.member-order-note{margin-top:14px}
 @media(max-width:900px){.price-grid.membership-three{grid-template-columns:1fr 1fr}.student-support-banner{grid-template-columns:1fr}.thanks-columns{grid-template-columns:1fr}}
 @media(max-width:760px){.price-grid.membership-three{grid-template-columns:1fr}.member-row{grid-template-columns:1fr}.member-meta{justify-content:flex-start}.event-poster-thumb{height:165px}}
+
+/* Members live-data diagnostic window */
+.members-data-window{margin-top:22px;margin-bottom:16px;border:1px solid #cbd7e1;border-radius:16px;background:#fff;overflow:hidden;box-shadow:0 8px 24px rgba(15,36,56,.06)}
+.members-data-window-head{display:flex;justify-content:space-between;gap:18px;align-items:center;padding:13px 16px;background:#eef6f0;border-bottom:1px solid #d9e6dc;color:var(--navy)}
+.members-data-window-head span{font-size:.78rem;font-weight:800;color:var(--green);text-transform:uppercase;letter-spacing:.06em}
+.members-data-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 18px;padding:14px 16px;border-bottom:1px solid #e5ebef;font-size:.86rem;color:#4f6172}
+.members-data-summary b{color:var(--navy)}
+.members-data-json{margin:0;padding:16px;max-height:300px;overflow:auto;background:#f7f9fb;color:#243342;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word}
+.members-data-empty{padding:18px 16px;color:#8a3d33;background:#fff8f6}
+@media(max-width:760px){.members-data-window-head{align-items:flex-start;flex-direction:column;gap:5px}.members-data-summary{grid-template-columns:1fr}.members-data-json{font-size:11px}}

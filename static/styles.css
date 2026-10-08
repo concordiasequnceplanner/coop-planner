@@ -284,3 +284,10 @@ html[lang="fr"] body{padding-bottom:112px}
   color:var(--navy);
 }
 .student-place-how strong{color:var(--green);}
+
+/* Live Word document used by News / Nouvelles */
+.news-document-actions{display:flex;justify-content:flex-end;margin-bottom:14px}
+.news-document-frame-wrap{width:100%;min-height:900px;border:1px solid #d7e0e6;border-radius:16px;overflow:hidden;background:#fff;box-shadow:0 10px 28px rgba(15,36,56,.08)}
+.news-document-frame{display:block;width:100%;height:1100px;border:0;background:#fff}
+.news-document-fallback{margin-top:12px}
+@media(max-width:760px){.news-document-frame-wrap{min-height:720px}.news-document-frame{height:850px}.news-document-actions{justify-content:flex-start}}

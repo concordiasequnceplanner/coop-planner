@@ -8,6 +8,7 @@ from flask import abort, render_template
 import base64
 import datetime
 import html
+import http.cookiejar
 import json
 import os
 import re
@@ -155,7 +156,7 @@ def _decode_embedded_download_url(text):
     return None
 
 
-def _download_with_debug(url):
+def _download_with_debug(url, opener=None):
     """Download exactly what the server receives and retain it for on-page diagnostics."""
     record = {
         "requested_url": url,
@@ -170,14 +171,20 @@ def _download_with_debug(url):
     req = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "Mozilla/5.0 SRE-Montreal-Members/2.0",
-            "Accept": "application/json,text/plain,*/*",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) "
+                          "Chrome/141.0 Safari/537.36",
+            "Accept": "application/json,text/plain,text/html,*/*",
+            "Accept-Language": "en-US,en;q=0.9",
             "Cache-Control": "no-cache",
         },
     )
 
+    if opener is None:
+        opener = urllib.request.build_opener()
+
     try:
-        with urllib.request.urlopen(req, timeout=8) as response:
+        with opener.open(req, timeout=10) as response:
             raw = response.read(2_000_000)
             record["final_url"] = response.geturl()
             record["status"] = getattr(response, "status", "") or response.getcode()
@@ -204,12 +211,17 @@ def _download_with_debug(url):
         raise RuntimeError(record)
 
 
-def _fetch_json_from_url(url, allow_embedded_url=True, debug_attempts=None):
+def _fetch_json_from_url(
+    url,
+    allow_embedded_url=True,
+    debug_attempts=None,
+    opener=None,
+):
     if debug_attempts is None:
         debug_attempts = []
 
     try:
-        text, record = _download_with_debug(url)
+        body, record = _download_with_debug(url, opener=opener)
         debug_attempts.append(record)
     except RuntimeError as exc:
         payload = exc.args[0] if exc.args else None
@@ -217,22 +229,21 @@ def _fetch_json_from_url(url, allow_embedded_url=True, debug_attempts=None):
             debug_attempts.append(payload)
         raise
 
-    stripped = text.strip()
+    stripped = body.strip()
     if not stripped:
         raise ValueError("empty response")
 
     if stripped.startswith("{") or stripped.startswith("["):
         return json.loads(stripped), stripped
 
-    # If OneDrive returned a viewer page, preserve that exact HTML above,
-    # then follow an embedded direct URL once if one is present.
     if allow_embedded_url:
-        direct = _decode_embedded_download_url(text)
+        direct = _decode_embedded_download_url(body)
         if direct:
             return _fetch_json_from_url(
                 direct,
                 allow_embedded_url=False,
                 debug_attempts=debug_attempts,
+                opener=opener,
             )
 
     raise ValueError("response was not JSON")
@@ -242,7 +253,74 @@ def _load_members_json_data():
     errors = []
     debug_attempts = []
 
+    # Reproduce what works in an Incognito browser: first visit the public
+    # share link to establish Microsoft's anonymous session cookies, then ask
+    # for the download URL using the SAME cookie jar.
+    try:
+        cookie_jar = http.cookiejar.CookieJar()
+        opener = urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(cookie_jar)
+        )
+
+        share_body, share_record = _download_with_debug(
+            MEMBERS_JSON_SHARE_URL,
+            opener=opener,
+        )
+        share_record["debug_label"] = "1. Public share bootstrap (anonymous session)"
+        debug_attempts.append(share_record)
+
+        stripped_share = share_body.strip()
+        if stripped_share.startswith("{") or stripped_share.startswith("["):
+            return (
+                json.loads(stripped_share),
+                "OneDrive live — public share",
+                stripped_share,
+                debug_attempts,
+                errors,
+            )
+
+        direct_body, direct_record = _download_with_debug(
+            MEMBERS_JSON_DIRECT_URL,
+            opener=opener,
+        )
+        direct_record["debug_label"] = "2. Direct download using share-session cookies"
+        debug_attempts.append(direct_record)
+
+        stripped_direct = direct_body.strip()
+        if stripped_direct.startswith("{") or stripped_direct.startswith("["):
+            return (
+                json.loads(stripped_direct),
+                "OneDrive live — anonymous share session",
+                stripped_direct,
+                debug_attempts,
+                errors,
+            )
+
+        embedded = _decode_embedded_download_url(share_body)
+        if embedded:
+            data, raw_text = _fetch_json_from_url(
+                embedded,
+                allow_embedded_url=False,
+                debug_attempts=debug_attempts,
+                opener=opener,
+            )
+            return (
+                data,
+                "OneDrive live — embedded download",
+                raw_text,
+                debug_attempts,
+                errors,
+            )
+
+        errors.append("Anonymous share-session flow completed, but download response was not JSON.")
+
+    except Exception as exc:
+        errors.append(f"anonymous share-session flow: {exc}")
+
+    # Keep the remaining historical candidates only as diagnostics/fallbacks.
     for url in _members_json_candidate_urls():
+        if url in {MEMBERS_JSON_DIRECT_URL, MEMBERS_JSON_SHARE_URL}:
+            continue
         try:
             data, raw_text = _fetch_json_from_url(
                 url,
@@ -252,12 +330,16 @@ def _load_members_json_data():
         except Exception as exc:
             errors.append(f"{url}: {exc}")
 
-    # Keep fallback behavior for the public directory, but diagnostics above
-    # still show the exact OneDrive responses that failed.
     try:
         with open(MEMBERS_JSON_FALLBACK_FILE, "r", encoding="utf-8-sig") as fh:
             raw_text = fh.read().strip()
-        return json.loads(raw_text), "Bundled fallback", raw_text, debug_attempts, errors
+        return (
+            json.loads(raw_text),
+            "Bundled fallback",
+            raw_text,
+            debug_attempts,
+            errors,
+        )
     except Exception as exc:
         errors.append(f"local fallback: {exc}")
 

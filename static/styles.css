@@ -274,3 +274,13 @@ html[lang="fr"] body{padding-bottom:112px}
 .members-debug-errors summary{cursor:pointer;font-weight:800}
 .members-debug-errors pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.75rem;margin-top:10px}
 @media(max-width:760px){.members-debug-meta{grid-template-columns:1fr}}
+
+.student-place-how{
+  margin-top:10px;
+  padding-top:10px;
+  border-top:1px solid rgba(15,111,36,.16);
+  font-size:.88rem;
+  line-height:1.4;
+  color:var(--navy);
+}
+.student-place-how strong{color:var(--green);}

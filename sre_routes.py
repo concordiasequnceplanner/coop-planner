@@ -28,6 +28,8 @@ SRE_PAGES = {
     "membership-terms-en.html",
     "members-en.html",
     "members-fr.html",
+    "news-en.html",
+    "news-fr.html",
     "mission-en.html",
     "mission-fr.html",
     "october-2-2026-en.html",

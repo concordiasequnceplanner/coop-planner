@@ -291,3 +291,27 @@ html[lang="fr"] body{padding-bottom:112px}
 .news-document-frame{display:block;width:100%;height:1100px;border:0;background:#fff}
 .news-document-fallback{margin-top:12px}
 @media(max-width:760px){.news-document-frame-wrap{min-height:720px}.news-document-frame{height:850px}.news-document-actions{justify-content:flex-start}}
+
+
+/* Mobile navigation — compact hamburger menu */
+.nav-toggle{display:none;border:1px solid var(--line);background:#fff;color:var(--navy);width:44px;height:44px;border-radius:10px;align-items:center;justify-content:center;flex-direction:column;gap:5px;cursor:pointer;flex:0 0 44px;padding:0;box-shadow:0 2px 8px rgba(15,36,56,.05)}
+.nav-toggle-bar{display:block;width:21px;height:2px;background:currentColor;border-radius:99px;transition:transform .18s ease,opacity .18s ease}
+
+@media(max-width:760px){
+  .nav-wrap{align-items:center;padding:10px 16px;min-height:64px;gap:10px;flex-wrap:wrap}
+  .brand{min-width:0;flex:1 1 calc(100% - 54px);gap:9px;font-size:clamp(.98rem,4.8vw,1.18rem);white-space:nowrap}
+  .brand>div{min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .brand small{display:none}
+  .brand-logo{width:42px;height:42px;flex-basis:42px}
+  .nav-toggle{display:flex;margin-left:auto}
+  .nav{display:none;width:100%;flex:0 0 100%;align-items:stretch;justify-content:flex-start;flex-direction:column;gap:2px;padding:8px 0 4px;border-top:1px solid var(--line)}
+  .nav.is-open{display:flex}
+  .nav>li{width:100%}
+  .nav a{display:block;width:100%;padding:10px 12px;font-size:14px;border-radius:8px}
+  .lang{margin:4px 0 0;padding:4px 0 0;border-left:0;border-top:1px solid var(--line)}
+  .lang a{font-size:13px}
+  .site-header.nav-open{box-shadow:0 10px 22px rgba(15,36,56,.10)}
+  .site-header.nav-open .nav-toggle-bar:nth-child(1){transform:translateY(7px) rotate(45deg)}
+  .site-header.nav-open .nav-toggle-bar:nth-child(2){opacity:0}
+  .site-header.nav-open .nav-toggle-bar:nth-child(3){transform:translateY(-7px) rotate(-45deg)}
+}
